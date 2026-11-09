@@ -31,11 +31,11 @@ object PairingInput {
      * device and the local network (the hosts plaintext is allowed for), `https://` anywhere else. [metadata] is a
      * scanned link whose address was edited in the form; it keeps the link's hub id and fingerprint.
      */
-    fun manual(address: String, token: String, metadata: PairingRequest? = null): PairingRequest {
-        if (isLink(address)) return parse(address)
-        val url = withScheme(address.trim())
-        return validate(metadata?.copy(url = url, token = token.trim()) ?: PairingRequest(url, token.trim()))
-    }
+    fun manual(address: String, token: String, metadata: PairingRequest? = null): PairingRequest =
+        if (isLink(address)) parse(address) else {
+            val url = withScheme(address.trim())
+            validate(metadata?.copy(url = url, token = token.trim()) ?: PairingRequest(url, token.trim()))
+        }
 
     // A string check, not URI's scheme: "persona:18660" is a host and port.
     private fun withScheme(address: String): String {
