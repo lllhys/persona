@@ -54,7 +54,7 @@ describe("engine choice (iOS EngineSelectionModel)", () => {
 
   it("lists every known engine when the node reports none (offline, older hubs)", () => {
     const m = machine({ engine: "future" });
-    expect(engineOptions(m).map((e) => e.id)).toEqual(["herdr", "herdr-core", "herdr-both", "orca", "paseo"]);
+    expect(engineOptions(m).map((e) => e.id)).toEqual(["herdr", "herdr-core", "herdr-both", "orca", "paseo", "cindy"]);
     expect(engineOptions(m).every((e) => !e.available)).toBe(true);
     expect(engineOptions({ engines: [] }).length).toBe(KNOWN_ENGINES.length);
     // known ones stay selectable offline; an unknown one only while reported available
@@ -68,6 +68,8 @@ describe("engine choice (iOS EngineSelectionModel)", () => {
     expect(engineDetail("herdr-both")).toBe("终端和桌面 App 的会话都显示");
     expect(engineName("paseo")).toBe("Paseo");
     expect(engineDetail("paseo")).toBe("Paseo 里的 Agent");
+    expect(engineName("cindy")).toBe("Cindy");
+    expect(engineDetail("cindy")).toBe("Cindy 里的 Agent");
     expect(engineDetail("future")).toBeUndefined();
   });
 

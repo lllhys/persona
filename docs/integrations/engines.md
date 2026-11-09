@@ -1,4 +1,4 @@
-# Engines: herdr, Herdr App, Orca, Paseo
+# Engines: herdr, Herdr App, Orca, Paseo, Cindy
 
 **One engine per computer**: Persona sees and drives Claude Code / Codex through an engine. Each computer selects one; Agents shows live sessions only from it.
 Sessions elsewhere (other engines, ordinary terminals) appear only as "Not running" history. Default herdr preserves existing machines without an explicit choice.
@@ -8,11 +8,11 @@ plus Herdr App on another computer opening terminals through remote). Sessions m
 
 On computers with **botmux**, its sessions appear alongside the selected engine ("botmux" below). It is not an engine option and needs no selection.
 
-**Paseo** is terminal-free: it runs Agents through provider SDKs, with node connected through a bridge; see `docs/integrations/paseo.md`.
+**Paseo** and **Cindy** are terminal-free: they run Agents through provider SDKs and runtimes, with node connected through a bridge; see `docs/integrations/paseo.md` and `server/internal/node/cindybridge.go`.
 
 ## Host sets (#2576)
 
-A computer can **enable several engines at once**, any combination of herdr, Herdr App, Orca and Paseo, or none at all, plus a **default engine**:
+A computer can **enable several engines at once**, any combination of herdr, Herdr App, Orca, Paseo and Cindy, or none at all, plus a **default engine**:
 where sessions started from the phone, and sessions continued from there, go. Each single choice above is a special case of a set: herdr is `{herdr}`, and
 "herdr + Herdr App" is `{herdr, herdr-core}` with herdr the default. API and storage: `docs/protocol/protocol.md` "Engines" ("Host sets").
 The web is wired: the machine page's Engine section is a checklist with "Make default", New Agent has "Open in", and a session live in
@@ -68,6 +68,7 @@ two hosts shows "Also open in …" above the composer. iOS and Android still pic
 | `herdr-both` | herdr + Herdr App | Both above | Both runtimes detected |
 | `orca` | Orca | Terminals and native Claude chats (structured sessions) in Orca desktop app, or its remote runtime launched here over SSH by Orca on another computer | Orca desktop / remote runtime running, with a Persona-compatible version |
 | `paseo` | Paseo | Paseo Agents (desktop app, `paseo` command; Claude Code, Codex, ACP all count) | Paseo daemon running; address in its home's `paseo.pid` responds |
+| `cindy` | Cindy | Cindy Agents (desktop app and `cindy-host`; Claude Code, Codex, Pi) | Cindy installed, running, or its loopback host endpoint / profile database present |
 
 herdr and Herdr App are from the same developer but separate: neither sees the other's sessions. If using only one, select it;
 if both are used and should appear on the phone, choose "herdr + Herdr App (side by side)."

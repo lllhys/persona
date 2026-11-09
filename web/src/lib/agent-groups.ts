@@ -39,7 +39,7 @@ export function sessionHost(s: Session): string {
 export type SessionSource = "feishu" | "terminal" | "desktop";
 
 export function sessionSource(s: Session): SessionSource | undefined {
-  if (s.space_kind === "codex_app" || s.host === "paseo" || (s.source_kind === "runtime" && s.source_instance_id === "orca")) return "desktop";
+  if (s.space_kind === "codex_app" || s.host === "paseo" || s.host === "cindy" || (s.source_kind === "runtime" && s.source_instance_id === "orca")) return "desktop";
   const host = sessionHost(s);
   if (host === "botmux") return "feishu";
   return host ? "terminal" : undefined;

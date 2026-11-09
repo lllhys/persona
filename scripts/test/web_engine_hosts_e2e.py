@@ -68,6 +68,8 @@ def run(browser, base, hub, token, size, theme, shots):
     expect(box("herdr")).to_have_attribute("aria-checked", "true")
     expect(box("orca")).to_have_attribute("aria-checked", "true")
     expect(box("paseo")).to_have_attribute("aria-checked", "false")
+    expect(box("cindy")).to_have_attribute("aria-checked", "false")
+    expect(section.locator('[data-engine="cindy"]')).to_contain_text("Cindy 里的 Agent")
     expect(section.locator('[data-engine="herdr"]')).to_contain_text("默认")
     shot("machine")
     ok(f"{tag}: the machine page lists the set, herdr the default")

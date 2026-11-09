@@ -15599,6 +15599,29 @@
       },
       "extractionState" : "manual"
     },
+    "Agents in Cindy" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agents in Cindy"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cindyのエージェント"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cindy 里的 Agent"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Agents in Paseo" : {
       "localizations" : {
         "en" : {

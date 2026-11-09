@@ -191,6 +191,7 @@
     <string name="designsystem_core_engine_herdr_app">桌面 App 里开的终端</string>
     <string name="designsystem_core_engine_orca">Orca 里的终端</string>
     <string name="designsystem_core_engine_paseo">Paseo 里的 Agent</string>
+    <string name="designsystem_core_engine_cindy">Cindy 里的 Agent</string>
     <string name="designsystem_core_engine_offline">离线，暂无检测信息</string>
     <string name="designsystem_core_engine_unknown">暂无检测信息</string>
     <string name="designsystem_core_engine_found">检测到可用</string>

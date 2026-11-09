@@ -52,6 +52,8 @@ type RuntimeHost struct {
 	paseo paseoBridge
 	// orca runs the bridge to Orca's structured sessions while the machine's engine is Orca (orcabridge.go).
 	orca orcaBridgeState
+	// cindy runs the Cindy bridge while the machine's engine is Cindy (cindybridge.go).
+	cindy cindyBridgeState
 }
 
 // NewRuntimeHost is a runtime socket at path (RuntimeSocketPath when empty) for a resident node; Attach starts it.

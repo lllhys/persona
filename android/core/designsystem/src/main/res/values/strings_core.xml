@@ -216,6 +216,7 @@
     <string name="designsystem_core_engine_herdr_app">Terminals opened in the desktop app</string>
     <string name="designsystem_core_engine_orca">Terminals in Orca</string>
     <string name="designsystem_core_engine_paseo">Agents in Paseo</string>
+    <string name="designsystem_core_engine_cindy">Agents in Cindy</string>
     <string name="designsystem_core_engine_offline">Offline, no detection info yet</string>
     <string name="designsystem_core_engine_unknown">No detection info yet</string>
     <string name="designsystem_core_engine_found">Detected and available</string>

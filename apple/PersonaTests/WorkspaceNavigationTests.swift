@@ -30,6 +30,7 @@ struct WorkspaceNavigationTests {
         #expect(!w.contains(s, catalog: []), "an incomplete catalog cannot assign provider history by directory")
         #expect(!workspace("chosen", group: "other").contains(s, catalog: [w]))
         #expect(!w.contains(try session(kind: "herdr"), catalog: [w]))
+        #expect(!w.contains(try session(kind: "cindy"), catalog: [w]))
     }
 
     @Test func explicitWorkspaceIdentityWinsOverItsDirectory() throws {

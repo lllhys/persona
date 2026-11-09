@@ -139,8 +139,8 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 		// sending, interrupting, answering cards and every terminal control on capabilities, the hub guards sends.
 		// What a runtime declared, never more: no terminal, no attach, cards always answerable (they are its own asks).
 		s.SourceKind, s.SourceInstanceID, s.SourceThreadID, s.ParentThreadID = proto.SourceRuntime, rt, "", ""
-		if rt == paseoRuntimeID {
-			s.Host = proto.EnginePaseo // an engine host, though no terminal (#2576)
+		if rt == paseoRuntimeID || rt == cindyRuntimeID {
+			s.Host = rt // an engine host, though no terminal (#2576)
 		} else {
 			s.Host = ""
 		}

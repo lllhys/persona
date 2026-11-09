@@ -125,8 +125,9 @@ func TestEngineHostsForSets(t *testing.T) {
 		kinds []string
 	}{
 		{[]string{"orca", "herdr"}, []string{host.Herdr, host.Orca}},
-		{[]string{"herdr", "herdr-core", "orca", "paseo"}, []string{host.Herdr, host.HerdrCore, host.Orca}},
+		{[]string{"herdr", "herdr-core", "orca", "paseo", "cindy"}, []string{host.Herdr, host.HerdrCore, host.Orca}},
 		{[]string{"paseo"}, nil},
+		{[]string{"cindy"}, nil},
 		{[]string{}, nil},
 	} {
 		ch, err := proto.NormalizeEngineChoice(c.hosts, "")

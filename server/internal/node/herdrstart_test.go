@@ -145,7 +145,7 @@ func TestEnsureHerdrLeavesItAlone(t *testing.T) {
 			t.Fatalf("%v, %d starts", err, fl.starts.Load())
 		}
 	})
-	for _, engine := range []string{proto.EngineHerdrCore, proto.EngineOrca, proto.EnginePaseo} {
+	for _, engine := range []string{proto.EngineHerdrCore, proto.EngineOrca, proto.EnginePaseo, proto.EngineCindy} {
 		t.Run(engine, func(t *testing.T) {
 			n, _ := downHerdrNode(t)
 			n.eng.name = engine

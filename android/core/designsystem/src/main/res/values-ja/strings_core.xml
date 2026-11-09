@@ -191,6 +191,7 @@
     <string name="designsystem_core_engine_herdr_app">デスクトップアプリで開いたターミナル</string>
     <string name="designsystem_core_engine_orca">Orcaのターミナル</string>
     <string name="designsystem_core_engine_paseo">Paseoのエージェント</string>
+    <string name="designsystem_core_engine_cindy">Cindyのエージェント</string>
     <string name="designsystem_core_engine_offline">オフラインのため検出情報がありません</string>
     <string name="designsystem_core_engine_unknown">検出情報がありません</string>
     <string name="designsystem_core_engine_found">利用可能</string>

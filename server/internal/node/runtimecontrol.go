@@ -154,7 +154,10 @@ type runtimeStartParams struct {
 }
 
 // engineRuntimes maps the engines that are a runtime to that runtime's id (engine.go).
-var engineRuntimes = map[string]string{proto.EnginePaseo: proto.EnginePaseo}
+var engineRuntimes = map[string]string{
+	proto.EnginePaseo: proto.EnginePaseo,
+	proto.EngineCindy: proto.EngineCindy,
+}
 
 // engineRuntime is the runtime that is the host of a start in ctx (Paseo: the one the start named, else the machine's
 // default host), when it is connected and starts sessions; nil when that host is a terminal (herdr, Orca…).

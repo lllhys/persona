@@ -27,4 +27,7 @@ func TestClientPaneSourceCases(t *testing.T) {
 			}
 		})
 	}
+	if got := Of(proto.Session{Host: "cindy"}); got != "desktop" {
+		t.Fatalf("cindy origin=%q, want desktop", got)
+	}
 }

@@ -16,6 +16,8 @@ func TestNormalizeEngineChoice(t *testing.T) {
 		{hosts: []string{"orca", "herdr", "orca"}, wantHosts: []string{"herdr", "orca"}, wantDef: "herdr"}, // canonical order, once each
 		{hosts: []string{"orca", "herdr"}, def: "orca", wantHosts: []string{"herdr", "orca"}, wantDef: "orca"},
 		{hosts: []string{"paseo"}, wantHosts: []string{"paseo"}, wantDef: "paseo"},
+		{hosts: []string{"cindy"}, wantHosts: []string{"cindy"}, wantDef: "cindy"},
+		{hosts: []string{"cindy", "herdr"}, def: "cindy", wantHosts: []string{"herdr", "cindy"}, wantDef: "cindy"},
 		{hosts: nil, wantHosts: []string{}, wantDef: ""}, // the empty set: no default
 		{hosts: []string{}, def: "herdr", bad: true},
 		{hosts: []string{"herdr"}, def: "orca", bad: true}, // default not enabled

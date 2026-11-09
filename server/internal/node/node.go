@@ -638,6 +638,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			n.runtimeHost.setPaseoBridge(n.hostEnabled(proto.EnginePaseo))
 			// Orca's chats come through a bridge the node runs too (orcabridge.go); its terminals, the Orca host.
 			n.runtimeHost.setOrcaBridge(n.hostEnabled(proto.EngineOrca))
+			// Cindy's agents come through its bridge (cindybridge.go).
+			n.runtimeHost.setCindyBridge(n.hostEnabled(proto.EngineCindy))
 		}
 		n.configured()
 		c := n.engineChoice()

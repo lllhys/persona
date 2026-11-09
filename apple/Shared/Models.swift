@@ -183,7 +183,9 @@ nonisolated struct MachineEngine: RawRepresentable, Codable, Hashable, CaseItera
     static let orca = Self(rawValue: "orca")
     /// Paseo's agents (docs/integrations/paseo.md): no terminal; the node runs a bridge to the Paseo daemon.
     static let paseo = Self(rawValue: "paseo")
-    static let allCases: [Self] = [.herdr, .herdrApp, .herdrBoth, .orca, .paseo]
+    /// Cindy's agents (docs/integrations/engines.md): no terminal; the node runs a bridge to Cindy.
+    static let cindy = Self(rawValue: "cindy")
+    static let allCases: [Self] = [.herdr, .herdrApp, .herdrBoth, .orca, .paseo, .cindy]
     var id: String { rawValue }
     var name: String {
         switch self {
@@ -192,6 +194,7 @@ nonisolated struct MachineEngine: RawRepresentable, Codable, Hashable, CaseItera
         case .herdrBoth: "herdr + Herdr App"
         case .orca: "Orca"
         case .paseo: "Paseo"
+        case .cindy: "Cindy"
         default: rawValue
         }
     }
@@ -202,6 +205,7 @@ nonisolated struct MachineEngine: RawRepresentable, Codable, Hashable, CaseItera
         case .herdrBoth: String(localized: "Sessions from both the terminal and the desktop app")
         case .orca: String(localized: "Terminals in Orca")
         case .paseo: String(localized: "Agents in Paseo")
+        case .cindy: String(localized: "Agents in Cindy")
         default: nil
         }
     }
