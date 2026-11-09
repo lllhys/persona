@@ -235,7 +235,7 @@ final class SyncDevice {
             default: break
             }
         }
-        if session?.state.isActive == true, !store.liveText.isEmpty, v.messages.last?.from == "agent" {
+        if session?.status.isActive == true, !store.liveText.isEmpty, v.messages.last?.from == "agent" {
             v.messages.removeLast()
         }
         v.messages += placed.rest.map(bubble)
