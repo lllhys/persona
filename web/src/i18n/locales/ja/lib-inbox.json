@@ -94,5 +94,6 @@
   "policy_reason": "あなたのルール：{name}",
   "policy_saved": "「{name}」のルールを保存しました",
   "policy_removed": "「{name}」のルールを削除しました",
-  "policy_failed": "ルールを保存できませんでした：{error}"
+  "policy_failed": "ルールを保存できませんでした：{error}",
+  "folder_failed": "移動できませんでした：{error}"
 }

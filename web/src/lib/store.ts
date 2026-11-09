@@ -12,7 +12,7 @@ import { sameValue } from "./stable-lines";
 import { SESSIONS_LIST_FEATURE, type ListCounts } from "./session-list";
 import { applySessionDelta, SESSIONS_DELTA_FEATURE, sessionRefreshed, sessionSnapshot } from "./sessions-delta";
 import { dueMarks, heldRows, liveMarks, markOver, newMark, nextDue, unansweredMarks, type SeenMark, type SeenMarks } from "./seen-outbox";
-import { api, ApiError, CLIENT_FEATURES, CLIENT_PLATFORM, CLIENT_VERSION, errorText, getToken, sessionPath } from "./api";
+import { api, ApiError, CLIENT_FEATURES, CLIENT_PONG_TIMEOUT, CLIENT_PLATFORM, CLIENT_VERSION, errorText, getToken, sessionPath } from "./api";
 import { currentLanguage } from "../i18n";
 import type { AgentMutes } from "./agent-groups";
 import { stateOf } from "./format";
@@ -466,7 +466,7 @@ export function connect() {
   sock.onopen = () => {
     // the interface language: this connection's text, and the user's language for pushes and the assistant (docs/protocol/i18n.md)
     // and what it can render: MCP forms and links come only to a socket that says so
-    sock.send(JSON.stringify({ type: "client_hello", platform: CLIENT_PLATFORM, version: CLIENT_VERSION, features: CLIENT_FEATURES, locale: currentLanguage() }));
+    sock.send(JSON.stringify({ type: "client_hello", platform: CLIENT_PLATFORM, version: CLIENT_VERSION, features: CLIENT_FEATURES, locale: currentLanguage(), heartbeat: { pong_timeout: CLIENT_PONG_TIMEOUT } }));
     retry = 0;
     fastTries = 0;
     lastMessage = Date.now();

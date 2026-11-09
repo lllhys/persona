@@ -22,6 +22,7 @@ import { setSidebarTerminals, useSidebarTerminals } from "../lib/sidebar-termina
 import { setAgentDetails, setContextAsUsed, useAgentDetails, useContextAsUsed } from "../lib/context-usage";
 import { HubList } from "./Hubs";
 import { useDisconnect } from "./DisconnectBrowser";
+import { KnowledgeSelection } from "./settings/KnowledgeSelection";
 import { ModelConfiguration } from "./settings/ModelConfiguration";
 import { AgentSettings } from "./settings/AgentSettings";
 import { SidebarPagesGroup } from "./settings/SidebarPages";
@@ -179,7 +180,7 @@ export function Settings({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const pick = (k: Tab, id: string | null = null, section?: SettingsSection) => {
     configurationOwner.current = new URLSearchParams(location.search).get("manager") ?? configurationOwner.current;
     setAt({ tab: k, sub: id, section: section ?? null });
-    const to = settingsHref(k, id, phone, k === "persona" || k === "models" || k === "hub" ? configurationOwner.current : null, section);
+    const to = settingsHref(k, id, phone, k === "persona" || k === "models" || k === "hub" || k === "knowledge" ? configurationOwner.current : null, section);
     // from the phone's list the category goes on top of it, so Back returns to the list
     if (listed) history.pushState({ [FROM_LIST]: true }, "", BASE + to);
     else history.replaceState(openedFromList(history.state) ? history.state : null, "", BASE + to);
@@ -248,6 +249,7 @@ export function Settings({ onToggleSidebar }: { onToggleSidebar: () => void }) {
               {tab === "general" && <General onModel={() => pick("models", "translate", "model-config")} />}
               {tab === "persona" && <PersonaSettings onTriageModel={() => pick("models", "agent.triage", "model-config")} onExtensions={() => pick("extensions")} />}
               {tab === "notifications" && <NotificationSettings />}
+              {tab === "knowledge" && <KnowledgeSelection />}
               {tab === "models" && <>
                 <section id="settings-providers" className="scroll-mt-4">
                   <h2 className="mb-2 px-1 text-[15px] font-semibold text-ink">{TAB_INFO.models.label}</h2>

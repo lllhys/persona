@@ -7,7 +7,8 @@
 import { useEffect, useState } from "react";
 import { ItemManager, useKnownDefault } from "../../lib/manager-choice";
 import { hasEvent, itemAtUid } from "../../lib/inbox-events";
-import { agentDraft, agentWorking, canDraft, isDone, itemKey, kindLabel, labelIsUrgent, muteItem, muteShortName, muteTitle, openTitle, policyMenuTitle, openURL, setDone, shortTime, sourceLine, type InboxItem } from "../../lib/inbox";
+import { agentDraft, agentWorking, canDraft, isDone, itemKey, kindLabel, labelIsUrgent, muteItem, muteShortName, muteTitle, openTitle, policyMenuTitle, openURL, setDone, shortTime, sourceLine, useInbox, type InboxItem } from "../../lib/inbox";
+import { openFolderDialog, useFoldersShown } from "./InboxFolders";
 import { openPolicyDialog } from "./PolicyDialog";
 import { useInboxItemPlace } from "../../lib/extension-slots";
 import { PHONE, useMedia } from "../../lib/viewport";
@@ -50,6 +51,8 @@ function ItemDetail({ item, loaded }: { item?: InboxItem; loaded: boolean }) {
     setSource(null);
   }, [item?.id]);
   const prefs = useTranslatePrefs();
+  const allItems = useInbox((s) => s.items);
+  const foldersShown = useFoldersShown(allItems);
   // the item's manager's extensions draw it (each manager has its own)
   const place = useInboxItemPlace(item?.source, item?.manager);
   const [ownShown, setOwnShown] = useState(false); // under an extension's page: it fell back to the item's own body
@@ -114,6 +117,7 @@ function ItemDetail({ item, loaded }: { item?: InboxItem; loaded: boolean }) {
                 <>
                   {canPin && <IconButton icon="pin" label={t("inbox-inboxdetail.pin_messages")} onClick={() => setPins(true)} size={32} />}
                   {muteRows.length > 0 && <IconButton icon="bellOff" label={t("inbox-inboxdetail.mute")} onClick={muteMenu.open} active={Boolean(muteMenu.anchor)} size={32} />}
+                  {foldersShown && <IconButton icon="folder" label={item.folder ? t("inbox-folders.move_from", { folder: item.folder }) : t("inbox-folders.move_menu")} onClick={() => openFolderDialog(item)} size={32} />}
                 </>
               )}
               {muteMenu.anchor && <Menu anchor={muteMenu.anchor} onClose={muteMenu.close} align="right" width={224} items={muteRows} />}
@@ -122,6 +126,7 @@ function ItemDetail({ item, loaded }: { item?: InboxItem; loaded: boolean }) {
                   items={[
                     ...(canPin ? [{ key: "pins", label: t("inbox-inboxdetail.pin_messages"), icon: "pin" as const, onSelect: () => setPins(true) }] : []),
                     ...muteRows.map((r, i) => (i === 0 && canPin ? { ...r, divider: true } : r)),
+                    ...(foldersShown ? [{ key: "folder", label: t("inbox-folders.move_menu"), hint: item.folder, icon: "folder" as const, divider: true, onSelect: () => openFolderDialog(item) }] : []),
                   ]} />
               )}
               {done ? (

@@ -102,5 +102,6 @@
   "policy_reason": "Your rule: {name}",
   "policy_saved": "Rule saved for “{name}”.",
   "policy_removed": "Rule removed for “{name}”.",
-  "policy_failed": "Couldn't save the rule: {error}"
+  "policy_failed": "Couldn't save the rule: {error}",
+  "folder_failed": "Couldn't move it: {error}"
 }

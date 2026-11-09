@@ -156,6 +156,16 @@ type tasksState struct {
 	reusing map[string]bool
 	// outcomeRuns are the outcome recordings still going (goRecordTaskOutcome, waitTaskOutcomes).
 	outcomeRuns sync.WaitGroup
+	// todayLocks: a conversation's id -> the lock ensureToday holds from looking for the day's "Today" card to
+	// appending it, so that concurrent opens of a chat make one card, not one each.
+	todayLocks cardLocks
+	// planEdits: a plan's lock, by its id, while one of its started tasks changes (patchPlanTask; kept only while held or
+	// waited on, as a card's). The tasks are one blob that movePlan writes whole, so two tasks changing at once (their
+	// starts failing together) would each write back the other's old fields.
+	planEdits cardLocks
+	// trustMu serializes the read-modify-writes of tasks.trust (trustKinds, forgetTrust), so that two plans
+	// remembered at once, or a forget racing a remember, do not drop each other's kinds.
+	trustMu sync.Mutex
 }
 
 func newTasksState() tasksState {
@@ -230,6 +240,29 @@ func (s *Service) movePlan(ctx context.Context, p *TaskPlan, from string) (bool,
 	}
 	raw, _ := json.Marshal(p.Tasks)
 	return st.UpdateTaskPlan(ctx, p.ID, from, p.State, raw, p.UpdatedAt)
+}
+
+// patchPlanTask changes task i of started plan planID with change, writes the plan back and tells the apps. The plan
+// stays locked from reading it until the apps are told, so what its other tasks record meanwhile stays, and the apps get
+// the plan in the order it was written (they keep the last one they got). Telling them is a one-way broadcast, so the
+// lock never waits on an answer; change must not call the hub or a node. A plan with no task i, or not started (any
+// more), is left as it is.
+func (s *Service) patchPlanTask(ctx context.Context, planID string, i int, change func(*PlanTask)) error {
+	s.tasks.planEdits.acquire(planID)
+	defer s.tasks.planEdits.release(planID)
+	p, err := s.loadPlan(ctx, planID)
+	if err != nil {
+		return err
+	}
+	if i < 0 || i >= len(p.Tasks) || p.State != planStarted {
+		return nil
+	}
+	change(&p.Tasks[i])
+	if ok, err := s.movePlan(ctx, p, planStarted); err != nil || !ok {
+		return err
+	}
+	s.event(ctx, map[string]any{"type": "task_plan", "plan": p})
+	return nil
 }
 
 // appendFeed adds an item to a conversation's feed and tells the clients.
@@ -352,27 +385,52 @@ func trustKey(t PlanTask) string {
 	return t.Machine + "|" + t.Cwd + "|" + kind
 }
 
+// trustedKinds is the kinds the user lets start without asking; none when they cannot be read, so that a plan asks.
+// What writes tasks.trust reads it with trustedKindsErr instead.
 func (s *Service) trustedKinds(ctx context.Context) map[string]bool {
+	have, err := s.trustedKindsErr(ctx)
+	if err != nil {
+		s.logf("tasks: trust: read: %v", err)
+		return map[string]bool{}
+	}
+	return have
+}
+
+// trustedKindsErr is trustedKinds with the read's error: a write built on a failed read would replace every kind
+// remembered before.
+func (s *Service) trustedKindsErr(ctx context.Context) (map[string]bool, error) {
 	out := map[string]bool{}
 	st := s.store()
 	if st == nil {
-		return out
+		return out, nil
 	}
 	var keys []string
-	if ok, err := st.Setting(ctx, trustSetting, &keys); err == nil && ok {
+	ok, err := st.Setting(ctx, trustSetting, &keys)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		for _, k := range keys {
 			out[k] = true
 		}
 	}
-	return out
+	return out, nil
 }
 
+// trustKinds remembers the kinds of tasks so that similar plans start without asking. When the kinds remembered
+// before cannot be read it remembers nothing: the next similar plan asks again, and no kind is lost.
 func (s *Service) trustKinds(ctx context.Context, tasks []PlanTask) {
 	st := s.store()
 	if st == nil {
 		return
 	}
-	have := s.trustedKinds(ctx)
+	s.tasks.trustMu.Lock()
+	defer s.tasks.trustMu.Unlock()
+	have, err := s.trustedKindsErr(ctx)
+	if err != nil {
+		s.logf("tasks: trust: not remembering %d tasks' kinds: read: %v", len(tasks), err)
+		return
+	}
 	for _, t := range tasks {
 		have[trustKey(t)] = true
 	}

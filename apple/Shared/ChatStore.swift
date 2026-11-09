@@ -1501,6 +1501,11 @@ nonisolated struct PendingMessage: Identifiable, Hashable, Codable, Sendable {
     /// The hub refused it with nothing typed (delivered: none: a draft in the computer's input box, a dialog…) and
     /// answers its id with that refusal from then on: Resend and Clear and Send go with a new id (#6425).
     var refused: Bool?
+    /// When its sends started coming back waiting while its group's link was up (AppModel.settleSend, `OutboxWait`);
+    /// in memory only: a relaunch starts the run again.
+    var stalledSince: Date?
+
+    private enum CodingKeys: String, CodingKey { case id, text, images, state, createdAt, mayHaveArrived, refused }
 
     /// Comparable form: what the transcript keeps of it — the phone's image note, pasted wrappers and Claude's
     /// "[Image #21]" placeholders removed, whitespace ignored, and a context or file block read under either

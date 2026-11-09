@@ -70,8 +70,8 @@ class ExtensionUiStateTest {
         assertFalse(ExtensionViewText.drawable(ExtensionViewItem("link", title = "后台", url = "http://example.com")))
         assertFalse(ExtensionViewText.drawable(ExtensionViewItem("chart")))
         assertFalse(ExtensionViewText.drawable(ExtensionViewItem("button", title = "无动作")))
-        assertFalse(ExtensionViewText.drawable(ExtensionViewItem("field", name = "x", kind = "date")))
-        listOf("text", "secret", "number", "toggle", "choice").forEach {
+        assertFalse(ExtensionViewText.drawable(ExtensionViewItem("field", name = "x", kind = "future-kind")))
+        listOf("text", "secret", "number", "toggle", "choice", "date", "time", "datetime", "multichoice", "multiline").forEach {
             assertTrue(it, ExtensionViewText.drawable(ExtensionViewItem("field", name = "x", kind = it)))
         }
         assertTrue(ExtensionViewText.grouped(ExtensionViewItem("row")))
@@ -215,8 +215,13 @@ class ExtensionUiStateTest {
         assertNull(data.series[0].tone)
         assertEquals("3.5 元", ExtensionViewText.display(3.5, null, "元"))
         assertEquals("¥1.20", ExtensionViewText.display(1.2, "¥1.20", "元"))
-        assertNull(ExtensionViewText.chart(chart.copy(kind = "pie")))
-        assertFalse(ExtensionViewText.drawable(chart.copy(kind = "pie")))
+        val pie = ExtensionViewText.chart(chart.copy(kind = "pie"))!!
+        assertEquals(JChartKind.Pie, pie.kind)
+        assertEquals(listOf(1_200_000.0, 800_000.0), pie.series.single().values)
+        assertFalse(pie.stacked)
+        assertTrue(ExtensionViewText.drawable(chart.copy(kind = "pie")))
+        assertNull(ExtensionViewText.chart(chart.copy(kind = "future-chart")))
+        assertFalse(ExtensionViewText.drawable(chart.copy(kind = "future-chart")))
         assertFalse(ExtensionViewText.drawable(chart.copy(series = listOf(ExtensionChartSeries("空")))))
         assertEquals(JChartKind.Line, ExtensionViewText.chart(chart.copy(kind = "line"))!!.kind)
 

@@ -264,9 +264,10 @@ unknown fields and rule names, an `order` that does not hold every rule exactly 
 `context` outside 0…200, `include_all` or `context` on another rule, and items without a source, a kind (`chat` / `doc`) or an id, twice, or stored without being read.
 The manager hands the document to the engine (`Engine.Selection`); an engine without one keeps everything as before.
 
+- **Web settings** (#2217): Settings → Knowledge selection targets an explicit manager independently of the chat switcher. Item overrides always precede the movable priority levels. Rules can share a level, split into a separate level, or move up/down. Chat candidates carry their source and chat id; document overrides use the original source/id from the selected document metadata, never its KB filename or display name. Failed/unsupported reads enable no save. Manager and credential changes retire pending work, and observable `kb_selection` events block dirty drafts until an explicit reload. Whole-document PUT has no revision precondition: this warning does not prevent an unobserved concurrent write atomically. Turning a rule off stops new writes; blank document days do not introduce default pruning.
+
 - **Storage and API** (`server/internal/assistant/kb_selection.go`): the manager keeps the document in its settings table under `kb.selection` (as the workflow
-  board's switch), so every client and process agrees; today it is edited through `PUT` below and `kb_history_plan`, and an app settings page (the
-  priority as a sortable list, a per-item picker) is left for a follow-up issue. `GET /api/v1/kb/selection` is the document (the defaults when none was saved);
+  board's switch), so every client and process agrees; the Web app edits it in Settings → Knowledge selection (#2217), and `kb_history_plan` keeps its existing import controls. The Web editor preserves the whole loaded document, including history and optional rule fields; native settings editors remain follow-up work. `GET /api/v1/kb/selection` is the document (the defaults when none was saved);
   `PUT /api/v1/kb/selection` takes the whole document, validated as above (400 with what is wrong; 403 from a read-only device), stores it, puts it in force at once
   and tells the apps (`kb_selection` event); `GET /api/v1/kb/selection/candidates?source=<connector id>` lists the source's chats (`connectors.history_chats`: id,
   name, kind, flags, estimate, the `source` a per-item setting names, the setting itself, and what the selection reads of it: `whole`, `personal` or `none`). While the

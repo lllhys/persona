@@ -27,5 +27,7 @@
   "hint_managers": "各アシスタントの実行場所とオンライン状態",
   "group_personal": "個人",
   "group_assistant": "アシスタント",
-  "group_system": "システム"
+  "group_system": "システム",
+  "tab_knowledge": "ナレッジの選択",
+  "hint_knowledge": "Persona が読み取り、保存するチャットと文書"
 }

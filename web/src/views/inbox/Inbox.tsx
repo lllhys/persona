@@ -12,6 +12,7 @@ import { ComposeDialog } from "./ComposeDialog";
 import { DetailPlaceholder, InboxDetail } from "./InboxDetail";
 import { InboxList } from "./InboxList";
 import { PolicyDialogHost } from "./PolicyDialog";
+import { FolderDialogHost } from "./InboxFolders";
 
 /** The item a route opens: its id of its manager (none: the default's). A link that names no manager (from before
  *  several managers, or written by hand) opens the default's copy, else the one manager that has it. */
@@ -46,6 +47,7 @@ export function Inbox({ id, manager, onToggleSidebar }: { id?: string; manager?:
         </section>
       </div>
       <PolicyDialogHost />
+      <FolderDialogHost />
       {composing && <ComposeDialog draftKey="new" initial={newDraft(accounts[0]?.id ?? "")} accounts={accounts} onClose={() => setComposing(false)} />}
     </div>
   );

@@ -37,6 +37,7 @@ func (s *Service) triageInbox(ctx context.Context) {
 	b.mu.Unlock()
 	if len(todo) == 0 {
 		b.triaging.Unlock()
+		s.fileFoldersSoon(ctx)
 		s.handInbox(ctx)
 		return
 	}
@@ -59,6 +60,7 @@ func (s *Service) triageInbox(ctx context.Context) {
 			}(it)
 		}
 		wg.Wait()
+		s.fileFoldersSoon(ctx) // where the items go (inbox_folders.go), in its own background pass
 		s.handInbox(ctx)
 	}()
 }

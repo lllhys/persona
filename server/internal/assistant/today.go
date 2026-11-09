@@ -72,10 +72,14 @@ const feedToday = "today" // ref: the user's date; body: todayBody
 
 // ensureToday is the conversation's "Today" card for the user's day: the one already there, or a new one.
 func (s *Service) ensureToday(ctx context.Context, conversation string) (FeedItem, bool, error) {
+	// One caller at a time per conversation: the first chat open of the day often comes from two devices or tabs at
+	// once, and assistant_feed has no unique key to stop both from appending a card. The others then find this one's.
+	s.tasks.todayLocks.acquire(conversation)
+	defer s.tasks.todayLocks.release(conversation)
 	loc := s.location(ctx)
 	now := time.Now().In(loc)
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	date := day.Format("2006-01-02")
+	day := dayStart(now)
+	date := now.Format("2006-01-02")
 	items, err := s.feedItems(ctx, conversation, day.Add(-time.Second))
 	if err != nil {
 		return FeedItem{}, false, err
@@ -154,6 +158,19 @@ func (s *Service) ensureToday(ctx context.Context, conversation string) (FeedIte
 	return it, true, err
 }
 
+// dayStart is the first instant of now's calendar day in now's location. Where the clocks jump forward at midnight
+// (America/Santiago, America/Havana, America/Asuncion), that midnight does not exist and time.Date answers 23:00 the
+// evening before; the day then begins at the jump, 01:00.
+func dayStart(now time.Time) time.Time {
+	y, m, d := now.Date()
+	t := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	if t.Day() != d {
+		_, end := t.ZoneBounds()
+		return end
+	}
+	return t
+}
+
 // todayFailures is what did not go through since since (#4124), newest first: the conversation's tasks whose agent did
 // not start (conversation "*": any conversation's), and the scheduled runs that failed or were skipped. It also returns
 // how many there were in all.
@@ -230,13 +247,19 @@ func (s *Service) trustList(ctx context.Context) []trustKind {
 	return out
 }
 
-// forgetTrust stops a kind from starting without asking; false when it was not remembered.
+// forgetTrust stops a kind from starting without asking; false when it was not remembered. A failed read is an
+// error, never an empty list written back.
 func (s *Service) forgetTrust(ctx context.Context, key string) (bool, error) {
 	st := s.store()
 	if st == nil {
 		return false, errors.New("no store")
 	}
-	have := s.trustedKinds(ctx)
+	s.tasks.trustMu.Lock()
+	defer s.tasks.trustMu.Unlock()
+	have, err := s.trustedKindsErr(ctx)
+	if err != nil {
+		return false, err
+	}
 	if !have[key] {
 		return false, nil
 	}

@@ -201,3 +201,27 @@ func TestGoldenInboxGroup(t *testing.T) {
 	goldenCall(t, "inbox_group.first", calls[0])
 	golden(t, "inbox_group.after_tool.user", calls[1].User)
 }
+
+func TestGoldenInboxFolders(t *testing.T) {
+	ctx := context.Background()
+	for _, name := range []string{"first", "tree"} {
+		h := goldenInbox(t)
+		model, calls := captureModel(t, `{"folders":{}}`)
+		h.in.model = model
+		h.inbox.folderCfg = InboxFolderConfig{Enabled: true}
+		at := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+		h.inbox.items["mail:1"] = &InboxItem{ID: "mail:1", Kind: KindMail, Title: "示例服务告警：5xx 升高", Sender: "alerts@example.com",
+			Summary: "示例服务 5xx 升高，值班请看", Preview: "告警：示例服务 5xx 升高\n详情见面板", Last: "9", UpdatedAt: at}
+		if name == "tree" {
+			h.f.hello.Owner = "示例用户"
+			h.inbox.folderCfg.Rules = "构建机器人的消息放到 work/builds"
+			h.setConfig(func(c *assistantwire.InboxConfig) { c.Rules = "老板的消息一律需要我" })
+			h.inbox.items["lark:f1:1"] = &InboxItem{ID: "lark:f1:1", Kind: KindGroup, Title: "发布群", Last: "1", UpdatedAt: at,
+				Folder: "projects/example/releases", FolderBy: FolderByUser}
+			h.inbox.items["lark:f2:1"] = &InboxItem{ID: "lark:f2:1", Kind: KindBot, Title: "告警机器人", Last: "1", UpdatedAt: at,
+				Folder: "work/alerts", FolderBy: FolderByModel}
+		}
+		h.fileFolders(ctx)
+		goldenCall(t, "inbox_folders."+name, onlyCall(t, calls()))
+	}
+}

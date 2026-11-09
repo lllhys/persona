@@ -33,5 +33,6 @@
   "cannot_policy": "这条内容不能按该选项设置规则。",
   "policy_tier": "档位只能是 action、fyi、noise 或留空。",
   "policy_twin": "AI 分身只能是 first、never 或留空。",
-  "no_policy": "没有这条收件箱规则。"
+  "no_policy": "没有这条收件箱规则。",
+  "bad_folder": "文件夹路径里至少要有一级名称。"
 }

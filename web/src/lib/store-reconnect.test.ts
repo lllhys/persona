@@ -392,6 +392,21 @@ describe("a slow refresh() does not put back an older snapshot", () => {
   });
 });
 
+describe("client_hello heartbeat", () => {
+  it("asks for a 45 s pong timeout and leaves the interval to the hub, on every connection", () => {
+    connect();
+    last().open();
+    last().drop();
+    vi.advanceTimersByTime(1_000);
+    last().open();
+    expect(FakeSocket.all.length).toBe(2);
+    for (const s of FakeSocket.all) {
+      const hello = s.sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
+      expect(hello.heartbeat).toEqual({ pong_timeout: 45 });
+    }
+  });
+});
+
 describe("keeping a quiet connection (app_ping)", () => {
   const pings = (s: FakeSocket) => s.sent.map((m) => JSON.parse(m)).filter((m) => m.type === "ping");
   /** Lets ms go by, looking at the socket every 5 s as the page does. */

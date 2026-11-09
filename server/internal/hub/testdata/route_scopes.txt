@@ -150,6 +150,7 @@ assistant.ask        GET /api/v1/assistant/reporters
 -                    GET /api/v1/imessage/chats
 -                    GET /api/v1/imessage/chats/{id}/messages
 inbox.read           GET /api/v1/inbox
+inbox.read           GET /api/v1/inbox/folders
 inbox.read           GET /api/v1/inbox/mutes
 inbox.read           GET /api/v1/inbox/policies
 inbox.read           GET /api/v1/inbox/tree/{kind}/{id...}
@@ -473,6 +474,8 @@ todos.write          POST /api/v1/todos/{id}/decisions
 -                    PUT /api/v1/extensions/{id}/-/secrets/{name}
 -                    PUT /api/v1/hub/update/settings
 -                    PUT /api/v1/imessage/settings
+inbox.write          PUT /api/v1/inbox/folders
+inbox.write          PUT /api/v1/inbox/{id}/folder
 inbox.write          PUT /api/v1/inbox/{id}/parent
 -                    PUT /api/v1/kb/selection
 kb.write             PUT /api/v1/kb/{kind}/{id}

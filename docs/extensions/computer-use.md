@@ -479,6 +479,7 @@ Flags used:
   - Literal `cua.getApp("…")` and `cua.launch("…")` in scripts.
   - Names resolved to bundle ids through Cua `list_apps` before comparison, so identically named different Apps aren't conflated; unknown names stored by name.
   - Any step without an app, a `launch_app` step naming no app, computed app names in a script (`getApp` or `launch`), or a script naming no app makes identification incomplete: ask every time for the whole call, without Always Allow.
+    A `getApp` / `launch` occurrence the literal reader cannot parse counts the same way: space or a comment before the call's parentheses (`getApp ("Terminal")`), a computed callee (`cua["getApp"]`, a saved function), or an argument that is not a plain string. The completeness check compares every occurrence of the callee's name with the parsed literal calls, so an unreadable one cannot be missed.
 - **Always ask, never offer Always Allow**: terminals (Terminal, iTerm2, Warp, Ghostty, etc.), System Settings, Keychain Access, password managers (Passwords, 1Password, Bitwarden, etc.), Persona, identified by bundle id or name (Chinese/English).
 - **With Confirm on Phone Before Acting**: if this call already asked because of an App, don't ask twice; otherwise with confirmation enabled, ask each time as before.
 - **Agent's own Cua MCP** (`mcp__cua-driver__*`): bypasses the hub and still uses the Agent's tool approvals. Integrate allowed Apps later.

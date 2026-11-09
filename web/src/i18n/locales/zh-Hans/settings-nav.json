@@ -27,5 +27,7 @@
   "hint_managers": "各个助手跑在哪、在不在线",
   "group_personal": "个人",
   "group_assistant": "助手",
-  "group_system": "系统"
+  "group_system": "系统",
+  "tab_knowledge": "知识库选择",
+  "hint_knowledge": "Persona 读取和保存哪些聊天与文档"
 }

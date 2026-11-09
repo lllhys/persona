@@ -55,6 +55,13 @@ describe("收件箱的行菜单", () => {
     m[2].onSelect();
     expect(calls.mute.at(-1)).toEqual([it0, chat]);
   });
+
+  it("adds 移到文件夹… last when the list shows folders", () => {
+    expect(rowMenu(item({ mutes: [sender] }), false).some((x) => x.key === "folder")).toBe(false);
+    const m = rowMenu(item({ mutes: [sender], folder: "work/alerts" }), false, true);
+    expect(m.map((x) => x.key)).toEqual(["done", "mute:sender:u1", "policy:sender:u1", "folder"]);
+    expect([m[3].label, m[3].hint, m[3].divider]).toEqual(["移到文件夹…", "work/alerts", true]);
+  });
 });
 
 describe("行内的已处理（#4141）", () => {

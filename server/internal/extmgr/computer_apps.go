@@ -70,6 +70,12 @@ func (s cuaSettings) approval() bool { return s.AppApproval == nil || *s.AppAppr
 var (
 	getAppLiteral = lazyre.New(`getApp\(\s*(?:"([^"\\]+)"|'([^'\\]+)')\s*\)`)
 	launchLiteral = lazyre.New(`launch\(\s*(?:"([^"\\]+)"|'([^'\\]+)')\s*\)`)
+	// getAppWord and launchWord count every occurrence of the callee's name. A call the literal patterns cannot
+	// read (space or a comment before the parentheses, a computed callee, an argument that is not a plain string)
+	// then makes the script's apps unknown instead of being missed: comparing substring counts of "getApp(" would
+	// miss the same calls the literal pattern misses, and judge the script fully known.
+	getAppWord = lazyre.New(`\bgetApp\b`)
+	launchWord = lazyre.New(`\blaunch\b`)
 )
 
 // callApps is what a computer tool call names: its apps by name (or wholeScreen), and whether that is all it may
@@ -94,8 +100,8 @@ func callApps(name, app, script string, steps json.RawMessage) (apps []string, w
 		for _, m := range launchLiteral.FindAllStringSubmatch(script, -1) {
 			add(m[1] + m[2])
 		}
-		return apps, len(apps) > 0 && strings.Count(script, "getApp(") == len(getAppLiteral.FindAllString(script, -1)) &&
-			strings.Count(script, "launch(") == len(launchLiteral.FindAllString(script, -1))
+		return apps, len(apps) > 0 && len(getAppWord.FindAllString(script, -1)) == len(getAppLiteral.FindAllString(script, -1)) &&
+			len(launchWord.FindAllString(script, -1)) == len(launchLiteral.FindAllString(script, -1))
 	}
 	var list []map[string]json.RawMessage
 	_ = json.Unmarshal(steps, &list)

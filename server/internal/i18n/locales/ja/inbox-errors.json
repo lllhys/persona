@@ -33,5 +33,6 @@
   "cannot_policy": "この項目にはその条件でルールを設定できません。",
   "policy_tier": "tier は action・fyi・noise または空にしてください。",
   "policy_twin": "twin は first・never または空にしてください。",
-  "no_policy": "その受信箱ルールはありません。"
+  "no_policy": "その受信箱ルールはありません。",
+  "bad_folder": "フォルダのパスには少なくとも 1 つの名前が必要です。"
 }

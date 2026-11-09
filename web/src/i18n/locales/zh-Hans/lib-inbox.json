@@ -94,5 +94,6 @@
   "policy_reason": "按你的规则：{name}",
   "policy_saved": "已为“{name}”保存规则",
   "policy_removed": "已移除“{name}”的规则",
-  "policy_failed": "规则没保存成功：{error}"
+  "policy_failed": "规则没保存成功：{error}",
+  "folder_failed": "移动失败：{error}"
 }

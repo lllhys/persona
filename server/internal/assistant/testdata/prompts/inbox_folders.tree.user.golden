@@ -1,0 +1,15 @@
+已有的文件夹（后面是里面的事项数）：
+- projects/example/releases（1）
+- work/alerts（1）
+
+用户自己归档过的（照着用户的习惯来）：
+- 发布群 → projects/example/releases
+
+要归档的事项：
+
+id：mail:1
+类型：mail
+标题：示例服务告警：5xx 升高
+来自：alerts@example.com
+摘要：示例服务 5xx 升高，值班请看
+内容：告警：示例服务 5xx 升高 详情见面板

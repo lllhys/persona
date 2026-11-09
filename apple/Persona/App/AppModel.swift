@@ -150,6 +150,8 @@ final class AppModel {
     /// Mode's hub, which is one for the whole process: several models side by side, each a device of its own (the
     /// shared sync scenarios with two devices, `SyncDevice`).
     @ObservationIgnored var linkHooksForTests: (transport: APIClient.Transport, socket: () -> LocalSocket)?
+    /// Unit tests: every group's link counts as up (true) or down (false) without a socket (`isLive`, the outbox's sends).
+    @ObservationIgnored var linksUpForTests: Bool?
     /// Unit tests: no machines, agents or cards, whatever `init` restored. A simulator paired by an earlier run keeps
     /// its last snapshot, and a test of everything the model holds (the watch summary) would count those too (#1638).
     func forgetRestoredForTests() {
@@ -266,6 +268,8 @@ final class AppModel {
     @ObservationIgnored private(set) var chats: [SessionKey: ChatStore] = [:]
     /// The groups whose outbox is going out now (`flushOutbox`): one group sending does not hold back another.
     @ObservationIgnored var flushingOutbox = Set<String>()
+    /// Per group: the one retry of its waiting messages due in a few seconds (`retryOutboxSoon`).
+    @ObservationIgnored var outboxRetry: [String: Task<Void, Never>] = [:]
     /// Per group: the task asking a member-connected group's center whether it answers again (HubLinks.watchCenter).
     @ObservationIgnored var centerWatch: [String: Task<Void, Never>] = [:]
     @ObservationIgnored let outboxWriter = Debouncer(.milliseconds(300))
@@ -1176,7 +1180,12 @@ final class AppModel {
     /// The hub-level group's socket is up.
     var isLive: Bool { live.state == .connected }
     /// A group's socket is up.
-    func isLive(_ group: String) -> Bool { socket(group)?.state == .connected }
+    func isLive(_ group: String) -> Bool {
+        #if DEBUG
+        if let linksUpForTests { return linksUpForTests }
+        #endif
+        return socket(group)?.state == .connected
+    }
 
 
     /// Starts (or continues, with the last epoch and seq the view holds) a session's terminal stream. grid: drive it at
@@ -1367,6 +1376,8 @@ final class AppModel {
         if plan.refetch { AgentSync.shared.schedule() }
         // A new socket is a new client for the hub: the Files / Git panes' folders are told again and refreshed (#3089).
         fsLive.reconnected(group: group)
+        // Waiting messages get a whole minute on the new socket before they fail (`OutboxWait`).
+        restartOutboxWaits(group)
         // Ports whose question failed while the hub was unreachable are asked again (#4302).
         portPresence.reconnected(group: group)
         // Paths whose lookup failed while the hub was unreachable are looked up again (#4352).

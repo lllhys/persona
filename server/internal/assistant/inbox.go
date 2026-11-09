@@ -93,6 +93,10 @@ type InboxItem struct {
 	TriagedBy string `json:"triaged_by,omitempty"`
 	// Parent is what the item grew out of: another item, a todo or an agent session (inbox_parent.go, #2128).
 	Parent *InboxParent `json:"parent,omitempty"`
+	// Folder is the "/"-separated folder path the item is filed under ("" none); FolderBy says who filed it, "model"
+	// or "user" (inbox_folders.go, #2463).
+	Folder   string `json:"folder,omitempty"`
+	FolderBy string `json:"folder_by,omitempty"`
 
 	// The event's part (inbox_events.go, inbox_handling.go): its section (listed only), urgent (someone waits, a
 	// deadline is near), the manager's recap, the processing conversation, the one current suggestion, the handling chain
@@ -113,6 +117,7 @@ type InboxItem struct {
 	TriagedAt string `json:"triaged_at,omitempty"` // Last when it was triaged
 	BodyOf    string `json:"body_of,omitempty"`    // mail: Last when the full text was read into Preview / Context
 	JudgedAt  string `json:"judged_at,omitempty"`  // Last when model 2 looked at it
+	FolderOf  string `json:"folder_of,omitempty"`  // Last when the model was asked for its folder
 	// Rules are the item's own triage rules, from its connector (InboxThing.Rules): they replace inbox.rules for it.
 	Rules string `json:"rules,omitempty"`
 	// ArrivedAt is the clock here when the item first held Last (ArrivedOf), as listed or saved: a bulk "Done" over a
@@ -197,7 +202,7 @@ func conversationOf(it *InboxItem) *wire.MessagingConversationRef {
 // listed is the item as the list shows it (no context).
 func (it *InboxItem) listed() InboxItem {
 	c := *it
-	c.Context, c.Last, c.TriagedAt, c.BodyOf, c.JudgedAt, c.Rules, c.ArrivedOf = "", "", "", "", "", "", ""
+	c.Context, c.Last, c.TriagedAt, c.BodyOf, c.JudgedAt, c.Rules, c.ArrivedOf, c.FolderOf = "", "", "", "", "", "", "", ""
 	c.ArrivedAt = time.Time{}
 	c.Meta, c.Group = nil, nil
 	c.ChainSeq, c.SuggestSeq = 0, 0
@@ -284,6 +289,9 @@ type inboxBook struct {
 	mutesMu     sync.Mutex // one read-change-save of the kept mutes at a time
 	policies    []InboxPolicy
 	policiesMu  sync.Mutex // one read-change-save of the kept policies at a time (inbox_policies.go)
+	folderCfg   InboxFolderConfig
+	folderCfgMu sync.Mutex // one read-change-save of the folder settings at a time (inbox_folders.go)
+	foldering   sync.Mutex // one folder pass at a time
 	cardSends   cardLocks  // a message card's id → the lock its "Send" holds (sendFromCard)
 	// translations are the translations made, by model, text or mail and language (inbox_translate.go).
 	translations translateCache
@@ -516,6 +524,7 @@ var errCannotReply = i18n.ErrEnglish("inbox-errors.cannot_reply")
 func (s *Service) inboxRoutes() {
 	s.inboxMuteRoutes()
 	s.inboxPolicyRoutes()
+	s.inboxFolderRoutes()
 	s.inboxParentRoutes()
 	s.inboxBulkRoutes()
 	s.inboxSuggestionRoutes()

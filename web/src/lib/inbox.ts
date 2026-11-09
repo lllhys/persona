@@ -23,6 +23,7 @@ import { onHubEvent } from "./store";
 import type { AssistantInfo, Interaction, Session } from "./types";
 import { toast } from "../ui/atoms";
 import { byTime } from "./times";
+import { inFolderFilter } from "./inbox-folders";
 import { actedText, actOnSuggestion, statusOf, type ChainEntry, type InboxHandling, type InboxRelated, type InboxStatus, type InboxSuggestion, type SuggestionAction } from "./inbox-events";
 
 // ── wire types (docs/protocol/protocol.md "Inbox API") ─────────
@@ -117,6 +118,10 @@ export interface InboxItem {
   translations?: Record<string, { subject: string; preview: string }>;
   /** What it grew out of (docs/assistant/inbox.md "Threads of origin"): another item, a todo or an agent session ("<machine>/<session>"). */
   parent?: InboxParent;
+  /** The folder path it is filed under ("work/alerts/engine"; docs/assistant/inbox.md "Folders"); absent: unfiled. `folder_by`
+   *  says who filed it: the model, or the user (then the model leaves it alone). */
+  folder?: string;
+  folder_by?: "model" | "user";
   /** What it can be muted by (docs/assistant/inbox.md "Muting"): its repository, chat or sender in its source. */
   mutes?: InboxMuteOption[];
   // ── events (docs/assistant/inbox.md "Events, handling chain, suggestions"; lib/inbox-events.ts): absent from an older hub ──
@@ -431,11 +436,13 @@ export function shortTime(iso?: string, now = new Date()): string {
 
 // ── filters and sections ─────────────────────────────────
 
-/** source: "" all, "feishu", a mail account id or a connector's id; kind: "" all, mention, dm, group, mail, agent. */
+/** source: "" all, "feishu", a mail account id or a connector's id; kind: "" all, mention, dm, group, mail, agent;
+ *  folder: "" all, a folder path (it and everything under it) or UNFILED. */
 export interface InboxFilter {
   source: string;
   kind: string;
   query: string;
+  folder?: string;
 }
 
 export const KIND_FILTERS: { key: string; label: string }[] = [
@@ -455,6 +462,7 @@ export function matches(it: InboxItem, f: InboxFilter): boolean {
   if (f.source === "feishu" && !isLark(it)) return false;
   if (f.source && f.source !== "feishu" && it.account !== f.source && it.mail?.account_id !== f.source) return false;
   if (f.kind === "agent") return false; // only the waiting agents
+  if (f.folder && !inFolderFilter(it, f.folder)) return false;
   if (f.kind) {
     const ok = it.kind === f.kind || (f.kind === "group" && it.kind === "bot") || (f.kind === "mention" && (it.kind === "doc" || (it.kind === "moment" && kindLabel(it) === AT_ME)));
     if (!ok) return false;
@@ -548,7 +556,7 @@ export function interactionAgentTitle(ix: Interaction): string {
 }
 
 export function waitingAgents(interactions: Interaction[], sessions: Record<string, Session[]>, mutes: AgentMutes, f: InboxFilter): Interaction[] {
-  if (f.source || (f.kind && f.kind !== "agent")) return [];
+  if (f.source || f.folder || (f.kind && f.kind !== "agent")) return [];
   return interactions
     .filter((ix) => !interactionMuted(ix, sessions, mutes) && hasText([ix.session_title, ix.summary, interactionTitle(ix), interactionAsk(ix)], f.query))
     .sort((a, b) => byTime(a.created_at, b.created_at) || a.id.localeCompare(b.id));
@@ -1066,6 +1074,23 @@ export async function setDone(item: InboxItem, done: boolean): Promise<boolean> 
     settleMark(key, mark, false);
     undoMarks(new Map([[key, before]]));
     toast(t(done ? "lib-inbox.done_failed" : "lib-inbox.undone_failed", { error: errorText(e) }), "error");
+    return false;
+  }
+}
+
+/** "Move to folder…": files the item under `folder` by hand ("" in no folder), or hands it back to the model (null).
+ *  Shown at once; a failure puts it back. Resolves to whether the hub took it. */
+export async function moveToFolder(item: InboxItem, folder: string | null): Promise<boolean> {
+  const before = listed(item);
+  if (!before) return false;
+  patchItem(before, (it) => ({ ...it, folder: folder || undefined, folder_by: folder === null ? undefined : "user" }));
+  try {
+    const r = await api<InboxItem>(`${itemPath(item.id)}/folder`, { method: "PUT", json: { folder }, headers: itemRequest(before) });
+    if (r?.id === item.id) replaceItem(keepStamp(r, before));
+    return true;
+  } catch (e) {
+    patchItem(before, (it) => ({ ...it, folder: before.folder, folder_by: before.folder_by }));
+    toast(t("lib-inbox.folder_failed", { error: errorText(e) }), "error");
     return false;
   }
 }

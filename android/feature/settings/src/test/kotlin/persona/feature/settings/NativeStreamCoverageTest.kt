@@ -23,6 +23,7 @@ import org.robolectric.annotation.GraphicsMode
 import persona.core.contracts.generated.*
 import persona.core.contracts.stream.*
 import persona.core.designsystem.*
+import persona.core.designsystem.icons.PhIcons
 
 /** COMPONENT evidence only: fixed server-schema payloads, not Deno/HackerNews or live transport E2E. */
 @RunWith(AndroidJUnit4::class)
@@ -569,7 +570,10 @@ class NativeStreamCoverageTest {
 
     @Test fun schemaIconMeaningsMustBeRenderedOrRefusedInsteadOfBecomingAnExtensionIcon() {
         val view = Json.parseToJsonElement(snapshot("""{"type":"row","key":"row","title":"Home","icon":"home"}""")).jsonObject.getValue("view").jsonObject
-        assertTrue(NativeExtensionProfile.gaps(view).any { it.endsWith("icon") })
+        assertEquals(PhIcons.House, ExtensionIcons.of("home"))
+        assertFalse(NativeExtensionProfile.gaps(view).any { it.endsWith("icon") })
+        val unknown = Json.parseToJsonElement(snapshot("""{"type":"row","key":"row","title":"Unknown","icon":"future-icon"}""")).jsonObject.getValue("view").jsonObject
+        assertTrue(NativeExtensionProfile.gaps(unknown).any { it.endsWith("icon") })
         val schema = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
             .map { File(it, "schema/extension/view.schema.json") }.first { it.isFile }
         Json.parseToJsonElement(schema.readText()).jsonObject.getValue("\$defs").jsonObject.getValue("NavIcon").jsonObject.getValue("enum").jsonArray.forEach { entry ->

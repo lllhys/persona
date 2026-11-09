@@ -66,7 +66,7 @@ func (s *Service) inboxUp(w http.ResponseWriter, r *http.Request) bool {
 // loadInbox reads the items still remembered and the mutes; false when the database could not be read.
 func (s *Service) loadInbox(ctx context.Context) bool {
 	b := &s.inbox
-	if !s.loadInboxMutes(ctx) || !s.loadInboxPolicies(ctx) {
+	if !s.loadInboxMutes(ctx) || !s.loadInboxPolicies(ctx) || !s.loadInboxFolders(ctx) {
 		return false
 	}
 	st := s.inboxDB()

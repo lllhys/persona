@@ -5036,6 +5036,35 @@ ITEM_MUTES = {
 }
 for _x in INBOX:
     if _x["id"] in ITEM_MUTES: _x["mutes"] = ITEM_MUTES[_x["id"]]
+
+# Folders (docs/assistant/inbox.md "Folders", #2463): GET/PUT /api/v1/inbox/folders and PUT /api/v1/inbox/{id}/folder.
+# MOCK_INBOX_FOLDERS=1 turns automatic folders on and files most items (one by hand); the rest stay unfiled.
+FOLDER_CFG = {"enabled": bool(os.environ.get("MOCK_INBOX_FOLDERS")), "rules": ""}
+if os.environ.get("MOCK_INBOX_FOLDERS"):
+    FOLDER_CFG["rules"] = "Messages from build and alert bots go to work/alerts/<service>"
+    for _id, _f, _by in [("lark:f1:100", "projects/atlas/release", "model"), ("lark:f2:200", "projects/atlas/design", "user"),
+                         ("mail:acc1:t1:501", "work/talks", "model"), ("lark:f3:300", "personal/hiking", "model"),
+                         ("mail:acc1:t2:502", "personal/shopping", "model"), ("mail:acc1:t3:503", "subscriptions/newsletters", "model"),
+                         ("github:review12", "work/reviews/example-repo", "model"), ("github:ci7", "work/alerts/ci", "model")]:
+        for _x in INBOX:
+            if _x["id"] == _id: _x["folder"], _x["folder_by"] = _f, _by
+
+
+def folder_state(query):
+    """GET /api/v1/inbox/folders: the settings and the folders the listed items are filed in, most used first."""
+    by = {}
+    for x in inbox_for(query):
+        if not x.get("folder"): continue
+        f = by.setdefault(x["folder"], {"path": x["folder"], "count": 0, "open": 0})
+        f["count"] += 1
+        if not x.get("done_at"): f["open"] += 1
+    return dict(FOLDER_CFG, folders=sorted(by.values(), key=lambda f: (-f["count"], f["path"])))
+
+
+def normalize_folder(s):
+    """The hub's normalizeFolder, enough for the mock."""
+    segs = [" ".join(seg.split())[:40] for seg in str(s).replace("\\", "/").split("/")]
+    return "/".join([x for x in segs if x and x not in (".", "..")][:6])
 SOURCE_NAMES = {"lark": "飞书", "mail": "邮件", "github": "GitHub", "imessage": "信息", "telegram": "Telegram"}
 # The mutes the user set (GET/POST/DELETE /api/v1/inbox/mutes); MOCK_MUTES=1 starts with two.
 MUTES = [] if not os.environ.get("MOCK_MUTES") else [
@@ -11895,6 +11924,30 @@ PLUGINS["example-gateway"] = {
             "icon": "chart", "badge": {"text": "3", "tone": "danger"}},
            # UI version 3's components and pages (docs/extensions/extensions.md "UI version 3"): -openPlugin example-gateway -openPluginPage notes
            {"plugin": "example-gateway", "plugin_name": "Example 网关面板", "id": "notes", "title": "笔记（组件 v3）", "placement": "plugin_page", "size": "full"}]}
+# MOCK_EXTENSION_PICKERS=1 (with MOCK_EXTENSIONS): a chat extension whose form picks one machine (format machine, Macs and
+# Linux) and launchers (format launcher) from the hub's lists, and steps whole numbers (#2385). Its auto-reply launcher
+# names one the hub no longer has, so its picker keeps it, marked.
+if os.environ.get("MOCK_EXTENSION_PICKERS"):
+    PLUGINS["example-agent-chat"] = {
+        "id": "example-agent-chat", "name": "Example 聊天", "kind": "connectors", "status": "running", "version": "0.4.0", "source": "installed",
+        "enabled": True, "description": "以你的身份接入 Example 聊天：消息进收件箱；在聊天里发 /agent 交给助手，被 @ 时可让 AI 代答。",
+        "contributes": {"connectors": ["exampleagentchat"]}, "publisher": "example", "origin": "market:3f2a9c1d0b/example-agent-chat",
+        "form": {"fields": [
+            {"name": "agent", "type": "boolean", "title": "聊天里的 /agent", "default": False,
+             "description": "在聊天里发「/agent 要求」，交给助手处理并以你的身份回复"},
+            {"name": "agent_machine", "type": "string", "format": "machine", "os": ["darwin", "linux"], "title": "/agent 在哪台电脑上跑",
+             "description": "空着用助手那台"},
+            {"name": "agent_launcher", "type": "string", "format": "launcher", "title": "/agent 用的启动器", "description": "空着用助手的"},
+            {"name": "agent_reply_mode", "type": "string", "title": "/agent 回复方式", "default": "quote",
+             "enum": [{"value": "quote", "title": "引用回复"}, {"value": "thread", "title": "回复到话题"}]},
+            {"name": "agent_continue_hours", "type": "integer", "title": "「同一聊天」接着多久（小时）", "minimum": 1, "maximum": 72, "default": 4,
+             "description": "距上一条 /agent 多少小时内接着那段对话（1–72）"},
+            {"name": "auto_reply", "type": "string", "title": "别人 @我 时 AI 代答", "default": "off",
+             "enum": [{"value": "off", "title": "关"}, {"value": "all", "title": "所有聊天"}, {"value": "allowlist", "title": "只在白名单里的聊天"}]},
+            {"name": "auto_reply_launcher", "type": "string", "format": "launcher", "title": "代答用的启动器", "description": "空着用 /agent 的"}]},
+        "config": {"agent_machine": "server", "auto_reply_launcher": "cc_retired"}, "secrets": [],
+        "permissions": [_RUNS, {"key": "network", "title": "访问网络", "detail": "chat.example.com"}]}
+
 # A plugin whose program runs on computers (docs/extensions/extensions.md "Programs running on computers", #1830): its field picking them asks
 # before one is switched on (the hub's x-confirm), each machine's row says how the program is there (nodes).
 PLUGINS["example-helper"] = {
@@ -13940,6 +13993,7 @@ class H(BaseHTTPRequestHandler):
             other = other_manager(self)
             if other and other[1]: return self.send_json(*other[1])
             return self.send_json({"mutes": OTHER_MUTES.get(other[0], []) if other else MUTES})
+        if p == "/api/v1/inbox/folders": return self.send_json(folder_state(q))
         if p == "/api/v1/inbox/policies":
             other = other_manager(self)
             if other and other[1]: return self.send_json(*other[1])
@@ -15113,6 +15167,25 @@ class H(BaseHTTPRequestHandler):
             pid = p.rsplit("/", 1)[1]
             PLACES[:] = [x for x in PLACES if x["id"] != pid]
             return self.send_json({"ok": True})
+        if p == "/api/v1/inbox/folders" and self.command == "PUT":
+            body = json.loads(self.last_body or b"{}")
+            if "enabled" in body: FOLDER_CFG["enabled"] = bool(body["enabled"])
+            if "rules" in body: FOLDER_CFG["rules"] = str(body["rules"] or "").strip()
+            return self.send_json(folder_state({}))
+        if p.startswith("/api/v1/inbox/") and p.endswith("/folder") and self.command == "PUT":
+            iid = unquote(p[len("/api/v1/inbox/"):-len("/folder")])
+            it = next((x for x in INBOX if x["id"] == iid), None)
+            if not it: return self.send_json({"error": "no such inbox item"}, 404)
+            folder = json.loads(self.last_body or b"{}").get("folder")
+            if folder is None:
+                it.pop("folder", None); it.pop("folder_by", None)
+            else:
+                f = normalize_folder(folder)
+                if not f and str(folder).strip(): return self.send_json({"error": "folder must have at least one name between the slashes"}, 400)
+                it["folder_by"] = "user"
+                if f: it["folder"] = f
+                else: it.pop("folder", None)
+            return self.send_json(dict({k: v for k, v in it.items() if k != "context"}, version=inbox_version(it)))
         if p == "/api/v1/inbox/policies" and self.command == "POST":
             other = other_manager(self)
             if other and other[1]: return self.send_json(*other[1])
@@ -16207,6 +16280,7 @@ def features():
     return _features_without_channels() + (["channels"] if CHANNELS_MODE else [])
 
 
+MOCK_HELP.append("MOCK_EXTENSION_PICKERS=1  （配合 MOCK_EXTENSIONS=1）多一个扩展「Example 聊天」：设置里选一台电脑（format machine）、选启动器（format launcher，代答的那个已经不在了）、整数带步进（#2385）")
 MOCK_HELP.append("MOCK_EXTENSION_OPS=1|fail  （配合 MOCK_EXTENSIONS）扩展的安装 / 升级 / 卸载分步骤推进度（extension_operation 事件）：后台预览、停在等你同意、同意后同一个操作接着装；fail：每个扩展第一次安装停在「启动」、第一次卸载停在「删除」，都能重试；MOCK_EXTENSION_OPS_STEP=秒 每步的时长；MOCK_EXTENSION_INSTALL_DELAY=秒 没有分步骤的旧 hub 安装 / 卸载要这么久才回（#3307）")
 MOCK_HELP.append("MOCK_MANAGER_NAS=1  （默认的三个管理者）NAS 归离线的「家里」：像 hub 一样显示成离线，error 是 hub 的「助手暂时连不上，稍后再试」；它的一个 agent（备份脚本）状态 unknown")
 MOCK_HELP.append("MOCK_MANAGER_OUTDATED=1  设置 › 管理者：「工作」带 needs_update（它还不读自己的 manager.json，hub 在它在线时这样标）")

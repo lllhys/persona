@@ -27,5 +27,7 @@
   "hint_managers": "Where each assistant runs and whether it's online",
   "group_personal": "Personal",
   "group_assistant": "Assistant",
-  "group_system": "System"
+  "group_system": "System",
+  "tab_knowledge": "Knowledge selection",
+  "hint_knowledge": "What chats and documents Persona reads and keeps"
 }

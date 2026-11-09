@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Persona
 
@@ -25,5 +26,34 @@ struct OutboxFlushTests {
 
     @Test func nothingGoesWhileNoGroupIsUp() {
         #expect(OutboxFlush.batches([home, work], ready: { _ in false }, busy: []).isEmpty)
+    }
+}
+
+/// A message that keeps coming back waiting while its group's link is up fails after `OutboxWait.connectedLimit`;
+/// waiting while the link is down has no limit.
+struct OutboxWaitTests {
+    private let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    @Test func aFirstWaitOnAnUpLinkStartsTheRun() {
+        #expect(OutboxWait.next(.waiting, since: nil, now: t0, linkUp: true) == .init(outcome: .waiting, since: t0))
+    }
+
+    @Test func aWaitWithinTheLimitKeepsTheRunsStart() {
+        let next = OutboxWait.next(.waiting, since: t0, now: t0.addingTimeInterval(OutboxWait.connectedLimit - 1), linkUp: true)
+        #expect(next == .init(outcome: .waiting, since: t0))
+    }
+
+    @Test func aWaitAtTheLimitFailsTheMessage() {
+        let next = OutboxWait.next(.waiting, since: t0, now: t0.addingTimeInterval(OutboxWait.connectedLimit), linkUp: true)
+        #expect(next == .init(outcome: .failed, since: nil, gaveUp: true))
+    }
+
+    @Test func aWaitWhileTheLinkIsDownNeverFailsAndEndsTheRun() {
+        let next = OutboxWait.next(.waiting, since: t0, now: t0.addingTimeInterval(3600), linkUp: false)
+        #expect(next == .init(outcome: .waiting, since: nil))
+    }
+
+    @Test func aSendEndsTheRun() {
+        #expect(OutboxWait.next(.sent, since: t0, now: t0.addingTimeInterval(5), linkUp: true) == .init(outcome: .sent, since: nil))
     }
 }
