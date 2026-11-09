@@ -592,6 +592,12 @@ private struct AgentsList: View {
     private var compactTop: Bool { false }
     #endif
     @StoredValue("dev.machineFilter") private var machineFilter = ""
+    @StoredValue("dev.harnessFilter") private var harnessFilter = ""
+    @StoredValue("dev.projectFilter") private var projectFilter = ""
+    @StoredValue("dev.modelFilter") private var modelFilter = ""
+    @StoredValue("dev.pinnedOnly") private var pinnedOnly = false
+    @StoredValue("dev.searchScope") private var searchScope: AgentSearchScope = .all
+    @StoredValue("dev.searchAsCode") private var searchAsCode = false
     /// Several groups of hubs: the one the list shows ("" = all; `HubFilter`).
     @StoredValue(HubFilter.key) private var hubFilter = ""
     @StoredValue("dev.grouping") private var storedGrouping: DevGrouping = .standard // by repository first (#2108)
@@ -711,7 +717,9 @@ private struct AgentsList: View {
         var preferences: [String: AgentListProjection.Preferences] = [:]
         for link in model.links { preferences[link.group] = .init(pins: link.pins.pins, mutes: link.pins.mutes) }
         return .init(grouping: grouping.rawValue, sort: sort.rawValue, filter: quick, query: query,
-                     machine: machineFilter, hub: hubFilter, multiHub: model.isMultiHub, kept: kept,
+                     searchScope: searchScope, searchAsCode: searchAsCode,
+                     machine: machineFilter, harness: harnessFilter, project: projectFilter, model: modelFilter,
+                     pinnedOnly: pinnedOnly, hub: hubFilter, multiHub: model.isMultiHub, kept: kept,
                      held: model.heldInList, preferences: preferences,
                      pagedGroups: Set(model.sessionLists.lists.filter { $0.value.paged }.keys),
                      listQuery: listQuery)

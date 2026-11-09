@@ -5,7 +5,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { t } from "../i18n";
 import { NARROW, useMedia } from "../lib/viewport";
 import { AGENT_FILTERS, agentFilter, applyFilter, arrangeSpaces, BOTMUX_HIDDEN_KEY, botmuxAndFilter, filterCounts, isBotmux, isSpaceMuted, matchingKeys, shownFilters, unreadOf, withoutBotmux, type AgentFilter, type FilterCounts } from "../lib/agent-filter";
-import { AGENT_SORT_KEY, AGENT_SORTS, agentSort, machineTreeByUpdate, projectsByUpdate, repoMachinesByUpdate, todoTreeByUpdate, type AgentSort } from "../lib/agent-sort";
+import { applyDimensionFilters, buildAgentFacets, DEFAULT_DIMENSION_FILTERS, hasActiveDimensionFilters, type AgentDimensionFilters } from "../lib/agent-chatlist-filter";
+import { AGENT_SORT_KEY, AGENT_SORTS, agentSort, byUpdated, machineTreeByUpdate, projectsByUpdate, repoMachinesByUpdate, todoTreeByUpdate, type AgentSort } from "../lib/agent-sort";
+import { AgentChatListRow, AgentDimensionFilterBar } from "./agents/AgentChatListControls";
 import { agentGrouping, AGENT_GROUPINGS, type AgentGrouping, buildAgentGroups, buildSpaces, hostsOf, isQuiet, sessionHost, splitAgentSessions, type AgentGroup, type Space } from "../lib/agent-groups";
 import { buildRepoMachineTree } from "../lib/agent-repos";
 import { keyedRefs } from "../lib/keyed-refs";
@@ -447,7 +449,7 @@ function AgentsBlock(props: AgentsBlockProps) {
   useEffect(() => onGrouping(setGrouping), []);
   // A saved grouping (including an explicitly selected default) is a view preference the paged API cannot express.
   const grouped = AGENT_GROUPINGS.some((g) => g.key === grouping);
-  const full = pins.sessions.length > 0 || pins.spaces.length > 0 || grouped;
+  const full = !props.foldable || pins.sessions.length > 0 || pins.spaces.length > 0 || grouped;
   const chooseGrouping = (g: AgentGrouping) => {
     storeValue("persona.agentGrouping", g);
     setGrouping(g);
@@ -496,10 +498,26 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   const { sessions: all, loaded } = useFullAgentSessions();
   const mutes = useStore((s) => s.mutes);
   const pins = useStore((s) => s.pins);
+  const interactions = useStore((s) => s.interactions);
   const todos = useStore((s) => s.todos);
   const todosSupported = useStore((s) => s.todosSupported);
   const todosLoaded = useStore((s) => s.todosLoaded);
   const launches = useStore((s) => Object.values(s.launches).filter((launch) => launch.phase !== "ready"));
+  const [dimFilters, setDimFilters] = useState<AgentDimensionFilters>(DEFAULT_DIMENSION_FILTERS);
+  const [chatList, setChatList] = useState<boolean>(() => {
+    const saved = localStorage.getItem("persona.agentChatList");
+    if (saved === "1") return true;
+    if (saved === "0") return false;
+    return !foldable && !storedValue("persona.agentGrouping");
+  });
+  const toggleChatList = () => {
+    setChatList((prev) => {
+      const next = !prev;
+      localStorage.setItem("persona.agentChatList", next ? "1" : "0");
+      return next;
+    });
+    hover(null);
+  };
   const availableGroupings = useMemo(() => {
     if (todosSupported === false) return AGENT_GROUPINGS.filter((g) => g.key !== "todo");
     return AGENT_GROUPINGS;
@@ -529,7 +547,14 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
     hover(null);
   };
   const listed = useMemo(() => withoutBotmux(all, botmuxHidden), [all, botmuxHidden]);
-  const { live, recent: offline } = useMemo(() => splitAgentSessions(listed, machines), [listed, machines]);
+  const facets = useMemo(() => buildAgentFacets(listed, machines, pins), [listed, machines, pins]);
+  const evalCtx = useMemo(() => ({ machines, pins, interactions, now: Date.now() }), [machines, pins, interactions]);
+  const { sessions: dimFiltered, plan: searchPlan } = useMemo(
+    () => applyDimensionFilters(listed, dimFilters, evalCtx, facets),
+    [listed, dimFilters, evalCtx, facets],
+  );
+  const dimActive = hasActiveDimensionFilters(dimFilters);
+  const { live, recent: offline } = useMemo(() => splitAgentSessions(dimFiltered, machines), [dimFiltered, machines]);
   const seeded = useRef(false);
   useEffect(() => {
     // a filter saved in this browser starts from what it matches once the list has loaded
@@ -537,16 +562,17 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
     seeded.current = true;
     setKept(matchingKeys(live, filter, mutes));
   }, [loaded, live, filter, mutes]);
-  const filtered = filter !== "all";
+  const filtered = filter !== "all" || dimActive;
   const filterTotals = useMemo(() => filterCounts(live, mutes), [live, mutes]);
   const shown = useMemo(() => applyFilter(live, filter, mutes, kept), [live, filter, mutes, kept]);
   // a pinned agent shows once, under "Pinned" (an offline one too, unless a filter is on); the groups below are the rest
-  const pinnedAgents = useMemo(() => pinnedSessions(filtered ? shown : [...shown, ...offline], pins), [filtered, shown, offline, pins]);
+  const pinnedAgents = useMemo(() => pinnedSessions(filter !== "all" ? shown : [...shown, ...offline], pins), [filter, shown, offline, pins]);
   const unpinned = useMemo(() => {
     const keys = new Set(pinnedAgents.map(agentKey));
     return keys.size ? shown.filter((s) => !keys.has(agentKey(s))) : shown;
   }, [shown, pinnedAgents]);
-  const recent = useMemo(() => (filtered ? [] : offline.filter((s) => !pinnedAgents.some((p) => agentKey(p) === agentKey(s)))), [filtered, offline, pinnedAgents]);
+  const chatListUnpinned = useMemo(() => [...unpinned].sort(byUpdated), [unpinned]);
+  const recent = useMemo(() => (filter !== "all" ? [] : offline.filter((s) => !pinnedAgents.some((p) => agentKey(p) === agentKey(s)))), [filter, offline, pinnedAgents]);
   const { spaces, loose } = useMemo(() => {
     const built = buildSpaces(unpinned, machines);
     return byUpdate ? projectsByUpdate(built) : built;
@@ -660,8 +686,9 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
       <FoldScope.Provider value={AGENTS_FOLD}>
       <Collapse open={!folded}>
       <div inert={folded || undefined}>
-      <GroupingBar groupings={availableGroupings} selection={shownGrouping} onChoose={chooseGrouping} />
+      <GroupingBar groupings={availableGroupings} selection={shownGrouping} onChoose={(g) => { setChatList(false); localStorage.setItem("persona.agentChatList", "0"); chooseGrouping(g); }} />
       <FilterBar selection={filter} counts={filterTotals} onChoose={choose} botmux={botmuxCount > 0 || botmuxHidden ? { hidden: botmuxHidden, onToggle: toggleBotmux } : undefined} />
+      <AgentDimensionFilterBar filters={dimFilters} onChange={setDimFilters} facets={facets} plan={searchPlan} chatList={chatList} onToggleChatList={toggleChatList} />
       {/* "herdr is not running on <computer>" with "Start" (#1916): before a message to an agent there fails */}
       {/* the one line about the hub (#2897): updating, rolled back, a newer version or image */}
       {!folded && <HubNoticeLine />}
@@ -675,10 +702,10 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
         </button>
       )}
 
-      {filtered && shown.length === 0 && (
+      {filtered && shown.length === 0 && pinnedAgents.length === 0 && (
         <div className="mt-2 flex items-center gap-2 px-2 py-1.5 text-[12px] text-ink-3">
-          <span className="min-w-0 flex-1 truncate">{t("sidebar.filter_empty", { filter: AGENT_FILTERS.find((f) => f.key === filter)!.label })}</span>
-          <button type="button" onClick={() => choose("all")} className="touch-hit relative z-10 shrink-0 whitespace-nowrap rounded-control px-1.5 py-0.5 text-[12px] font-medium text-accent-ink hover:bg-hover">{t("sidebar.show_all")}</button>
+          <span className="min-w-0 flex-1 truncate">{filter !== "all" ? t("sidebar.filter_empty", { filter: AGENT_FILTERS.find((f) => f.key === filter)!.label }) : t("sidebar.no_match")}</span>
+          <button type="button" onClick={() => { choose("all"); setDimFilters(DEFAULT_DIMENSION_FILTERS); }} className="touch-hit relative z-10 shrink-0 whitespace-nowrap rounded-control px-1.5 py-0.5 text-[12px] font-medium text-accent-ink hover:bg-hover">{t("sidebar.show_all")}</button>
         </div>
       )}
 
@@ -686,6 +713,9 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
         <Section title={<span className="flex items-center gap-1"><Icon name="pin" size={10} stroke={2.2} />{t("sidebar.pinned_section")}</span>} folded={pinnedFolded} onToggle={togglePinned} right={<SessionTally sessions={pinnedAgents} folded={pinnedFolded} />}>
           {pinnedAgents.map((s) => {
             const key = `s:${s.machine_id}/${s.session_id}`;
+            if (chatList) {
+              return <AgentChatListRow key={key} s={s} k={key} reg={reg} hover={hover} active={activeKey === key} to={{ name: "session", mid: s.machine_id, sid: s.session_id }} go={go} pinned mutes={mutes} filters={dimFilters} ctx={evalCtx} onMenu={onRowMenu} />;
+            }
             const context = [s.space_name || baseName(s.cwd), machines.length > 1 ? machineWithHub(s.machine_id, machines) : ""].filter(Boolean).join(" · ");
             return <SessionRow key={key} s={s} k={key} reg={reg} hover={hover} active={activeKey === key} to={{ name: "session", mid: s.machine_id, sid: s.session_id }} go={go} hint={context} onMenu={onRowMenu} />;
           })}
@@ -696,7 +726,14 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
         {launches.map((launch) => <NavRow key={launch.id} k={`s:${launch.machineId}/${launch.id}`} reg={reg} hover={hover} active={activeKey === `s:${launch.machineId}/${launch.id}`} to={{ name: "session", mid: launch.machineId, sid: launch.id }} go={go} icon={launch.phase === "failed" ? "retry" : "agent"} label={launch.text || baseName(launch.cwd) || t("sidebar.launch_untitled")} hint={launch.phase === "failed" ? t("sidebar.launch_failed") : t("sidebar.launch_background")} />)}
       </Section>}
 
-      {shownGrouping === "space" ? <>
+      {chatList ? (
+        <div className="mt-1 flex flex-col gap-1" data-testid="agent-chatlist-section">
+          {chatListUnpinned.map((s) => {
+            const key = `s:${s.machine_id}/${s.session_id}`;
+            return <AgentChatListRow key={key} s={s} k={key} reg={reg} hover={hover} active={activeKey === key} to={{ name: "session", mid: s.machine_id, sid: s.session_id }} go={go} pinned={false} mutes={mutes} filters={dimFilters} ctx={evalCtx} onMenu={onRowMenu} />;
+          })}
+        </div>
+      ) : shownGrouping === "space" ? <>
       {active.map((sp) => (
         <SpaceSection key={sp.key} sp={sp} machineName={machines.length > 1 ? machineWithHub(sp.machineId, machines) : undefined} reg={reg} hover={hover} activeKey={activeKey} go={go} pinned={isSpacePinned(sp.machineId, sp.name, pins)} muted={isSpaceMuted(sp, mutes)} onMenu={onSpaceMenu} onRowMenu={onRowMenu} onNavigate={onNavigate} />
       ))}

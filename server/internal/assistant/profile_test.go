@@ -340,7 +340,7 @@ func TestBoolSettingsSet(t *testing.T) {
 	word := map[bool]string{true: i18n.T(i18n.Default, "assistant-settings_tool.on"), false: i18n.T(i18n.Default, "assistant-settings_tool.off")}
 	// answer approves (or not) the one card, which must say card.
 	answer := func(allow bool, card string) {
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) { // sleep-ok: poll pendingQuestions until the approval card arrives
 			if qs := s.pendingQuestions(); len(qs) == 1 {
 				if qs[0].Summary != card {
 					t.Errorf("card %q, want %q", qs[0].Summary, card)

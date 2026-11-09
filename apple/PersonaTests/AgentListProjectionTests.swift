@@ -371,4 +371,50 @@ import Testing
         #expect(resolve(cache, next, revision: 2, state: state).base.map(\.key) == next.sessions.map(\.key))
         #expect(state.readerChanges == 1)
     }
+
+    @Test func composableDimensionFiltersSearchScopesAndSearchAsCodeFilterProjection() throws {
+        var claude = try session("claude-opus", state: "working", cwd: "/code/persona")
+        claude.agent = "claude"
+        claude.model = "claude-opus-5-5"
+        claude.asks = "Should we enable composable filters?"
+        claude.lastText = "Running `vitest`\nFinished composable filter bar."
+
+        var codex = try session("codex-err", state: "needs_you", cwd: "/code/orca")
+        codex.agent = "codex"
+        codex.model = "gpt-5"
+        codex.turnError = "Upstream gateway timeout"
+
+        var settings = AgentListProjection.Settings()
+        settings.preferences[""] = .init(pins: Pins(), mutes: Pins())
+        settings.preferences[""]!.pins.sessions = ["fixture-box/claude-opus"]
+
+        // Filter by harness + model + pinnedOnly
+        settings.harness = "claude"
+        settings.model = "opus"
+        settings.pinnedOnly = true
+        let byDims = AgentListProjection.build(input([claude, codex], settings: settings))
+        #expect(byDims.base.map(\.sessionID) == ["claude-opus"])
+        #expect(byDims.searchPlan.code.contains("s.harness === \"claude\""))
+        #expect(byDims.searchPlan.code.contains("s.isPinned"))
+
+        // Structured inline operators + errors scope
+        var opSettings = AgentListProjection.Settings()
+        opSettings.query = "harness:codex project:orca is:error timeout"
+        opSettings.searchScope = .errors
+        let byOps = AgentListProjection.build(input([claude, codex], settings: opSettings))
+        #expect(byOps.base.map(\.sessionID) == ["codex-err"])
+
+        // Conversation scope excludes tool noise (`Running vitest`) while matching prose
+        var proseSettings = AgentListProjection.Settings()
+        proseSettings.searchScope = .conversation
+        proseSettings.query = "vitest"
+        #expect(AgentListProjection.build(input([claude, codex], settings: proseSettings)).base.isEmpty)
+        proseSettings.query = "composable"
+        #expect(AgentListProjection.build(input([claude, codex], settings: proseSettings)).base.map(\.sessionID) == ["claude-opus"])
+
+        // Evidence snippet attributes role and highlights match
+        let snippet = try #require(claude.evidenceSnippet(query: "composable", scope: .all))
+        #expect(snippet.role == .user)
+        #expect(snippet.match.lowercased() == "composable")
+    }
 }

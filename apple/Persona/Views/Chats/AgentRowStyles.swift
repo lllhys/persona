@@ -149,6 +149,9 @@ extension SlotRow {
         HStack(spacing: Theme.Space.xs) {
             sourceLabel
             placeText(states: states).lineLimit(1)
+            if !session.modelShortName.isEmpty {
+                Chip(text: session.modelShortName, look: .outline, compact: true)
+            }
             if let todo = session.todo {
                 ViewThatFits(in: .horizontal) {
                     Chip(text: todo.title, symbol: Theme.Icon.todo, look: .outline)
