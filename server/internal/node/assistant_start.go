@@ -256,8 +256,14 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 	}
 	_, toolFlags := n.claudeAssistantMCPAndTools(id, cwd)
 	args = append(args, toolFlags...)
-	if execution.Model != "" {
-		args = append(args, "--model", execution.Model)
+	model := execution.Model
+	if model == "" && resume && execution.Fingerprint != "" && n.guestOf(id) == nil {
+		// The model configuration names none: the launcher's default, not the model the session ran on last
+		// (assistant_resume_model.go). A guest keeps what it started on.
+		model = n.resumeModel(launcher, cwd, settings)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	// bypassPermissions only takes as a flag at start; the other modes are set with a control request (syncAssistantModes).
 	var startMode string
@@ -306,7 +312,7 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 			"command": n.bin, "args": []string{"mcp"}, "env": map[string]string{"PERSONA_ASSISTANT": "1", "PERSONA_SESSION_ID": id},
 		}}}
 		compat.AddMCPAliases(mcpConfig["mcpServers"].(map[string]any))
-		start := sdkStart{id: id, cwd: cwd, model: execution.Model, permissionMode: startMode, resume: resume, mcp: mcpConfig,
+		start := sdkStart{id: id, cwd: cwd, model: model, permissionMode: startMode, resume: resume, mcp: mcpConfig,
 			allowedTools: strings.Join(append([]string{n.assistantTools()}, healthReportRules(cwd)...), ","), deny: n.healthDenyRules(cwd), settings: settings, plugin: hooks, compaction: &compaction}
 		var err error
 		if cmd, first, err = n.sdkCommand(bridge, launcher, start, env); err != nil {

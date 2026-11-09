@@ -9,6 +9,7 @@ import { useSyncExternalStore } from "react";
 import { api, ApiError, enc, errorText } from "./api";
 import { larkPath } from "./lark-accounts";
 import { itemHeaders } from "./manager-choice";
+import { sameValue } from "./stable-lines";
 
 // ── Show messages on home ──────────────────────────────────────
 
@@ -91,6 +92,21 @@ export function mergeConversations(have: readonly LarkConversation[], batch: rea
     out.push(c);
   }
   return out;
+}
+
+/** `next` with every chat that did not change kept as the object `prev` already holds, and `prev` itself when nothing
+ * changed: a refresh that reads the same chats again then gives React nothing to redraw. */
+function keepUnchanged(prev: LarkConversation[], next: LarkConversation[]): LarkConversation[] {
+  if (!prev.length) return next;
+  const old = new Map(prev.map((c) => [c.id, c]));
+  let same = prev.length === next.length;
+  const out = next.map((c, i) => {
+    const was = old.get(c.id);
+    const kept = was && sameValue(was, c) ? was : c;
+    if (kept !== prev[i]) same = false;
+    return kept;
+  });
+  return same ? prev : out;
 }
 
 /** The search covers what is loaded: chat names, and the last message (and its sender). */
@@ -229,7 +245,7 @@ export class LarkChatsStore {
         let pinned = this.s.pinned;
         try {
           const p = await this.deps.pinned(account);
-          if (!(account && p.account_id && p.account_id !== account)) pinned = p.conversations ?? [];
+          if (!(account && p.account_id && p.account_id !== account)) pinned = keepUnchanged(pinned, p.conversations ?? []);
         } catch (e) {
           if (isAccountChanged(e)) throw e;
           // the shelf keeps its last copy; the list itself came back
@@ -238,6 +254,7 @@ export class LarkChatsStore {
           this.set({ loading: false });
           continue;
         }
+        rows = keepUnchanged(this.s.rows, rows);
         this.set({ account, rows, pinned, cursor, pages: Math.max(read, 1), loaded: true, loading: false, problem: undefined, moreProblem: undefined });
       } catch (e) {
         if (request !== this.revision) {

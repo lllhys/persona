@@ -348,3 +348,98 @@ func TestBackfillOriginsOnPostgres(t *testing.T) {
 		t.Fatalf("read back: %q", o)
 	}
 }
+
+// The hub's snapshot says which extension's token opened a conversation, noted when it opened and from the hub's
+// headers only: none for the main conversation an extension opens, one the owner makes main later (for good, also
+// once main moves on), a conversation the hub's features or a channel start (whatever their origin's ref), a bus
+// caller naming one, a request whose role is not an extension's, or a conversation noted before opened_by was (it is
+// never backfilled).
+func TestOpenedByIsTheExtensionThatAsked(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeHub().withMachine()
+	f.settings = &Settings{MachineID: "server"}
+	s := newTestService(t, f)
+	openedBy := func(id string) string {
+		t.Helper()
+		for _, v := range f.lastSnapshot().Sessions {
+			if v.SessionID == id {
+				return v.OpenedBy
+			}
+		}
+		t.Fatalf("%s is not in the snapshot", id)
+		return ""
+	}
+	open := func(role, body string) proto.Session {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/assistant/conversations", strings.NewReader(body))
+		r.Header.Set(RoleHeader, role)
+		r.Header.Set(ExtensionHeader, "example-notes")
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		var out struct {
+			Session proto.Session `json:"session"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return out.Session
+	}
+	c := open("extension", `{"prompt":"x"}`)
+	if got := openedBy(c.SessionID); got != "example-notes" || c.OpenedBy != "example-notes" {
+		t.Fatalf("an extension's request: %q, answered %q", got, c.OpenedBy)
+	}
+	if c := open("full", `{"prompt":"x"}`); openedBy(c.SessionID) != "" || c.OpenedBy != "" {
+		t.Fatalf("an app's request naming an extension: %+v", c)
+	}
+	if c := open("extension", `{"prompt":"x","main":true}`); openedBy(c.SessionID) != "" || c.OpenedBy != "" {
+		t.Fatalf("the main conversation: %+v", c)
+	}
+	put := func(body string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/assistant", strings.NewReader(body))
+		r.Header.Set(RoleHeader, "full")
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	adopted := open("extension", `{"prompt":"x"}`)
+	put(`{"main":"` + adopted.SessionID + `"}`)
+	if got := openedBy(adopted.SessionID); got != "" || s.settings(ctx).Main != adopted.SessionID {
+		t.Fatalf("a conversation the owner makes main keeps its opener: %q", got)
+	}
+	put(`{"main":"-"}`)
+	if got := openedBy(adopted.SessionID); got != "" {
+		t.Fatalf("once main moved on: %q", got)
+	}
+	if got := openedBy(c.SessionID); got != "example-notes" {
+		t.Fatalf("another conversation of the extension: %q", got)
+	}
+
+	var fromBus StartParams
+	if err := json.Unmarshal([]byte(`{"text":"v","origin":"extension","origin_ref":"example-notes","opened_by":"example-notes"}`), &fromBus); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []StartParams{{Text: "y"}, {Text: "/new z", Origin: OriginChannel, OriginRef: "example-chat"}, fromBus} {
+		c, err := s.Start(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := openedBy(c.SessionID); got != "" {
+			t.Fatalf("%+v: opened by %q", p, got)
+		}
+	}
+
+	if err := s.store().PutSetting(ctx, originsKey, map[string]any{"old": map[string]any{"machine_id": "server",
+		"origin": OriginExtension, "ref": "example-notes", "by": originByStart, "at": time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	s.origins.mu.Lock()
+	s.origins.loaded = false
+	s.origins.mu.Unlock()
+	s.publish(ctx)
+	if got := openedBy("old"); got != "" {
+		t.Fatalf("noted before opened_by was: %q", got)
+	}
+}

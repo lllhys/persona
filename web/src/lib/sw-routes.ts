@@ -3,7 +3,7 @@
 // hub untouched, so nothing live is ever served from a cache.
 
 /** index.html, kept under "/" whatever path loaded it (a `?token=` sign-in link never becomes a cache key). */
-export const SHELL_CACHE = "persona-shell-v1";
+export const SHELL_CACHE = "persona-shell-v2";
 /** Vite's content-hashed files under /assets/: immutable, kept until the newest ASSET_LIMIT. */
 export const ASSET_CACHE = "persona-assets-v1";
 /** About three builds' worth of chunks (a build has ~130), so a redeploy never evicts the running one's. */

@@ -561,7 +561,8 @@ class InboxRepositoryTest {
             val calls = transport.inboxCalls.get()
             val result = repository.bulk(listOf(InboxDoneTarget("a", "va"), InboxDoneTarget("b", "vb"), InboxDoneTarget("c", "vc")), InboxBulkAction.Done)
             assertEquals(listOf("a"), result.changed)
-            // Nothing took new messages, yet the hub's own state for b and c is asked for once.
+            // Reconciliation is deferred; it must not hold up this accepted action.
+            withTimeout(5_000) { repository.snapshot.first { it.error != null } }
             assertEquals(calls + 1, transport.inboxCalls.get())
             // Already done elsewhere stays done; one the hub no longer has leaves the list; neither comes back open.
             assertEquals(mapOf("a" to true, "b" to true), repository.snapshot.value.records.associate { it.item.id to it.item.isDone })
@@ -782,7 +783,8 @@ class InboxRepositoryTest {
             val calls = transport.inboxCalls.get()
             repository.bulk(listOf(InboxDoneTarget("a", "va")), InboxBulkAction.Done)
             assertNull(repository.snapshot.value.records.first { it.item.id == "a" }.item.doneAt)
-            // The hub's own state is asked for, as for the other ids it did not move.
+            // The reconciliation runs after the action returns, without blocking the next swipe.
+            withTimeout(5_000) { repository.snapshot.first { it.error != null } }
             assertEquals(calls + 1, transport.inboxCalls.get())
             repository.bulk(listOf(InboxDoneTarget("b")), InboxBulkAction.Reopen)
             assertEquals("2026-11-06T07:00:00Z", repository.snapshot.value.records.first { it.item.id == "b" }.item.doneAt)
@@ -825,7 +827,8 @@ class InboxRepositoryTest {
             assertEquals(listOf(listOf(InboxDoneTarget("a", "va"), InboxDoneTarget("b", "vb")) to true), transport.bulk)
             assertEquals(listOf("a"), result.changed)
             assertEquals(listOf("b"), result.changedSince)
-            // Refreshed for b's new mail: its new version is what the next bulk sends.
+            // The follow-up refresh is asynchronous; b remains open while it loads the new version.
+            withTimeout(5_000) { repository.snapshot.first { state -> state.records.any { it.item.version == "vb2" } } }
             val after = repository.snapshot.value.records.associate { it.item.id to (it.item.isDone to it.item.version) }
             assertEquals(mapOf("a" to (true to "va"), "b" to (false to "vb2"), "c" to (false to "vc")), after)
             // A fresh server read must retain the accepted filing, not resurrect the optimistic row.

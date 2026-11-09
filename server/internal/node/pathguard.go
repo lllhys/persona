@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/identity"
-	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
 // What a client may look at by a path a conversation names (fs.stat, file.read, fs.list, downloads): anything the
@@ -45,10 +44,6 @@ var secretFiles = []string{
 
 // keyNames are private keys by their usual names, wherever they are.
 var keyNames = map[string]bool{"id_rsa": true, "id_dsa": true, "id_ecdsa": true, "id_ed25519": true, "id_ecdsa_sk": true, "id_ed25519_sk": true}
-
-// hubKeyExt matches key files in the hub's folder, including backup suffixes. The list of the data folder's secrets is
-// shared with the agent sandbox (identity/secrets.go).
-var hubKeyExt = lazyre.New(identity.DataKeyPattern)
 
 // procSecrets are what Linux's /proc holds besides the processes' own folders that hands out a secret: the kernel's
 // memory, its log, its symbols' addresses, the keyrings' entries and the page tables (#4172).
@@ -123,15 +118,7 @@ func dataSecret(rel string) bool {
 		return false
 	}
 	base := parts[0]
-	if hubKeyExt.MatchString(base) {
-		return true
-	}
-	for _, name := range identity.DataSecrets {
-		if strings.HasPrefix(base, name) {
-			return true
-		}
-	}
-	return false
+	return identity.DataSecretName(base)
 }
 
 // offLimitsResolved is offLimits for a path whose folders are real ones (links already followed up to its last

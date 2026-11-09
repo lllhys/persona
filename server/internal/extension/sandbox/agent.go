@@ -136,7 +136,7 @@ var agentWorkspaces = []string{"assistant", identity.SpaceHealth, "guest"}
 //   - deny reading and writing the data directory's secrets where they are written, at its top (identity's list, as
 //     the node's path guard reads it): the credential files by the start of their name, also with a leading dot (the
 //     temporary file a rewrite renames into place) and anything in a folder by such a name; the key files and their
-//     backups (identity.DataKeyPattern); the secret folders (identity.DataSecretDirs) whole;
+//     backups (identity.DataCredentialPattern); the secret folders (identity.DataSecretDirs) whole;
 //   - deny the folders only Persona's own processes use, whole: managers/ (a manager's manager.json and key),
 //     extensions/run/ and run/ (the extensions' sockets and the hub's edge), and connecting to those sockets and to
 //     plugins/run/'s (a hub's from before #1844);
@@ -201,7 +201,7 @@ func DarwinAgent(plan AgentPlan) (string, error) {
 		re := reQuote(d)
 		deny = append(deny,
 			`(regex #"^`+re+`/\.?(`+strings.Join(alt, "|")+`)[^/]*(/.*)?$")`,
-			`(regex #"^`+re+`/[^/]*`+identity.DataKeyPattern+`")`)
+			`(regex #"^`+re+`/[^/]*`+identity.DataCredentialPattern+`")`)
 		for _, sub := range whole {
 			deny = append(deny, `(subpath `+q(d+"/"+sub)+`)`)
 		}

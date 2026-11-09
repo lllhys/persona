@@ -13,10 +13,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/netaddr"
 )
 
@@ -29,6 +31,7 @@ func Doctor(ctx context.Context, out io.Writer) error {
 	if cfg != nil {
 		endpoints = d.running(ctx, cfg)
 	}
+	d.credentials(dataDir())
 	addrs := d.ipv6()
 	d.system(ctx)
 	port := "<TLS 端口>"
@@ -186,6 +189,62 @@ func (d *doctorReport) config(dir string) *Config {
 		}
 	}
 	return cfg
+}
+
+// doctorCredentialFiles are credentials below the top level, in a folder the path guard and the agent sandbox close
+// whole: the Postgres superuser password the container entrypoint writes (docs/operations/docker.md). Everything else
+// this check classifies is directly in the data directory.
+var doctorCredentialFiles = []string{filepath.Join("docker", "db-password")}
+
+// credentials checks that the data directory's credential files are readable by their owner only (0600) and the
+// folders closed whole are not open to others (0700). It reports only: doctor never changes a file; the load path
+// tightens hub.json itself (readConfigFile), and every credential Persona writes is made 0600 as it is written, so a
+// finding means a file was copied in or chmoded by hand. POSIX permission bits do not exist on Windows, where the
+// check is skipped.
+func (d *doctorReport) credentials(dir string) {
+	if runtime.GOOS == "windows" {
+		fmt.Fprintln(d.out, "凭据文件权限：已跳过 Windows 专用检查（POSIX 权限位不适用）")
+		return
+	}
+	bad := 0
+	check := func(rel string, want os.FileMode) {
+		path := filepath.Join(dir, rel)
+		st, err := os.Stat(path) // follow a link: the target's mode is what keeps the secret
+		if os.IsNotExist(err) {
+			return // a deployment without this credential has nothing to check
+		}
+		if err != nil {
+			bad++
+			d.problem("凭据文件权限", "无法读取 "+filepath.ToSlash(rel)+" 的状态："+err.Error())
+			return
+		}
+		if st.Mode().Perm() != want {
+			bad++
+			d.problem("凭据文件权限", fmt.Sprintf("%s 的权限是 %04o，应为 %04o；请运行 chmod %o %s",
+				filepath.ToSlash(rel), st.Mode().Perm(), want, want, path))
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		d.problem("凭据文件权限", "无法读取数据目录 "+dir+"："+err.Error())
+		return
+	}
+	for _, e := range entries {
+		switch {
+		case e.IsDir():
+			if slices.Contains(identity.DataSecretDirs, e.Name()) {
+				check(e.Name(), 0o700)
+			}
+		case identity.DataSecretName(e.Name()):
+			check(e.Name(), 0o600)
+		}
+	}
+	for _, rel := range doctorCredentialFiles {
+		check(rel, 0o600)
+	}
+	if bad == 0 {
+		d.ok("凭据文件权限", "数据目录中的凭据文件均为 0600，整目录关闭的凭据文件夹均为 0700")
+	}
 }
 
 func doctorPort(listen string) (string, error) {

@@ -453,7 +453,7 @@ private struct PermissionLine: View {
 
 /// The preview to agree to: the package downloaded and checked, what it may do (for an upgrade, what it asks for in
 /// addition first), then Install / Update.
-private struct ExtensionInstallSheet: View {
+struct ExtensionInstallSheet: View {
     var preview: ExtensionPreview
     var name: String
     var confirm: () async -> Bool

@@ -2,6 +2,8 @@ package persona.feature.inbox
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.*
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.*
@@ -94,15 +96,71 @@ class InboxConversationSwipeTest {
         override suspend fun downloadFile(file: LarkPart.File): String = error("not used")
     }
 
-    private fun screen(inbox: FakeInbox) {
+    private fun screen(inbox: FakeInbox, feedback: FeedbackGate? = null, dark: Boolean = false) {
         inbox.conversationInbox.value = InboxConversations(inbox, "synthetic-pairing", owner, ReplyComposers(inbox, owner))
-        rule.setContent { PersonaTheme(reduceMotion = true) { InboxScreen(inbox, navigator) } }
+        rule.setContent { PersonaTheme(reduceMotion = true, darkTheme = dark) {
+            val snackbar = remember { SnackbarHostState() }
+            LaunchedEffect(feedback) { feedback?.notices?.collect { notice ->
+                snackbar.currentSnackbarData?.dismiss()
+                launch { snackbar.showSnackbar(notice.message, actionLabel = notice.action?.label) }
+            } }
+            CompositionLocalProvider(LocalAppFeedback provides feedback) {
+                Box(Modifier.testTag("inbox-shot").background(PersonaTheme.palette.background)) {
+                    InboxScreen(inbox, navigator)
+                    SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
+                }
+            }
+        } }
         rule.waitForIdle()
     }
     private fun row() = rule.onNode(hasText("Synthetic conversation") and hasClickAction())
     private fun swipe(right: Boolean) {
         row().performTouchInput { if (right) swipeRight() else swipeLeft() }
         rule.waitForIdle()
+    }
+
+    private fun screenshot(name: String) {
+        val dir = File("build/reports/tests/inbox-regression-shots").also { it.mkdirs() }
+        File(dir, "$name.png").outputStream().use {
+            assertTrue(rule.onNodeWithTag("inbox-shot").captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
+        }
+    }
+
+    private fun silentSuccess(dark: Boolean) {
+        val inbox = FakeInbox(listOf(record("a"), record("b")))
+        val feedback = FeedbackGate({ ConnectionState.Online }, localize = { it.resolve(androidx.test.core.app.ApplicationProvider.getApplicationContext()) })
+        val notices = mutableListOf<String>()
+        owner.launch(start = CoroutineStart.UNDISPATCHED) { feedback.notices.collect { notices += it.message } }
+        screen(inbox, feedback, dark)
+        repeat(3) { swipe(true) }
+        screenshot("success-${if (dark) "dark" else "light"}")
+        println("SWIPE_UI_METRIC gestures=3 writes=${inbox.calls.size} notices=${notices.size}")
+        rule.runOnIdle { assertEquals(3, inbox.calls.size); assertEquals("Successful swipes stay silent", 0, notices.size) }
+    }
+    @Test fun successfulConsecutiveSwipesAreSilentInLight() = silentSuccess(false)
+    @Test fun successfulConsecutiveSwipesAreSilentInDark() = silentSuccess(true)
+
+    @Test fun repeatedWriteFailuresUseOneInlineRetryAndNoTransientNotice() {
+        val inbox = FakeInbox(listOf(record("a")))
+        inbox.response = { _, _ -> throw java.io.IOException("Synthetic failure") }
+        val feedback = FeedbackGate({ ConnectionState.Online }, localize = { it.resolve(androidx.test.core.app.ApplicationProvider.getApplicationContext()) })
+        val notices = mutableListOf<String>()
+        owner.launch(start = CoroutineStart.UNDISPATCHED) { feedback.notices.collect { notices += it.message } }
+        screen(inbox, feedback)
+        repeat(3) { swipe(true) }
+        screenshot("failure-retry-light")
+        rule.onNodeWithText("previous state is back", substring = true).assertExists()
+        rule.runOnIdle { assertEquals(3, inbox.calls.size); assertEquals(0, notices.size) }
+        inbox.response = { targets, _ ->
+            inbox.snapshot.value = inbox.snapshot.value.copy(records = inbox.snapshot.value.records.map {
+                it.copy(item = it.item.copy(doneAt = "2026-11-09T00:00:00Z"))
+            })
+            InboxBulkResult(changed = targets.map { it.id })
+        }
+        rule.onNodeWithText("Retry").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("previous state is back", substring = true).assertDoesNotExist()
+        rule.runOnIdle { assertEquals(4, inbox.calls.size); assertTrue(inbox.snapshot.value.records.single().item.isDone); assertTrue(notices.isEmpty()) }
     }
 
     @Test fun completingUnreadConversationLeavesOpenSectionsAndSurvivesRefresh() {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,79 @@ func TestDoctorReadOnly(t *testing.T) {
 	b, _ = os.ReadFile(filepath.Join(dir, "hub.json"))
 	if string(b) != `{}` || loaded.Token != "" || !strings.Contains(out.String(), "配置缺少主 token") {
 		t.Fatal("doctor must not generate or persist missing credentials")
+	}
+}
+
+// The credential check reports credential files and whole-secret folders that are readable by others, leaves every
+// mode untouched (doctor is read-only), and stays quiet about ordinary files and credentials that are not there.
+func TestDoctorCredentialPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits do not apply on Windows")
+	}
+	dir := t.TempDir()
+	write := func(rel string, mode os.FileMode) {
+		t.Helper()
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("credential-or-not"), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil { // past the umask
+			t.Fatal(err)
+		}
+	}
+	chmod := func(rel string, mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(filepath.Join(dir, rel), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("hub.json", 0o600)
+	write("secret.key", 0o600)
+	write("relay-tunnel.token", 0o644)
+	write("tls/hub.key", 0o600)
+	chmod("tls", 0o700)
+	write("docker/db-password", 0o644)
+	chmod("docker", 0o755)
+	write("mcp.json", 0o644) // an ordinary file: its mode is none of the check's business
+
+	var out bytes.Buffer
+	d := &doctorReport{out: &out}
+	d.credentials(dir)
+	for _, want := range []string{"relay-tunnel.token", "docker", "db-password", "chmod 600", "chmod 700"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing finding %q in:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "mcp.json") || len(d.problems) != 3 {
+		t.Fatalf("want exactly the three open credentials, got %v", d.problems)
+	}
+	// Read-only: the modes the run found are still the ones it must report.
+	if st, _ := os.Stat(filepath.Join(dir, "relay-tunnel.token")); st.Mode().Perm() != 0o644 {
+		t.Fatalf("doctor changed a mode: %v", st.Mode())
+	}
+
+	chmod("relay-tunnel.token", 0o600)
+	chmod("docker/db-password", 0o600)
+	chmod("docker", 0o700)
+	out.Reset()
+	d = &doctorReport{out: &out}
+	d.credentials(dir)
+	if len(d.problems) != 0 || !strings.Contains(out.String(), "正常｜凭据文件权限") {
+		t.Fatalf("want a clean report, got %v:\n%s", d.problems, out.String())
+	}
+
+	// A deployment without the container's password file and a data directory with no credentials at all are clean.
+	plain := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plain, "mcp.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d = &doctorReport{out: &out}
+	d.credentials(plain)
+	if len(d.problems) != 0 {
+		t.Fatalf("an absent credential is nothing to check: %v", d.problems)
 	}
 }
 

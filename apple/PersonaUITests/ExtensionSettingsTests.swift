@@ -23,6 +23,12 @@ final class ExtensionSettingsTests: XCTestCase {
             guard let dir = env["PERSONA_SHOTS"] else { return }
             try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appending(path: "plugins-\(name)-\(look).png"))
         }
+        func save(_ app: XCUIApplication) {
+            let action = app.buttons["plugin-save"]
+            for _ in 0..<12 where !action.isHittable { app.swipeUp() }
+            XCTAssertTrue(action.isHittable, "Save is at the end of Extension configuration")
+            action.tap()
+        }
         // The system's notification prompt, on a fresh simulator: answered so it covers nothing.
         addUIInterruptionMonitor(withDescription: "notifications") { alert in
             for label in ["允许", "Allow"] where alert.buttons[label].exists { alert.buttons[label].tap(); return true }
@@ -57,13 +63,16 @@ final class ExtensionSettingsTests: XCTestCase {
         XCTAssertTrue(url.waitForExistence(timeout: 5), "no 服务地址 field")
         url.tap()
         url.typeText("nope")
-        app.buttons["plugin-save"].tap()
-        XCTAssertTrue(app.staticTexts["要是一个网址"].waitForExistence(timeout: 5), "the refused field says nothing:\n\(app.debugDescription)")
+        save(app)
+        let refusal = app.staticTexts["要是一个网址"]
+        for _ in 0..<12 where !refusal.exists { app.swipeDown() }
+        XCTAssertTrue(refusal.waitForExistence(timeout: 5), "the refused field says nothing:\n\(app.debugDescription)")
         shot(app, "refused")
+        for _ in 0..<12 where !url.isHittable { app.swipeDown() }
         url.tap()
         for _ in 0..<4 { url.typeText(XCUIKeyboardKey.delete.rawValue) }
         url.typeText("https://notes.example.org\n") // return: the keyboard goes, nothing is covered
-        app.buttons["plugin-save"].tap()
+        save(app)
         XCTAssertTrue(app.staticTexts["要是一个网址"].waitForNonExistence(timeout: 5))
 
         // The secret: typed in hidden, saved, then only Set.

@@ -120,10 +120,10 @@ struct ExtensionsModelTests {
             ExtensionField(name: name, type: type, title: name == "machines" ? "能操控的电脑" : nil,
                         items: machines ? ExtensionItems(type: "string", format: "machine") : nil)
         }
-        #expect(ExtensionText.saveFooter([field("url", "string")])?.hasPrefix("改完点右上角「保存」") == true)
+        #expect(ExtensionText.saveFooter([field("url", "string")]) == String(localized: "When you're done, tap Save at the end of Extension configuration; the extension restarts after saving. Empty fields use the extension's defaults."))
         #expect(ExtensionText.saveFooter([field("machines", "array", machines: true)]) == nil)
-        #expect(ExtensionText.saveFooter([field("machines", "array", machines: true), field("confirm", "boolean")])?
-            .hasPrefix("「能操控的电脑」的开关即时生效；其他项改完点右上角「保存」") == true)
+        let names = ExtensionText.list([String(localized: "「\(field("machines", "array", machines: true).label)」", comment: "A field's name in quotes")])
+        #expect(ExtensionText.saveFooter([field("machines", "array", machines: true), field("confirm", "boolean")]) == String(localized: "Switches in \(names) take effect right away. For the rest, tap Save at the end of Extension configuration when you're done; the extension restarts after saving. Empty fields use the extension's defaults."))
     }
 
     @Test func aRefusedFieldComesBackBesideIt() async {

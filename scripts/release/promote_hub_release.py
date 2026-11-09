@@ -40,22 +40,45 @@ def validate_next(previous, candidate):
             raise ValueError('Candidate does not contain previous published commit')
 
 
-def api(root, path, method='GET'):
+def api(root, path, method='GET', body=None):
     cfg = json.loads((root / 'hub.json').read_text())
     address = cfg.get('listen', ':18660')
     port = address.rsplit(':', 1)[1]
     req = urllib.request.Request(f'http://127.0.0.1:{port}/api/v1/{path}',
-                                 method=method, data=b'{}' if method == 'POST' else None,
+                                 method=method, data=(json.dumps(body).encode() if body is not None
+                                                      else b'{}' if method == 'POST' else None),
                                  headers={'Authorization': 'Bearer ' + cfg['token'],
                                           'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.load(response)
 
 
-def nodes(root):
-    return {m['id']: {'version': m.get('node_version'), 'online': m.get('online'),
-                     'deploying': bool(m.get('deploying'))}
-            for m in api(root, 'machines')['machines'] if m.get('kind') != 'local'}
+def nodes(root, identities=False):
+    result = {}
+    for machine in api(root, 'machines')['machines']:
+        if machine.get('kind') == 'local':
+            continue
+        item = {'version': machine.get('node_version'), 'online': machine.get('online'),
+                'deploying': bool(machine.get('deploying'))}
+        if identities:
+            item.update(manager=machine.get('manager'), uid=machine.get('machine_uid'))
+            if not item['manager'] or not item['uid']:
+                raise RuntimeError('Automatic node publication requires registered machine identities')
+        result[machine['id']] = item
+    return result
+
+
+def check_node_inventory(before, after, automatic):
+    if set(before) != set(after):
+        raise RuntimeError('Node inventory changed during publication')
+    for key, previous in before.items():
+        current = after[key]
+        if automatic:
+            if (current['manager'], current['uid']) != (previous['manager'], previous['uid']):
+                raise RuntimeError('Node ownership or identity changed during publication')
+        elif (current['version'] != previous['version'] or current['deploying']
+              or (previous['online'] and not current['online'])):
+            raise RuntimeError('Node inventory changed during Hub-only update')
 
 
 def promote(payload):
@@ -74,20 +97,23 @@ def promote(payload):
         if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
             raise ValueError('Publication lock changed while acquiring it')
         cfg = json.loads((root / 'hub.json').read_text())
-        if cfg.get('auto_update_nodes', False) is not False:
-            raise RuntimeError('Hub-only policy must be disabled explicitly or by default')
         if not managed_nodes(root):
             raise RuntimeError('Unmanaged node packages must remain isolated')
         state = api(root, 'hub/update')
         if not state['auto'] or not state['can_update']:
             raise RuntimeError('Bootstrap self-update source and enable automatic updates first')
-        before = nodes(root)
-        if any(m['deploying'] for m in before.values()):
+        automatic = state.get('auto_update_nodes', cfg.get('auto_update_nodes', False))
+        if not isinstance(automatic, bool):
+            raise ValueError('Automatic node policy must be a boolean')
+        before = nodes(root, identities=automatic)
+        if not automatic and any(m['deploying'] for m in before.values()):
             raise RuntimeError('Node deployment in progress')
         manifest = json.loads((staged / 'latest.json').read_text())
         packages = node_manifest(staged, manifest) if payload.get('publish_nodes', False) else None
         if payload.get('publish_nodes', False) and packages is None:
             raise ValueError('Matching node packages are required by this publisher')
+        if automatic and packages is None:
+            raise ValueError('Automatic node updates require matching verified node packages')
         latest_state = state.get('latest') or {}
         if latest_state.get('build') == manifest['build'] and latest_state.get('bad'):
             raise RuntimeError('This Hub build already rolled back; publish a corrected commit')
@@ -142,11 +168,8 @@ def promote(payload):
                 raise RuntimeError(f'Update {status["state"]}: {status.get("error", "")}')
             if (health.get('ok') and health.get('build') == manifest['build']
                     and health.get('version') == manifest['version'] and status['confirmed']):
-                after = nodes(root)
-                if set(before) != set(after) or any(
-                        after[k]['version'] != v['version'] or after[k]['deploying']
-                        or (v['online'] and not after[k]['online']) for k, v in before.items()):
-                    raise RuntimeError('Node inventory changed during Hub-only update')
+                after = nodes(root, identities=automatic)
+                check_node_inventory(before, after, automatic)
                 if digest(root / 'bin/personad') != artifact['binary_sha256']:
                     raise RuntimeError('Installed binary checksum mismatch')
                 # Keep the newest three immutable downloads; a file already open by
@@ -164,6 +187,13 @@ def promote(payload):
                     activate_nodes(root, prepared, packages, health)
                     published_downloads = activate_downloads(root, namespace, downloads, packages, health)
                     prune_nodes(root)
+                    if automatic and api(root, 'hub/update').get('auto_update_nodes') is True:
+                        # The pointer has no watcher. Recheck through the existing
+                        # persisted policy route after both matching feeds are active.
+                        rechecked = api(root, 'hub/update/settings', 'PUT',
+                                        {'auto_update_nodes': True})
+                        if rechecked.get('auto_update_nodes') is not True:
+                            raise RuntimeError('Automatic node policy recheck was not acknowledged')
                 elif not managed_nodes(root):
                     raise RuntimeError('Unmanaged node packages were created')
                 history = api(root, 'hub/update/history')
@@ -171,7 +201,8 @@ def promote(payload):
                                      'manifest_sha256': digest(published_downloads / 'manifest.json'),
                                      'version': packages['version'], 'commit': packages['commit'],
                                      'build': packages['build']} if packages else None)
-                print(json.dumps({'node_packages': download_receipt, 'phase':'confirmed', 'health': health, 'nodes':after,
+                print(json.dumps({'node_packages': download_receipt, 'auto_update_nodes': automatic,
+                                  'phase':'confirmed', 'health': health, 'nodes':after,
                                   'history':history, 'slot':slot.strip(), 'sha256':artifact['binary_sha256']}), flush=True)
                 shutil.rmtree(staged)
                 for abandoned in releases.glob('.upload-*'):

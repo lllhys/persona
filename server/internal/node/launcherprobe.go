@@ -93,11 +93,15 @@ type Probe struct {
 	Args  []string
 	Env   map[string]string
 	File  string
+	// Shell is the shell's environment before the launcher ran (what ~/.zshrc exports for everything); nil when it
+	// was not seen (a wrapper script read from its text).
+	Shell map[string]string
 }
 
 func parseProbe(out string) (Probe, bool) {
 	p := Probe{Env: map[string]string{}}
 	base := map[string]string{}
+	p.Shell = base
 	found := false
 	pairs := func(s string, into map[string]string) {
 		for _, kv := range strings.Split(s, "\x00") {

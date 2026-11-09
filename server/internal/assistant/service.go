@@ -116,6 +116,7 @@ type Service struct {
 	inbox      inboxBook         // inbox.go
 	board      boardBook         // workspace_board.go: the workspace board
 	viewEvents viewNotifications // views.go: only coalesced notifications; contents are stored first
+	viewMemo   viewMemo          // views.go: encoded cards for the feed snapshot, checked against the database
 
 	devs          Devices // the computers (devices.go); nil: no fleet
 	agentArchives agentArchiveBook
@@ -419,7 +420,7 @@ func (s *Service) snapshot(ctx context.Context) Snapshot {
 	snap.Partial = snap.Partial || !ok
 	for id, o := range origins {
 		v := view(id, o.machine)
-		v.Origin, v.OriginRef = o.origin, o.ref
+		v.Origin, v.OriginRef, v.OpenedBy = o.origin, o.ref, o.ext
 	}
 	for id, machine := range archived {
 		view(id, machine).Archived = true

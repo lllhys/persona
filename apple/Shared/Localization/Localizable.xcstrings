@@ -1,6 +1,179 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "While you're using a computer with Persona Link, this iPhone stops sending “Needs you” notifications and Persona Link shows them there. “Agent done” and reminders you asked Persona to set still come to this iPhone. Lock each of these computers or quit Persona Link on it, and this iPhone sends “Needs you” again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While you're using a computer with Persona Link, this iPhone stops sending “Needs you” notifications and Persona Link shows them there. “Agent done” and reminders you asked Persona to set still come to this iPhone. Lock each of these computers or quit Persona Link on it, and this iPhone sends “Needs you” again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在装有 Persona Link 的电脑前使用时，这台 iPhone 不再推送「需要你处理」的通知，由 Persona Link 在电脑上提醒你；「Agent 做完」和你让 Persona 定的提醒照常推送到这台 iPhone。这些电脑都锁定或退出 Persona Link 后，这台 iPhone 才恢复推送「需要你处理」。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link が入ったコンピューターを使っている間、このiPhoneには「要対応」の通知が届かず、Persona Link がそのコンピューターで知らせます。「エージェント完了」とPersonaに設定を頼んだリマインダーは通常どおりこのiPhoneに届きます。これらのコンピューターをすべてロックするか、それぞれで Persona Link を終了すると、「要対応」は再びこのiPhoneに届きます。"
+          }
+        }
+      }
+    },
+    "Using “%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using “%1$@”"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用「%1$@」"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%1$@」を使用中"
+          }
+        }
+      }
+    },
+    "Using %lld computers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Using %1$lld computer"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Using %1$lld computers"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用 %1$lld 台电脑"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 台を使用中"
+          }
+        }
+      }
+    },
+    "Computers in Use": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computers in Use"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用的电脑"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用中のコンピューター"
+          }
+        }
+      }
+    },
+    "While you're using a computer with Persona Link, this iPhone stops sending “Needs you” notifications and Persona Link shows them there. “Agent done” and reminders you asked Persona to set still come to this iPhone. Lock that computer or quit Persona Link, and this iPhone sends “Needs you” again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While you're using a computer with Persona Link, this iPhone stops sending “Needs you” notifications and Persona Link shows them there. “Agent done” and reminders you asked Persona to set still come to this iPhone. Lock that computer or quit Persona Link, and this iPhone sends “Needs you” again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在装有 Persona Link 的电脑前使用时，这台 iPhone 不再推送「需要你处理」的通知，由 Persona Link 在电脑上提醒你；「Agent 做完」和你让 Persona 定的提醒照常推送到这台 iPhone。锁定那台电脑或退出 Persona Link 后，这台 iPhone 恢复推送「需要你处理」。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link が入ったコンピューターを使っている間、このiPhoneには「要対応」の通知が届かず、Persona Link がそのコンピューターで知らせます。「エージェント完了」とPersonaに設定を頼んだリマインダーは通常どおりこのiPhoneに届きます。そのコンピューターをロックするか Persona Link を終了すると、「要対応」は再びこのiPhoneに届きます。"
+          }
+        }
+      }
+    },
+    "Persona Link · since %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link · since %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link · %1$@ 起"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link · %1$@ から"
+          }
+        }
+      }
+    },
+    "Persona Link tells the hub you're at this computer while it's unlocked and in use. This stops when you lock the computer or quit Persona Link.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persona Link tells the hub you're at this computer while it's unlocked and in use. This stops when you lock the computer or quit Persona Link."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台电脑解锁且你在用时，Persona Link 会告诉 hub 你在电脑前。锁定电脑或退出 Persona Link 后停止。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このコンピューターのロックが解除され使用中の間、Persona Link はあなたがこのコンピューターの前にいることを hub に伝えます。コンピューターをロックするか Persona Link を終了すると止まります。"
+          }
+        }
+      }
+    },
     "%@ (no such machine)": {
       "extractionState": "manual",
       "localizations": {
@@ -875,28 +1048,6 @@
         }
       }
     },
-    "Folded [Chat Layout]": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Folded"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "折りたたむ"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "折叠"
-          }
-        }
-      }
-    },
     "Forget": {
       "extractionState": "manual",
       "localizations": {
@@ -916,28 +1067,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "忘记"
-          }
-        }
-      }
-    },
-    "How much of what Persona and its tasks say to each other shows before you tap Expand.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "How much of what Persona and its tasks say to each other shows before you tap Expand."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona とタスクのやり取りを、「展開」をタップする前にどこまで表示するか。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona 和项目之间的沟通，在点「展开」之前显示多少。"
           }
         }
       }
@@ -1079,50 +1208,6 @@
         }
       }
     },
-    "Lines Shown: %lld": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Lines Shown: %lld"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "表示する行数：%lld"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示行数：%lld"
-          }
-        }
-      }
-    },
-    "Messages Between Persona and Tasks": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Messages Between Persona and Tasks"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona とタスクのやり取り"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "项目沟通"
-          }
-        }
-      }
-    },
     "Model ID": {
       "extractionState": "manual",
       "localizations": {
@@ -1165,28 +1250,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在这台电脑上输入并跑起来过的模型 ID。向左滑动可以忘掉。"
-          }
-        }
-      }
-    },
-    "New Conversation Layout": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New Conversation Layout"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新しい会話レイアウト"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新对话布局"
           }
         }
       }
@@ -1396,28 +1459,6 @@
         }
       }
     },
-    "Persona's conversation shows who is talking to whom (“Persona → @task”), puts every message in a box, folds what Persona and its tasks say to each other, and adds a navigator on the right edge: slide along it to go to any message you sent. Turn it off to go back to the previous look.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona's conversation shows who is talking to whom (“Persona → @task”), puts every message in a box, folds what Persona and its tasks say to each other, and adds a navigator on the right edge: slide along it to go to any message you sent. Turn it off to go back to the previous look."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona の会話で、誰が誰に話しているか（「Persona → @タスク」）を示し、すべてのメッセージを枠で囲み、Persona とタスクのやり取りを折りたたみ、右端にナビゲーターを加えます。右端に沿ってスライドすると、送ったどのメッセージにも移動できます。オフにすると以前の表示に戻ります。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Persona 的对话会标明谁在跟谁说话（「Persona → @项目」），每条消息都有框，Persona 和项目之间的沟通默认折叠，右边缘还有导航：沿右边缘上下滑动，可以跳到你发过的任意一条消息。关掉就回到原来的样子。"
-          }
-        }
-      }
-    },
     "Photo [Chat Layout]": {
       "localizations": {
         "en": {
@@ -1436,28 +1477,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "图片"
-          }
-        }
-      }
-    },
-    "Show %lld Lines": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show %lld Lines"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 行表示"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示 %lld 行"
           }
         }
       }
@@ -12907,6 +12926,29 @@
           }
         }
       }
+    },
+    "A hub is being disconnected. Pair again when it's done." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A hub is being disconnected. Pair again when it's done."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハブを切断しています。完了してから再ペアリングしてください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在断开 hub，完成后再重新配对。"
+          }
+        }
+      },
+      "extractionState" : "manual"
     },
     "A hub you add joins an existing group automatically when it's linked with a hub in it; otherwise it forms its own group. Everything shows in one list, labeled with the group it comes from." : {
       "localizations" : {
@@ -37764,6 +37806,29 @@
       },
       "extractionState" : "manual"
     },
+    "Couldn't sign out of %@. Revoke this device in Settings › Devices on another device." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't sign out of %1$@. Revoke this device in Settings › Devices on another device."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ のサインアウトに失敗しました。別のデバイスの「設定 › デバイス」で取り消してください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没能退出 %1$@。请在另一台设备的「设置 › 设备」里撤销本机。"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Couldn't start a new chat: %@" : {
       "localizations" : {
         "en" : {
@@ -46252,29 +46317,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "展开这 %1$lld 步"
-          }
-        }
-      },
-      "extractionState" : "manual"
-    },
-    "Expand All" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expand All"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべて展開"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "全部展开"
           }
         }
       },
@@ -136438,6 +136480,1122 @@
           "stringUnit": {
             "state": "translated",
             "value": "Agent の名前を変更…"
+          }
+        }
+      }
+    },
+    "Extension configuration": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extension configuration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扩展配置"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拡張機能の設定"
+          }
+        }
+      }
+    },
+    "Information": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Information"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "信息"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "情報"
+          }
+        }
+      }
+    },
+    "Updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        }
+      }
+    },
+    "Danger zone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Danger zone"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危险操作"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危険な操作"
+          }
+        }
+      }
+    },
+    "Check for updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を確認"
+          }
+        }
+      }
+    },
+    "Auto-upgrade": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto-upgrade"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动升级"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動アップグレード"
+          }
+        }
+      }
+    },
+    "Installed from": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed from"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安装来源"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "インストール元"
+          }
+        }
+      }
+    },
+    "Extension ID": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extension ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扩展 ID"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拡張機能 ID"
+          }
+        }
+      }
+    },
+    "No configuration required": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No configuration required"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无需配置"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定は不要です"
+          }
+        }
+      }
+    },
+    "Not provided": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not provided"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未提供"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未提供"
+          }
+        }
+      }
+    },
+    "Keep extension data": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep extension data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留扩展数据"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拡張機能のデータを保持"
+          }
+        }
+      }
+    },
+    "When off, this extension’s capabilities are unavailable. Your configuration is kept.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When off, this extension’s capabilities are unavailable. Your configuration is kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭后，此扩展的功能不可用，配置会保留。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフにするとこの拡張機能の機能は利用できなくなります。設定は保持されます。"
+          }
+        }
+      }
+    },
+    "Built-in extensions are updated with Persona.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in extensions are updated with Persona."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置扩展随 Persona 一起更新。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵の拡張機能は Persona とともに更新されます。"
+          }
+        }
+      }
+    },
+    "This extension is not managed by an extension market. Update it at its source.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This extension is not managed by an extension market. Update it at its source."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此扩展不由扩展市场管理，请在来源处更新。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この拡張機能はマーケットで管理されていません。提供元で更新してください。"
+          }
+        }
+      }
+    },
+    "Built-in extensions cannot be uninstalled. Turn the extension off instead.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in extensions cannot be uninstalled. Turn the extension off instead."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置扩展无法卸载，可以关闭此扩展。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵の拡張機能はアンインストールできません。代わりにオフにしてください。"
+          }
+        }
+      }
+    },
+    "This extension is managed outside the extension market. Remove it at its source.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This extension is managed outside the extension market. Remove it at its source."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此扩展在扩展市场之外管理，请在来源处移除。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この拡張機能はマーケット外で管理されています。提供元で削除してください。"
+          }
+        }
+      }
+    },
+    "This manager does not provide this action.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This manager does not provide this action."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此管理器未提供这项操作。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このマネージャーはこの操作を提供していません。"
+          }
+        }
+      }
+    },
+    "Auto-upgrade is paused while this extension is off.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto-upgrade is paused while this extension is off."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此扩展已关闭，自动升级已暂停。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この拡張機能がオフの間、自動アップグレードは一時停止します。"
+          }
+        }
+      }
+    },
+    "Compatible updates run automatically. Permission changes require review.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatible updates run automatically. Permission changes require review."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "兼容更新会自动安装，权限变更需要审核。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "互換性のある更新は自動でインストールされます。権限の変更には確認が必要です。"
+          }
+        }
+      }
+    },
+    "Automatic upgrades are paused globally for this manager.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic upgrades are paused globally for this manager."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此管理器的全局自动升级已暂停。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このマネージャーでは自動アップグレードが全体で一時停止しています。"
+          }
+        }
+      }
+    },
+    "The extension market is unavailable. Check its source and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The extension market is unavailable. Check its source and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扩展市场不可用，请检查来源后重试。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拡張機能マーケットを利用できません。提供元を確認して再試行してください。"
+          }
+        }
+      }
+    },
+    "This extension is no longer listed in its market.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This extension is no longer listed in its market."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此扩展已不在市场列表中。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この拡張機能はマーケットに掲載されていません。"
+          }
+        }
+      }
+    },
+    "Check for updates to see whether a new version is available.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates to see whether a new version is available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新以确认是否有新版本。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を確認して、新しいバージョンがあるか確認してください。"
+          }
+        }
+      }
+    },
+    "Local installation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local installation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地安装"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカルインストール"
+          }
+        }
+      }
+    },
+    "Configured (manager.json)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configured (manager.json)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置文件（manager.json）"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定ファイル（manager.json）"
+          }
+        }
+      }
+    },
+    "Update status": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update status"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新状态"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新状況"
+          }
+        }
+      }
+    },
+    "This manager does not provide a safe uninstall preview. Remove the extension at its source.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This manager does not provide a safe uninstall preview. Remove the extension at its source."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此管理器未提供安全的卸载预检，请在来源处移除扩展。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このマネージャーは安全なアンインストールの事前確認を提供していません。提供元で削除してください。"
+          }
+        }
+      }
+    },
+    "This manager does not provide a rollback preview.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This manager does not provide a rollback preview."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此管理器未提供回滚预览。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このマネージャーはロールバックのプレビューを提供していません。"
+          }
+        }
+      }
+    },
+    "The manager is offline. Reconnect to change this extension.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The manager is offline. Reconnect to change this extension."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "管理器已离线，重新连接后才能修改此扩展。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "マネージャーはオフラインです。この拡張機能を変更するには再接続してください。"
+          }
+        }
+      }
+    },
+    "When you're done, tap Save at the end of Extension configuration; the extension restarts after saving. Empty fields use the extension's defaults.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When you're done, tap Save at the end of Extension configuration; the extension restarts after saving. Empty fields use the extension's defaults."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑完成后，点击扩展配置末尾的「保存」。保存后扩展会重启，留空的字段使用默认值。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編集後、拡張機能の設定の末尾にある「保存」を押してください。保存後に拡張機能が再起動します。空欄には既定値が使われます。"
+          }
+        }
+      }
+    },
+    "Switches in %@ take effect right away. For the rest, tap Save at the end of Extension configuration when you're done; the extension restarts after saving. Empty fields use the extension's defaults.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switches in %@ take effect right away. For the rest, tap Save at the end of Extension configuration when you're done; the extension restarts after saving. Empty fields use the extension's defaults."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 中的开关立即生效。其他字段编辑完成后，点击扩展配置末尾的「保存」。保存后扩展会重启，留空的字段使用默认值。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ のスイッチはすぐに反映されます。その他の編集は、拡張機能の設定の末尾にある「保存」を押してください。保存後に拡張機能が再起動します。空欄には既定値が使われます。"
+          }
+        }
+      }
+    },
+    "Attached": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attached"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部接入"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部接続"
+          }
+        }
+      }
+    },
+    "Sandbox": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sandbox"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隔离环境"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンドボックス"
+          }
+        }
+      }
+    },
+    "Sandbox is active.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sandbox is active."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隔离环境已生效。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンドボックスが有効です。"
+          }
+        }
+      }
+    },
+    "Sandbox is inactive.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sandbox is inactive."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隔离环境未生效。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンドボックスが無効です。"
+          }
+        }
+      }
+    },
+    "Reported version": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reported version"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行进程报告的版本"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中のプロセスが報告したバージョン"
+          }
+        }
+      }
+    },
+    "Up to date": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to date"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是最新版本"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新バージョンです"
+          }
+        }
+      }
+    },
+    "Its manager “%@” is offline. It comes back online once the manager is back.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its manager “%@” is offline. It comes back online once the manager is back."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "它的管理者「%@」离线，管理者回来后这台电脑会恢复在线。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "マネージャー「%@」がオフラインです。マネージャーが戻ると、このコンピューターもオンラインに戻ります。"
+          }
+        }
+      }
+    },
+    "Notifications [Manager Push Views 4c1e7a]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推送通知"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プッシュ通知"
+          }
+        }
+      }
+    },
+    "When off, this device gets no notifications from this manager": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When off, this device gets no notifications from this manager"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关掉后，这台设备不再收到这个管理者的推送"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフにすると、このデバイスはこのマネージャーからの通知を受け取りません"
+          }
+        }
+      }
+    },
+    "Couldn't change notifications: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't change notifications: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推送通知没改成：%@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プッシュ通知を変更できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Quiet Hours": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quiet Hours"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "免打扰时段"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "おやすみ時間"
+          }
+        }
+      }
+    },
+    "During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. They're in %@, where they were set; changing them here puts them in this device's time zone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. They're in %@, where they were set; changing them here puts them in this device's time zone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这段时间里，Agent 做完不再通知（早上的「今天要知道的」卡片会汇总），需要你的事照常送达但不响铃。你让助手设的提醒照常提醒。目前按设置时所在的 %@ 计算，在这里改动后改按这台设备的时区计算。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。現在は設定した場所の %@ で判断します。ここで変更すると、このデバイスのタイムゾーンで判断します。"
+          }
+        }
+      }
+    },
+    "Off: notifications come at any time": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off: notifications come at any time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭：任何时间都会通知"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフ：いつでも通知します"
+          }
+        }
+      }
+    },
+    "From [Notification Settings View 5d2f81]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开始"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始"
+          }
+        }
+      }
+    },
+    "Until [Notification Settings View 9a07c3]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Until"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结束"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了"
+          }
+        }
+      }
+    },
+    "During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. In this device's time zone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. In this device's time zone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这段时间里，Agent 做完不再通知（早上的「今天要知道的」卡片会汇总），需要你的事照常送达但不响铃。你让助手设的提醒照常提醒。按这台设备的时区计算。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。このデバイスのタイムゾーンで判断します。"
+          }
+        }
+      }
+    },
+    "%@. %lld items weren't changed: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%1$@. %2$lld item wasn't changed: %3$@"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%1$@. %2$lld items weren't changed: %3$@"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@；%2$lld 件没改成：%3$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@。%2$lld件は変更できませんでした：%3$@"
           }
         }
       }

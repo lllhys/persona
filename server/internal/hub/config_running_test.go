@@ -56,8 +56,9 @@ func TestRunningHubCommandsNeedHubJSON(t *testing.T) {
 	}
 }
 
-// A hub.json no hub has started with yet (db.sh's) stays exactly as it is: they say so instead of adding a token.
-func TestRunningHubCommandsLeaveATokenlessHubJSON(t *testing.T) {
+// A hub.json no hub has started with yet (db.sh's) keeps its content, but its mode is tightened to 0600 on the read:
+// even without a token it holds the database password, and these commands load it through readConfigFile.
+func TestRunningHubCommandsTightenATokenlessHubJSON(t *testing.T) {
 	for _, c := range runningHubCommands {
 		t.Run(c.name, func(t *testing.T) {
 			home := emptyHome(t)
@@ -68,8 +69,8 @@ func TestRunningHubCommandsLeaveATokenlessHubJSON(t *testing.T) {
 			}
 			b, _ := os.ReadFile(path)
 			st, _ := os.Stat(path)
-			if string(b) != `{"database_url":"postgres://x"}` || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o644) {
-				t.Fatalf("hub.json changed: %s %v", b, st.Mode())
+			if string(b) != `{"database_url":"postgres://x"}` || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
+				t.Fatalf("hub.json not tightened: %s %v", b, st.Mode())
 			}
 		})
 	}

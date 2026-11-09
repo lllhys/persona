@@ -3,6 +3,7 @@ import { storedCredentials, storeCredentials, CLIENT_HEADERS, OP_HEADERS, compat
 
 import { MANAGER_HEADER, managerHeaderFor } from "./manager-choice";
 import { BASE } from "./base";
+import { intercepted, reloadForSignIn } from "./edge-auth";
 import { requestCrumb } from "./error-reports";
 import { currentLanguage, t } from "../i18n";
 import type { Item } from "./types";
@@ -157,11 +158,18 @@ async function request<T>(path: string, init: ApiOptions): Promise<T> {
   const method = init.method ?? "GET";
   let res: Response;
   try {
-    res = await fetch(`${BASE}/api/v1${path}`, { ...fetchOptions, headers, body });
+    // manual: a redirect (the sign-in layer in front of the hub has expired) arrives as one instead of being followed
+    // into a cross-origin page this script cannot read; the hub itself never redirects its API
+    res = await fetch(`${BASE}/api/v1${path}`, { redirect: "manual", ...fetchOptions, headers, body });
   } catch (e) {
     // a breadcrumb for an error report: the method, the path's pattern (no ids, no query) and that it did not get there
     if (!isAbort(e)) requestCrumb(method, path, 0);
     throw e;
+  }
+  if (intercepted(res)) {
+    requestCrumb(method, path, res.status);
+    reloadForSignIn(); // the layer in front takes over the page and sends it to its sign-in
+    throw new ApiError(res.status || 401, t("lib-api.hub_no_response"), {}, false);
   }
   const text = await res.text();
   let data: Record<string, unknown> = {};

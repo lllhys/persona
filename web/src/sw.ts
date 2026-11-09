@@ -1,7 +1,7 @@
 // The web client's service worker (docs/web/web.md "Install as an app"): built on its own to /sw.js (vite.config.ts) and
 // registered by lib/pwa.ts. It makes the installed app start fast and still open when the hub can't be reached: the
-// shell (index.html) comes from the hub when it answers in time, else from the cache (but a sign-in redirect or 401/403
-// reaches the browser); hashed assets from the cache.
+// shell (index.html) comes from the hub when it answers in time, else from the cache (but anything a layer in front of
+// the hub answers with, a redirect, 0/401/403/407/511, reaches the browser; a sign-in page is never cached); hashed assets from the cache.
 // The API is never touched (lib/sw-routes.ts).
 import { clickNotification, type ClickClients } from "./lib/sw-click";
 import { ASSET_CACHE, ASSET_LIMIT, assetsIn, SHELL_CACHE, SHELL_TIMEOUT_MS, strategy } from "./lib/sw-routes";
@@ -32,6 +32,8 @@ const worker = self as unknown as {
 // Keeps a fresh shell and the assets it loads up front.
 async function keepShell(res: Response) {
   const html = await res.clone().text();
+  // A 200 page that loads none of the app's files is a sign-in page of a layer in front of the hub, not the shell.
+  if (assetsIn(html).length === 0) return;
   await (await caches.open(SHELL_CACHE)).put("/", res);
   const assets = await caches.open(ASSET_CACHE);
   await Promise.all(
@@ -94,6 +96,11 @@ function shell(e: FetchEvent): Promise<Response> {
   });
 }
 
+// A file worth keeping: a real, unredirected answer that is not a page (a sign-in page answering for a script or icon).
+function cacheable(r: Response): boolean {
+  return r.ok && !r.redirected && !(r.headers.get("Content-Type") ?? "").startsWith("text/html");
+}
+
 async function asset(req: Request): Promise<Response> {
   const cache = await caches.open(ASSET_CACHE);
   // A hashed file is the same whoever asks: keepShell kept it with a plain fetch, the page asks for its module script
@@ -101,7 +108,7 @@ async function asset(req: Request): Promise<Response> {
   const hit = await cache.match(req, { ignoreVary: true });
   if (hit) return hit;
   const r = await fetch(req);
-  if (r.ok) await cache.put(req, r.clone()).then(() => trim(cache)).catch(() => {});
+  if (cacheable(r)) await cache.put(req, r.clone()).then(() => trim(cache)).catch(() => {});
   return r;
 }
 
@@ -110,7 +117,7 @@ async function fresh(req: Request): Promise<Response> {
   const cache = await caches.open(SHELL_CACHE);
   try {
     const r = await fetch(req);
-    if (r.ok) await cache.put(req, r.clone()).catch(() => {});
+    if (cacheable(r)) await cache.put(req, r.clone()).catch(() => {});
     return r;
   } catch {
     return (await cache.match(req)) ?? Response.error();

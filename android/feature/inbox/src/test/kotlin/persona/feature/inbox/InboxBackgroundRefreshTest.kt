@@ -38,7 +38,8 @@ class InboxBackgroundRefreshTest {
         override val snapshot = MutableStateFlow(snapshot)
         val connection = MutableStateFlow(connection)
         override val connectionState = this.connection
-        override suspend fun refresh() = Unit
+        var refreshFailure: Exception? = null
+        override suspend fun refresh() { refreshFailure?.let { throw it } }
         override fun conversation(feedId: String, startPosition: Long?) = flowOf(LarkConversation())
         override suspend fun loadOlder(feedId: String) = Unit
         override suspend fun refreshConversation(feedId: String) = Unit
@@ -75,6 +76,20 @@ class InboxBackgroundRefreshTest {
         inbox.snapshot.value = InboxSnapshot(interactions = waiting, loading = true)
         rule.waitForIdle()
         assertEquals(0, count("正在读取收件箱"))
+    }
+
+    @Test fun backgroundRecoveryClearsAnEarlierRefreshErrorAndRetryIsAvailable() {
+        val inbox = FakeInbox(InboxSnapshot(records = records))
+        inbox.refreshFailure = java.io.IOException("Synthetic refresh failure")
+        rule.setContent { PersonaTheme(reduceMotion = true) { InboxScreen(inbox, navigator) } }
+        rule.waitForIdle()
+        rule.onNodeWithText("收件箱刷新失败，请重试").assertExists()
+        rule.onNodeWithText("重试").assertExists()
+        inbox.refreshFailure = null
+        inbox.snapshot.value = inbox.snapshot.value.copy(refreshes = 1)
+        rule.waitForIdle()
+        rule.onNodeWithText("收件箱刷新失败，请重试").assertDoesNotExist()
+        rule.onNodeWithText("项目群").assertExists()
     }
 
     @Test fun loadingRowOnlyWhileTheListIsEmpty() {

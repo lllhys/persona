@@ -64,6 +64,9 @@ class RealInboxRepository(
     private val outbox = MutableStateFlow<List<InboxPendingReply>>(emptyList())
     private val versions = mutableMapOf<String, String>()
     private val refreshLock = Mutex()
+    private val completions = InboxCompletionState(current)
+    private val cacheLock = Mutex()
+    private val reconciliation = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     private val groupNames = InboxGroupNames()
     // The items last written to the list snapshot, so an unchanged list is not written again.
     private var savedItems: Pair<String, JsonArray>? = null
@@ -79,7 +82,7 @@ class RealInboxRepository(
         quietly { snapshots.restore<JsonObject>("${transport.scope}:inbox")?.let { data ->
             savedItems = transport.scope to JsonArray(data.array("items"))
             val records = listed(data.array("items").map { it.jsonObject }, transport)
-            if (owns(transport)) current.update { it.copy(records = records, loading = false) }
+            if (owns(transport)) completions.publish(records, data.array("items").map { it.jsonObject }, completions.epoch()) { state, restored -> state.copy(records = restored, loading = false) }
         } }
         restoredScope = transport.scope
     }
@@ -109,6 +112,7 @@ class RealInboxRepository(
         scope.launch {
             connection.current.collectLatest { transport ->
                 refreshLock.withLock {
+                    completions.reset()
                     current.update { it.copy(records = emptyList(), loading = false, error = null,
                         contentSource = transport?.let(::LarkContentSource),
                         mutes = hubPreferences?.preferences?.value?.mutes?.let { m -> AgentPreferences(m.spaces, m.sessions, m.allowed) }
@@ -184,10 +188,17 @@ class RealInboxRepository(
                     }
                 }
             }
-            // A burst of inbox events is one refresh: sample passes at most one event per window, and an event that comes
-            // in while a refresh runs is kept for one more refresh after it.
+            // Events and ambiguous write responses share one conflated refresh queue. An event during a refresh
+            // is retained for one follow-up, rather than queuing a whole-list request behind each swipe.
             scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                hub.events.filterIsInstance<InboxEvent>().sample(refreshWindowMillis).collect { quietly { refresh() } }
+                hub.events.filterIsInstance<InboxEvent>().collect { reconciliation.trySend(Unit) }
+            }
+        }
+        scope.launch {
+            for (request in reconciliation) {
+                delay(refreshWindowMillis)
+                reconciliation.tryReceive()
+                quietly { refresh() }
             }
         }
         // Polling remains a fallback for hubs without invalidation events.
@@ -208,6 +219,7 @@ class RealInboxRepository(
         // Only an empty list shows that it is loading: a background refresh of a shown list must not change its layout.
         current.update { if (it.records.isEmpty()) it.copy(loading = true, error = null) else it }
         try {
+            val started = completions.epoch()
             val body = transport.inbox()
             val data = body.array("items").map { it.jsonObject }
             // New items waiting for triage (#1773); an older hub sends no `triage`.
@@ -226,14 +238,10 @@ class RealInboxRepository(
             if (!owns(transport)) return@withLock
             versions.clear(); versions.putAll(newVersions)
             outbox.value = saved.outbox
-            current.update { it.copy(records = records.map { item -> withLocalStatus(item, saved) },
+            completions.publish(records.map { item -> withLocalStatus(item, saved) }, data, started) { it, merged -> it.copy(records = merged,
                 mutes = mute?.let { m -> AgentPreferences(m.strings("spaces"), m.strings("sessions"), m.strings("allowed").toSet()) } ?: it.mutes,
                 loading = false, error = null, triage = triage, refreshes = it.refreshes + 1) }
-            val items = JsonArray(data)
-            if (savedItems != transport.scope to items) {
-                snapshots.save("${transport.scope}:inbox", buildJsonObject { put("items", items) })
-                savedItems = transport.scope to items
-            }
+            persistInbox(transport)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
             if (owns(transport)) current.update { it.copy(loading = false, error = DataText.of(Key.InboxRefreshFailed)) }
@@ -258,19 +266,35 @@ class RealInboxRepository(
         catch (_: Exception) { cached }
     }
 
-    override suspend fun setDone(itemId: String, done: Boolean) = refreshLock.withLock {
+    override suspend fun setDone(itemId: String, done: Boolean) {
         val transport = requireTransport()
-        val old = recordOf(itemId)
-        val shown = old?.item?.id ?: itemId
-        current.update { it.copy(records = it.records.map { record ->
-            if (record.item.id == shown) record.copy(item = record.item.copy(doneAt = if (done) Instant.now().toString() else null)) else record
-        }) }
-        try {
-            val result = asItem(old) { transport.setDone(old?.hubItemId ?: itemId, done) }
-            if (owns(transport)) replaceRecord(record(result.obj("item") ?: result, transport, old))
-        } catch (e: Exception) {
-            if (owns(transport) && old != null) replaceRecord(old)
-            throw e
+        val shown = recordOf(itemId)?.item?.id ?: itemId
+        completions.withItems(listOf("${transport.scope}:$shown")) {
+            if (!owns(transport)) throw CancellationException("Pairing changed")
+            val change = completions.begin(setOf(shown), done)
+            val old = change.before.firstOrNull()
+            try {
+                val result = completions.request { asItem(old) { transport.setDone(old?.hubItemId ?: itemId, done) } }
+                if (owns(transport)) {
+                    val raw = result.obj("item") ?: result
+                    val next = record(raw, transport, old)
+                    val stamped = next.manager?.let { JsonObject(raw + ("manager" to JsonPrimitive(it))) } ?: raw
+                    completions.finish(change, listOf(next to stamped), restore = emptySet())
+                    persistInbox(transport)
+                }
+            } catch (e: Exception) {
+                if (owns(transport)) completions.finish(change)
+                throw e
+            }
+        }
+    }
+
+    private suspend fun persistInbox(transport: InboxAssistantTransport) = cacheLock.withLock {
+        if (!owns(transport)) return@withLock
+        val items = completions.cachedItems()
+        if (savedItems != transport.scope to items) {
+            snapshots.save("${transport.scope}:inbox", buildJsonObject { put("items", items) })
+            if (owns(transport)) savedItems = transport.scope to items
         }
     }
 
@@ -345,39 +369,32 @@ class RealInboxRepository(
         bulk(items, if (done) InboxBulkAction.Done else InboxBulkAction.Reopen)
 
     override suspend fun bulk(items: List<InboxDoneTarget>, action: InboxBulkAction): InboxBulkResult {
-        val done = action != InboxBulkAction.Reopen
-        val result = refreshLock.withLock {
-            val transport = requireTransport()
-            val ids = items.map { it.id }.toSet()
-            val old = current.value.records.filter { it.item.id in ids }
-            val doneAt = if (done) Instant.now().toString() else null
-            current.update { it.copy(records = it.records.map { record ->
-                if (record.item.id in ids) record.copy(item = record.item.copy(doneAt = doneAt)) else record
-            }) }
+        if (items.isEmpty()) return InboxBulkResult()
+        val transport = requireTransport()
+        return completions.withItems(items.map { "${transport.scope}:${it.id}" }) {
+            if (!owns(transport)) throw CancellationException("Pairing changed")
+            val change = completions.begin(items.map { it.id }.toSet(), action != InboxBulkAction.Reopen)
             try {
-                val outcome = bulkByManager(transport, items, action, old)
+                val outcome = completions.request { bulkByManager(transport, items, action, change.before) }
                 val result = outcome.result
                 if (owns(transport)) {
-                    outcome.changed.forEach(::replaceRecord)
-                    // Already so (another device filed it) keeps what was just shown; gone from the hub leaves the list;
-                    // one that took new messages since, or that the hub failed to write, goes back to how it was, until the refresh.
-                    val gone = result.missing.toSet()
-                    if (gone.isNotEmpty()) current.update { it.copy(records = it.records.filter { r -> r.item.id !in gone }) }
-                    old.filter { it.item.id in result.changedSince || it.item.id in result.failed }.forEach(::replaceRecord)
+                    completions.finish(change, outcome.changed, (result.changedSince + result.failed).toSet(), result.missing.toSet())
+                    // Reconcile only ambiguous results, once per burst, without delaying the action's response.
+                    if (result.changedSince.isNotEmpty() || result.unchanged.isNotEmpty() || result.failed.isNotEmpty()) {
+                        reconciliation.trySend(Unit)
+                    }
+                    persistInbox(transport)
                 }
                 result
             } catch (e: Exception) {
-                if (owns(transport)) old.forEach(::replaceRecord)
+                if (owns(transport)) completions.finish(change)
                 throw e
             }
         }
-        // The hub's own state (when, by whom) for what this request did not move itself.
-        if (result.changedSince.isNotEmpty() || result.unchanged.isNotEmpty() || result.missing.isNotEmpty() || result.failed.isNotEmpty()) quietly { refresh() }
-        return result
     }
 
     /** What the managers answered to a bulk action, in the app's ids, and the items it changed as the hub has them now. */
-    private class BulkOutcome(val result: InboxBulkResult, val changed: List<InboxRecord>)
+    private class BulkOutcome(val result: InboxBulkResult, val changed: List<Pair<InboxRecord, JsonObject>>)
 
     /**
      * Each manager files its own items (the merged list stamps them; the hub sends `/inbox/bulk` to the manager the
@@ -392,7 +409,7 @@ class RealInboxRepository(
         val default = AssistantManagerChoice.current.value.defaultId
         val groups = items.groupBy { byId[it.id]?.manager?.takeIf { m -> m.isNotBlank() && m != default } }
         val answers = mutableListOf<InboxBulkResult>()
-        val changed = mutableListOf<InboxRecord>()
+        val changed = mutableListOf<Pair<InboxRecord, JsonObject>>()
         val failed = mutableListOf<String>()
         var problem: Exception? = null
         for ((manager, list) in groups) {
@@ -406,7 +423,11 @@ class RealInboxRepository(
                 val r = InboxBulkResult.from(data)
                 answers += InboxBulkResult(r.changed.map(key), r.unchanged.map(key), r.changedSince.map(key), r.missing.map(key), r.failed.map(key))
                 data.array("changed").forEach { e ->
-                    (e as? JsonObject)?.let { obj -> changed += record(obj, transport, byId[key(obj.string("id"))]) }
+                    (e as? JsonObject)?.let { obj ->
+                        val next = record(obj, transport, byId[key(obj.string("id"))])
+                        val raw = next.manager?.let { JsonObject(obj + ("manager" to JsonPrimitive(it))) } ?: obj
+                        changed += next to raw
+                    }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {

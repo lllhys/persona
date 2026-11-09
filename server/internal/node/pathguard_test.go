@@ -203,6 +203,11 @@ func TestPathGuardDataDirCredentials(t *testing.T) {
 		filepath.Join(home, ".persona/launcher-settings/work-env-settings.json"),
 		filepath.Join(state, "relay.json"),
 		filepath.Join(state, "relay.secret"),
+		filepath.Join(state, "relay-tunnel.token"),
+		filepath.Join(state, "edge.token"),
+		filepath.Join(state, "edge.secret"),
+		filepath.Join(state, "edge.password"),
+		filepath.Join(state, "docker/db-password"),
 		filepath.Join(state, "devices.json.migrated"),
 		filepath.Join(state, "mail_accounts.json"),
 		filepath.Join(state, "extensions/data/notes/token.json"),
@@ -218,6 +223,7 @@ func TestPathGuardDataDirCredentials(t *testing.T) {
 		filepath.Join(home, "code/extensions/data/token.json"),
 		filepath.Join(state, "extensions/notes/manifest.json"),
 		filepath.Join(home, "persona-state-notes/hub.json"),
+		filepath.Join(state, "data/proj/edge.token"), // suffix matching is top-level only, like the key pattern's
 	}
 	// Key backups remain secret in default, legacy, custom and manager data folders.
 	for _, dir := range []string{
@@ -263,15 +269,17 @@ func TestPathGuardDataDirIsHome(t *testing.T) {
 	n := &Node{home: home}
 	refused := []string{
 		"hub.json", "hub.json.bak-20261106", "secret.key", "handles.key", "link.json", "tailcat.json", "tailcat-hub.json",
-		"daemons.json", "relay.json", "relay.secret", "devices.json.migrated", "mail_accounts.json", "apns.json", "apns_key.p8",
+		"daemons.json", "relay.json", "relay.secret", "relay-tunnel.token", "edge.token", "edge.secret", "edge.password",
+		"devices.json.migrated", "mail_accounts.json", "apns.json", "apns_key.p8",
 		"managers/m1/manager.json", "managers/m1/secret.key", "managers/m1/handles.key",
 		"launcher-settings/work-claude-settings.json", "tls/hub.key", "tls/hub.crt", "link-tls/link.key",
+		"docker/db-password",
 		".ssh/config", ".claude.json",
 	}
 	readable := []string{
 		"code/app/certs/dev.pem", "code/app/link.json", "code/app/devices.json", "code/svc/tls.crt", "notes/apns-setup.md",
 		"code/link.json", "code/launcher-settings/notes.md", "code/managers/m1/manager.json", "data/people/a.md",
-		"managers/m1/data/people/a.md",
+		"managers/m1/data/people/a.md", "data/proj/edge.token",
 	}
 	for _, rel := range append(slices.Clone(refused), readable...) {
 		p := filepath.Join(home, rel)
@@ -315,12 +323,15 @@ func TestPathGuardDataDirDefaultLayout(t *testing.T) {
 	refused := []string{
 		".persona/hub.json", ".persona/hub.json.bak-20261106", ".persona/secret.key", ".persona/handles.key",
 		".persona/link.json", ".persona/tailcat.json", ".persona/tailcat-hub.json", ".persona/daemons.json",
-		".persona/relay.json", ".persona/relay.secret", ".persona/devices.json", ".persona/mail_accounts.json.migrated",
+		".persona/relay.json", ".persona/relay.secret", ".persona/relay-tunnel.token",
+		".persona/edge.token", ".persona/edge.secret", ".persona/edge.password",
+		".persona/devices.json", ".persona/mail_accounts.json.migrated",
 		".persona/apns.json", ".persona/apns_key.p8", ".persona/managers/m1/manager.json", ".persona/managers/m1/secret.key",
 		".persona/launcher-settings/work-env-settings.json", ".persona/tls/hub.key", ".persona/tls/hub.crt",
-		".persona/link-tls/link.key", ".persona/link-tls/link.crt",
+		".persona/link-tls/link.key", ".persona/link-tls/link.crt", ".persona/docker/db-password",
 	}
-	readable := []string{".persona/data/people/a.md", ".persona/managers/m1/data/people/a.md", "code/link.json", "code/certs/dev.pem"}
+	readable := []string{".persona/data/people/a.md", ".persona/managers/m1/data/people/a.md", "code/link.json",
+		"code/certs/dev.pem", ".persona/data/proj/edge.token"}
 	for _, rel := range append(slices.Clone(refused), readable...) {
 		p := filepath.Join(home, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

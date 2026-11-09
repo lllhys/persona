@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/extwire"
@@ -9,40 +10,53 @@ import (
 
 // Defined in the contract package extwire (docs/server/architecture.md "Contract packages"); the old names stay.
 const (
-	ScopeAgentsControl = extwire.ScopeAgentsControl
-	ScopeAgentsRead    = extwire.ScopeAgentsRead
-	ScopeAssistantAsk  = extwire.ScopeAssistantAsk
-	ScopeCallPrefix    = extwire.ScopeCallPrefix
-	ScopeInboxRead     = extwire.ScopeInboxRead
-	ScopeInboxWrite    = extwire.ScopeInboxWrite
-	ScopeKBRead        = extwire.ScopeKBRead
-	ScopeKBWrite       = extwire.ScopeKBWrite
-	ScopeMachinesRead  = extwire.ScopeMachinesRead
-	ScopeNotify        = extwire.ScopeNotify
-	ScopeTodosRead     = extwire.ScopeTodosRead
-	ScopeTodosWrite    = extwire.ScopeTodosWrite
-	ScopeModels        = extwire.ScopeModels
-	ScopeAssistantRead = extwire.ScopeAssistantRead
+	ScopeAgentsControl        = extwire.ScopeAgentsControl
+	ScopeAgentsPermissionMode = extwire.ScopeAgentsPermissionMode
+	ScopeAgentsRead           = extwire.ScopeAgentsRead
+	ScopeAssistantAsk         = extwire.ScopeAssistantAsk
+	ScopeCallPrefix           = extwire.ScopeCallPrefix
+	ScopeInboxRead            = extwire.ScopeInboxRead
+	ScopeInboxWrite           = extwire.ScopeInboxWrite
+	ScopeKBRead               = extwire.ScopeKBRead
+	ScopeKBWrite              = extwire.ScopeKBWrite
+	ScopeMachinesRead         = extwire.ScopeMachinesRead
+	ScopeNotify               = extwire.ScopeNotify
+	ScopeTodosRead            = extwire.ScopeTodosRead
+	ScopeTodosWrite           = extwire.ScopeTodosWrite
+	ScopeModels               = extwire.ScopeModels
+	ScopeAssistantRead        = extwire.ScopeAssistantRead
 )
 
 // HubScopes are the scopes, in the order the install screen lists them.
 var HubScopes = []string{ScopeKBRead, ScopeKBWrite, ScopeInboxRead, ScopeInboxWrite, ScopeAgentsRead, ScopeAgentsControl,
-	ScopeMachinesRead, ScopeNotify, ScopeAssistantAsk, ScopeAssistantRead, ScopeTodosRead, ScopeTodosWrite, ScopeModels}
+	ScopeAgentsPermissionMode, ScopeMachinesRead, ScopeNotify, ScopeAssistantAsk, ScopeAssistantRead, ScopeTodosRead,
+	ScopeTodosWrite, ScopeModels}
+
+// InEveryScope says whether a token of every scope (an extension granted the hub's full token the old way, hub_api,
+// that gets one of every scope instead) has scope s: all but agents.permission_mode, which an extension gets only when
+// its manifest names it.
+func InEveryScope(s string) bool { return s != ScopeAgentsPermissionMode }
+
+// EveryScope is the scopes of a token of every scope (InEveryScope), in HubScopes' order.
+func EveryScope() []string {
+	return slices.DeleteFunc(slices.Clone(HubScopes), func(s string) bool { return !InEveryScope(s) })
+}
 
 var scopeTitles = map[string]string{
-	ScopeKBRead:        "scope_kb_read",
-	ScopeKBWrite:       "scope_kb_write",
-	ScopeInboxRead:     "scope_inbox_read",
-	ScopeInboxWrite:    "scope_inbox_write",
-	ScopeAgentsRead:    "scope_agents_read",
-	ScopeAgentsControl: "scope_agents_control",
-	ScopeMachinesRead:  "scope_machines_read",
-	ScopeNotify:        "scope_notify",
-	ScopeAssistantAsk:  "scope_assistant_ask",
-	ScopeTodosRead:     "scope_todos_read",
-	ScopeTodosWrite:    "scope_todos_write",
-	ScopeModels:        "scope_models",
-	ScopeAssistantRead: "scope_assistant_read",
+	ScopeKBRead:               "scope_kb_read",
+	ScopeKBWrite:              "scope_kb_write",
+	ScopeInboxRead:            "scope_inbox_read",
+	ScopeInboxWrite:           "scope_inbox_write",
+	ScopeAgentsRead:           "scope_agents_read",
+	ScopeAgentsControl:        "scope_agents_control",
+	ScopeAgentsPermissionMode: "scope_agents_permission_mode",
+	ScopeMachinesRead:         "scope_machines_read",
+	ScopeNotify:               "scope_notify",
+	ScopeAssistantAsk:         "scope_assistant_ask",
+	ScopeTodosRead:            "scope_todos_read",
+	ScopeTodosWrite:           "scope_todos_write",
+	ScopeModels:               "scope_models",
+	ScopeAssistantRead:        "scope_assistant_read",
 }
 
 // ScopeTitle is how the install screen says scope s; ok false for what is not a scope.

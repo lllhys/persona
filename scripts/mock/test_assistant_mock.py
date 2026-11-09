@@ -133,6 +133,30 @@ class NewConversationMockTests(unittest.TestCase):
                 return
         self.fail("no sessions push with the new conversation")
 
+    def test_inbox_folder_updates_keep_their_response_contract(self):
+        def put_folder(item_id, folder):
+            request = Request(self.base + f"/api/v1/inbox/{item_id}/folder",
+                              data=json.dumps({"folder": folder}).encode(), method="PUT",
+                              headers={"Content-Type": "application/json"})
+            with urlopen(request, timeout=3) as response:
+                return json.load(response)
+
+        item_id = "lark:f1:100"
+        self.addCleanup(put_folder, item_id, None)
+        placed = put_folder(item_id, "Projects/Release")
+        self.assertEqual((placed["folder"], placed["folder_by"]), ("Projects/Release", "user"))
+        self.assertIn("version", placed)
+        self.assertNotIn("context", placed)
+        cleared = put_folder(item_id, None)
+        self.assertNotIn("folder", cleared)
+        self.assertNotIn("folder_by", cleared)
+        with self.assertRaises(HTTPError) as invalid:
+            put_folder(item_id, "///")
+        self.assertEqual(invalid.exception.code, 400)
+        with self.assertRaises(HTTPError) as missing:
+            put_folder("missing", "Projects")
+        self.assertEqual(missing.exception.code, 404)
+
     def test_start_fail_cuts_the_next_starts_off(self):
         # #1368: GET /mock/start-fail?n=1 cuts the next start off as the hub does when the link to the assistant drops.
         self.get("/mock/start-fail?n=1")

@@ -8,7 +8,8 @@
  * fetch uses redirect: "manual", so a redirect arrives as an "opaqueredirect" (status 0); `redirected` and a plain 3xx
  * cover a fetch that followed it or a server that answers without one. */
 export function mustFollow(r: Response): boolean {
-  return r.type === "opaqueredirect" || r.redirected || (r.status >= 300 && r.status < 400) || r.status === 401 || r.status === 403;
+  // 0 / 407 / 511: how a gateway or captive portal in front of the hub answers when it will not pass the request on
+  return r.type === "opaqueredirect" || r.redirected || r.status === 0 || (r.status >= 300 && r.status < 400) || [401, 403, 407, 511].includes(r.status);
 }
 
 /** Only a fresh, successful, unredirected index.html becomes the cached shell (never a login page reached by a redirect). */

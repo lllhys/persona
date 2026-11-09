@@ -98,7 +98,8 @@ struct FullPageExportTests {
         #expect(pdf.numberOfPages == 1)
         // 16 above, 20 lines of 60 with 16 between, 16 under.
         let box = try #require(pdf.page(at: 1)?.getBoxRect(.mediaBox))
-        #expect(box.size == CGSize(width: 390, height: 16 + 20 * 60 + 19 * 16 + 16))
+        let height: Int = 16 + 20 * 60 + 19 * 16 + 16 // summed as Int: as CGFloat, Xcode 26.0 timed out (#2571)
+        #expect(box.size == CGSize(width: 390, height: CGFloat(height)))
         #expect(got.page == 0)
         #expect(got.rect == CGRect(x: 0, y: 0, width: 390, height: 600), "the newest end: the page's last viewport")
         #expect(page.lastReport?.ok == true && page.lastReport?.stripsDrawn == page.lastReport?.strips)

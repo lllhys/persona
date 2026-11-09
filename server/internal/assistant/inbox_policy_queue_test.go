@@ -113,7 +113,7 @@ func TestInboxPolicyNeverBeforeQueueAdmission(t *testing.T) {
 					Handling: &InboxHandling{State: HandlingLooking}}
 				h.inbox.items[busy.ID] = busy
 			case "adoption":
-				h.originSet(context.Background(), "server", "found-session", OriginInbox, it.ID)
+				h.originSet(context.Background(), "server", "found-session", OriginInbox, it.ID, "")
 				h.f.setSessions("server", proto.Session{SessionID: "found-session", Status: proto.StatusIdle})
 			case "legacy":
 				it.Handling = nil

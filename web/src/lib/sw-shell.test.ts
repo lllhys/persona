@@ -98,4 +98,26 @@ describe("service worker page loads", () => {
     expect(isShell(followed("https://login.example.com/"))).toBe(false);
     expect(isShell(new Response("{}", { headers: { "Content-Type": "application/json" } }))).toBe(false);
   });
+
+  it("hands any other answer of an intercepting layer (0, 407, 511) to the browser", async () => {
+    for (const status of [407, 511]) {
+      const r = html("<html>portal</html>", status);
+      const { res } = run(async () => r, html("<html>old</html>"));
+      expect(await res).toBe(r);
+    }
+    const zero = opaque(html("x"));
+    expect(mustFollow(zero)).toBe(true);
+  });
+
+  it("a 200 sign-in page goes to the browser too, never the cached shell", async () => {
+    const login = html("<html>sign in</html>");
+    const { res } = run(async () => login, html("<html>old</html>"));
+    expect(await res).toBe(login);
+  });
+
+  it("still starts from the cached shell when the network is really down", async () => {
+    const saved = html("<html>old</html>");
+    const { res } = run(async () => { throw new TypeError("Failed to fetch"); }, saved);
+    expect(await res).toBe(saved);
+  });
 });

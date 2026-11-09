@@ -410,13 +410,16 @@ func TestAgentSandboxCoversPathGuard(t *testing.T) {
 	}
 	both := []string{"secret.key", "secret.key.bak", "handles.key~", "launch.key", "hub.key-old", "hub.json", "hub.json.bak", "link.json",
 		"tailcat.json", "tailcat-hub.json", "daemons.json", "manager.json", "apns.json", "apns.p8", "relay.json", "relay.secret",
+		"relay-tunnel.token", "edge.token", "edge.secret", "edge.password", "edge.token.bak",
 		"devices.json", "mail_accounts.json.1", "tls/hub.key", "tls/hub.crt", "tls/.tls-1", "link-tls/id.key",
+		"docker/db-password",
 		"launcher-settings/claude-x.json", "managers/m1/manager.json", "managers/m1/secret.key", "managers/m1/tls/hub.key",
 		"extensions/data/notes/token", "extensions/data/notes/sub/session.json", "extensions/staging/uninstall-x-1/0/token",
 		"plugins/notes/manifest.json", "plugins/data/notes/token", "node-plugins/notes/data/session.json"}
 	neither := []string{"mcp.json", "claude-settings.json", "assistant/notes.md", "data/proj/link.json", "data/certs/dev.pem",
 		"extensions/notes/manifest.json", "data/extensions/data/x",
-		"data/talk.key", "bin/personad", "uploads/a.png", "runtime-packages/x/node_modules/y/index.js", "node.sock"}
+		"data/talk.key", "bin/personad", "uploads/a.png", "runtime-packages/x/node_modules/y/index.js", "node.sock",
+		"data/proj/edge.token"}
 	sandboxOnly := []string{".hub.json.12345", "managers/m1/manager.log", "extensions/run/notes/proxy.sock", "run/hub-edge.sock"}
 	for _, rel := range both {
 		if !dataSecret(rel) || !closed(rel) {

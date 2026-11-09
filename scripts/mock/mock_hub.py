@@ -15174,18 +15174,18 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(folder_state({}))
         if p.startswith("/api/v1/inbox/") and p.endswith("/folder") and self.command == "PUT":
             iid = unquote(p[len("/api/v1/inbox/"):-len("/folder")])
-            item = next((x for x in INBOX if x["id"] == iid), None)
-            if not item: return self.send_json({"error": "no such inbox item"}, 404)
+            inbox_item = next((x for x in INBOX if x["id"] == iid), None)
+            if not inbox_item: return self.send_json({"error": "no such inbox item"}, 404)
             folder = json.loads(self.last_body or b"{}").get("folder")
             if folder is None:
-                item.pop("folder", None); item.pop("folder_by", None)
+                inbox_item.pop("folder", None); inbox_item.pop("folder_by", None)
             else:
                 f = normalize_folder(folder)
                 if not f and str(folder).strip(): return self.send_json({"error": "folder must have at least one name between the slashes"}, 400)
-                item["folder_by"] = "user"
-                if f: item["folder"] = f
-                else: item.pop("folder", None)
-            return self.send_json(dict({k: v for k, v in item.items() if k != "context"}, version=inbox_version(item)))
+                inbox_item["folder_by"] = "user"
+                if f: inbox_item["folder"] = f
+                else: inbox_item.pop("folder", None)
+            return self.send_json(dict({k: v for k, v in inbox_item.items() if k != "context"}, version=inbox_version(inbox_item)))
         if p == "/api/v1/inbox/policies" and self.command == "POST":
             other = other_manager(self)
             if other and other[1]: return self.send_json(*other[1])
