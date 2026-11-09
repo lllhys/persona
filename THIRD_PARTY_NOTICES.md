@@ -303,6 +303,17 @@ packages below; its swift-snapshot-testing dependency is only for its own tests 
 
 Each package's LICENSE (swift-cmark's COPYING) applies.
 
+## MarqueeGlow
+
+The iOS app links MarqueeGlow (`apple/project.yml`) to draw the composer's glow while a reply is generating
+(`apple/Persona/DesignSystem/ComposerGlow.swift`). It has no dependencies.
+
+| Package | Source | License |
+| --- | --- | --- |
+| MarqueeGlow | https://github.com/szupzj18/MarqueeGlow | MIT, Copyright (c) 2026 ChrisPan |
+
+The package's LICENSE applies.
+
 ## SheetJS
 
 The web client opens spreadsheets with SheetJS Community Edition 0.20.3, kept as the tarball SheetJS publishes on

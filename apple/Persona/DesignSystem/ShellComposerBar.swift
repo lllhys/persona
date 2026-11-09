@@ -31,6 +31,9 @@ struct ShellComposerBar<Attach: View, Modes: View>: View {
     var history: String? = nil
     /// The main conversation cannot answer yet: send says what to do first and goes there, the draft stays.
     var gate: SendGate? = nil
+    /// Glow While Replying (`ComposerGlow`): the band around the bar while the assistant's reply is being written. Drawn
+    /// inside the bar's animations so it follows the surface when the line grows into the card.
+    var glows = false
     var send: () -> Void
     @ViewBuilder var attach: () -> Attach
     @ViewBuilder var modes: () -> Modes
@@ -208,6 +211,7 @@ struct ShellComposerBar<Attach: View, Modes: View>: View {
         .padding(.horizontal, expanded ? 0 : Theme.Space.xs)
         .padding(.vertical, expanded ? 0 : Theme.Space.xxs)
         .modifier(ComposerSurface())
+        .composerGlow(glows)
         .contentShape(.rect(cornerRadius: Theme.Shell.composerRadius))
         .onTapGesture { focused.wrappedValue = true }
         .shellScaled()

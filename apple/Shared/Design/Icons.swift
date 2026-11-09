@@ -288,6 +288,8 @@ extension Theme {
         static let persona = "sparkle"
         /// AI does it: summaries, drafts, AI edits, hand to Persona.
         static let ai = "sparkles"
+        /// The composer's glow while a reply is generating (Settings › Appearance › Glow While Replying).
+        static let composerGlow = "wand.and.rays"
         /// The Agents tab and what stands for it.
         static let agents = "chevron.left.forwardslash.chevron.right"
         /// An agent run from its command line, not its desktop app: the badge on its mark (`AgentMark`, #6390).

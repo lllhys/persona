@@ -49840,6 +49840,29 @@
       },
       "extractionState" : "manual"
     },
+    "Glow While Replying" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Glow While Replying"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信中に光らせる"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复时发光"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Gmail address" : {
       "localizations" : {
         "en" : {
@@ -50871,6 +50894,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "总结并建议回复"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
+    "Light up the input box while Persona writes a reply" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Light up the input box while Persona writes a reply"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Persona が返信を書いている間、入力欄を光らせます"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Persona 写回复时，输入框外圈亮起流动光效"
           }
         }
       },

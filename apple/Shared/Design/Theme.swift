@@ -528,9 +528,9 @@ nonisolated enum Theme {
     /// status bar above the column with it (`SidebarTopFill`), which the column itself cannot draw into.
     static let systemSidebar = Color(light: 0xE6E9EE, dark: 0x191C20)
 
-    /// Motion: a state change snaps, a layout change glides. Nothing repeats except the Needs You dot, the work spinner and
-    /// the persona's dot in the Persona tab's top bar (docs/apple/persona.md), and those stop with Reduce Motion (the spinner
-    /// is the system's).
+    /// Motion: a state change snaps, a layout change glides. Nothing repeats except the Needs You dot, the work spinner,
+    /// the persona's dot in the Persona tab's top bar (docs/apple/persona.md) and, when it is turned on, the composer's glow
+    /// while a reply is generating (`ComposerGlow`); those stop with Reduce Motion (the spinner is the system's).
     enum Motion {
         static let state = Animation.snappy(duration: 0.25)
         static let layout = Animation.smooth(duration: 0.3)
@@ -620,6 +620,9 @@ nonisolated enum Theme {
         static let drawer = Color(light: 0xF9F9F9, dark: 0x171717)
         /// The composer: its field's corner when it is one line (a capsule) and when it has grown into a card.
         static let composerRadius: CGFloat = 32
+        /// The colors that travel around the composer while a reply is generating (Glow While Replying, `ComposerGlow`):
+        /// blue through violet to pink, each in its light and dark shade.
+        static let composerGlow: [Color] = [Hue.blue, Hue.indigo, Hue.purple, Hue.pink]
         /// Reserve most of the keyboard-visible viewport for the conversation, not the draft.
         static let composerHeightFraction: CGFloat = 0.22
         static let composerMinimumLines = 3
