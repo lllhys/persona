@@ -213,7 +213,8 @@ struct ShellPageSlide: ViewModifier {
     func body(content: Content) -> some View {
         let pager = shell.pager
         let p = pager.position
-        let shown = pager.moving ? abs(CGFloat(index) - p) < 1 : index == pager.page
+        let distance = Double(abs(CGFloat(index) - p))
+        let shown = pager.moving ? distance < 1 : index == pager.page
         let inReach = !pager.moving && index == pager.page && index == shell.page
         content
             // The page behind is never taken out of the window, so `onDisappear` does not fire for it: `tabIsActive`
@@ -221,7 +222,7 @@ struct ShellPageSlide: ViewModifier {
             // that does not settle on the other page does not restart them.
             .environment(\.tabIsActive, index == shell.page)
             .offset(x: pager.moving && railEdge == nil ? (CGFloat(index) - p) * pager.width : 0)
-            .opacity(railEdge != nil && pager.moving ? max(0, 1 - abs(CGFloat(index) - p)) : (shown ? 1 : 0))
+            .opacity(railEdge != nil && pager.moving ? max(0.0, 1.0 - distance) : (shown ? 1.0 : 0.0))
             .allowsHitTesting(inReach)
             .accessibilityHidden(!inReach)
             .zIndex(index == pager.page ? 1 : 0)
