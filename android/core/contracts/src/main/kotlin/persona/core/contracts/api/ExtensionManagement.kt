@@ -110,7 +110,10 @@ data class ExtensionField(
     val default: JsonElement? = null,
     val required: Boolean? = null,
     val enum: List<ExtensionChoice>? = null,
+    /** `uri | email | hostname`, or `machine` (one of the hub's machines, of the systems in [os]) / `launcher` (one of its launchers), both picked from a list. */
     val format: String? = null,
+    /** x-os of a `machine` field: the systems its machine may run (none is any). */
+    val os: List<String>? = null,
     val pattern: String? = null,
     @SerialName("min_length") val minLength: Int? = null,
     @SerialName("max_length") val maxLength: Int? = null,
@@ -129,6 +132,10 @@ data class ExtensionField(
     val label: String get() = title?.takeIf { it.isNotBlank() } ?: name
     /** The default it falls back to, when there is one (JSON null is none). */
     val fallback: JsonElement? get() = default?.takeIf { it != JsonNull }
+    /** One of the hub's machines, picked from them by name (a string of format machine without choices of its own). */
+    val picksMachine: Boolean get() = type == "string" && enum == null && format == "machine"
+    /** One of the hub's launchers, picked from them (a string of format launcher without choices of its own). */
+    val picksLauncher: Boolean get() = type == "string" && enum == null && format == "launcher"
 }
 
 /**

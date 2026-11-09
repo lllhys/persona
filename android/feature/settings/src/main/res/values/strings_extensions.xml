@@ -331,6 +331,9 @@
     <string name="settings_ext_cua_ready">Cua ready</string>
     <string name="settings_ext_cua_installed">Cua installed</string>
     <string name="settings_ext_machine_not_found">Machine not found</string>
+    <string name="settings_ext_machine_missing">%1$s (no such machine)</string>
+    <string name="settings_ext_launcher_missing">%1$s (no such launcher)</string>
+    <string name="settings_ext_launchers_loading">Loading launchers…</string>
     <string name="settings_ext_no_mac">No Macs on this hub yet.</string>
     <string name="settings_ext_no_machine">No machines on this hub yet.</string>
     <string name="settings_ext_turn_on_title">Turn on “%1$s”?</string>

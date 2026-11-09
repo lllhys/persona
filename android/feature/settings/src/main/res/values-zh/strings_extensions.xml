@@ -323,6 +323,9 @@
     <string name="settings_ext_cua_ready">Cua 可以用</string>
     <string name="settings_ext_cua_installed">Cua 已装</string>
     <string name="settings_ext_machine_not_found">找不到这台机器</string>
+    <string name="settings_ext_machine_missing">%1$s（找不到这台机器）</string>
+    <string name="settings_ext_launcher_missing">%1$s（找不到这个启动器）</string>
+    <string name="settings_ext_launchers_loading">正在读启动器…</string>
     <string name="settings_ext_no_mac">这个 hub 上还没有 Mac。</string>
     <string name="settings_ext_no_machine">这个 hub 上还没有机器。</string>
     <string name="settings_ext_turn_on_title">打开「%1$s」？</string>
