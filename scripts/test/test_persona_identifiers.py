@@ -140,7 +140,7 @@ class PersonaIdentifiersTest(unittest.TestCase):
         source = (ROOT / 'android/core/navigation/src/main/kotlin/persona/core/navigation/Routes.kt').read_text()
         for name in ('InboxItem', 'LarkConversation', 'Interaction'):
             self.assertIn(f'@SerialName("persona.core.navigation.RouteSource.{name}")', source)
-        self.assertIn('enum class AppTab { Persona, Agents, Inbox, Settings }', source)
+        self.assertIn('enum class AppTab { Persona, Agents }', source)
         self.assertIn('@SerialName("persona.core.navigation.ChatRoute")', source)
 
 

@@ -7,6 +7,6 @@ import Testing
 struct PhoneDataSourceTests {
     @Test func noHealthOnTheMac() {
         #expect(!PhoneDataSource.onThisDevice.contains(.health))
-        #expect(PhoneDataSource.onThisDevice == PhoneDataSource.allCases.filter { $0 != .health })
+        #expect(PhoneDataSource.onThisDevice == PhoneDataSource.allCases.filter { $0 != .health && !PhoneDataSource.iPhoneOnly.contains($0) })
     }
 }

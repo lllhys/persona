@@ -122,7 +122,7 @@
   "server/internal/extmgr/bots_elsewhere_test.go": 4,
   "server/internal/extmgr/bots_pair_feedback_test.go": 3,
   "server/internal/extmgr/bots_test.go": 6,
-  "server/internal/extmgr/bots_topics_test.go": 7,
+  "server/internal/extmgr/bots_topics_test.go": 6,
   "server/internal/extmgr/builtin_reconcile_test.go": 1,
   "server/internal/extmgr/channels_test.go": 2,
   "server/internal/extmgr/computer_tell_order_test.go": 1,

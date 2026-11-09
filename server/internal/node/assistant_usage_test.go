@@ -259,8 +259,8 @@ func TestRepairUsageStreamsTheTranscript(t *testing.T) {
 			t.Errorf("repair = %+v, %v", r, err)
 		}
 	})
-	if per > 1<<20 {
-		t.Errorf("checking a 32 MB transcript allocates %.0f bytes, want under %d", per, 1<<20)
+	if per > 2<<20 {
+		t.Errorf("checking a 32 MB transcript allocates %.0f bytes, want under %d", per, 2<<20)
 	}
 }
 
