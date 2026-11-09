@@ -92,7 +92,10 @@ class PersonaOnlyTests(unittest.TestCase):
         self.assertEqual(settings["PRODUCT_NAME"], "PersonaWidgets")
         self.assertIn("WIDGET_EXTENSION", settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"])
         self.assertNotIn("TARGETED_DEVICE_FAMILY", settings)
-        shared = {item["path"] for item in targets["PersonaWatchWidgets"]["sources"] if item["path"].startswith("Shared/")}
+        shared = {item["path"] for item in targets["PersonaWatchWidgets"]["sources"] if item["path"].startswith("Shared/")} - {
+            "Shared/WatchPetSnapshot.swift",
+            "Shared/Design/WatchFaceTokens.swift",
+        }
         self.assertEqual({item["path"] for item in widget["sources"]}, shared | {"PersonaVisionWidgets"})
         for target in (app, widget):
             self.assertEqual(target["entitlements"]["properties"]["com.apple.security.application-groups"], ["$(PERSONA_APP_GROUP)"])
