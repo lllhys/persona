@@ -2,6 +2,7 @@
   "source_lark": "Lark",
   "source_mail": "Mail",
   "draft_title": "Reply drafted by your AI twin",
+  "draft_edited": "Edited",
   "edit": "Edit",
   "draft_expand": "Show all",
   "draft_collapse": "Show less",

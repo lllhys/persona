@@ -261,6 +261,9 @@ const lastUnified = 419
 // split). So a database migrated before the split runs nothing again, and the few early migrations that are in both
 // sets (they made tables for both sides; migrations_test.go bothSets lists them) run once per part on a database the
 // hub and the default manager share.
+//
+// The rows are read once, under the lock: no migration writes schema_migrations, so they change only by what this
+// records itself. A database that is up to date costs a few reads and no write (docs/server/server.md "Migrations").
 func (d *DB) migrateFrom(ctx context.Context, fsys fs.FS) error {
 	// Serialize concurrent hubs, managers (and tests) on one advisory lock.
 	conn, err := d.pool.Acquire(ctx)
@@ -275,26 +278,54 @@ func (d *DB) migrateFrom(ctx context.Context, fsys fs.FS) error {
 	if err := splitSchemaMigrations(ctx, conn); err != nil {
 		return err
 	}
-
+	recs, err := readSchemaRecords(ctx, conn)
+	if err != nil {
+		return err
+	}
 	for _, r := range renumbered {
+		if !recs.named(r.from) {
+			continue // renumberMigration would change no row
+		}
 		if err := renumberMigration(ctx, conn, r.from, r.to); err != nil {
 			return fmt.Errorf("renumber migration %s: %w", r.from, err)
+		}
+		if recs, err = readSchemaRecords(ctx, conn); err != nil {
+			return err
 		}
 	}
 	for _, sd := range setDirs {
 		if d.sets&sd.set == 0 {
 			continue
 		}
-		if err := migrateSet(ctx, conn, fsys, sd.part); err != nil {
+		if err := migrateSet(ctx, conn, fsys, sd.part, recs); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// schemaMigrationsSplit says whether schema_migrations is already as splitSchemaMigrations' statements leave it: a
+// table in the schema CREATE TABLE makes it in, with a part column, without schema_migrations_pkey, and with a
+// relation named schema_migrations_version_part next to it. Each condition is what one statement's IF [NOT] EXISTS
+// looks at.
+const schemaMigrationsSplit = `SELECT coalesce((
+	SELECT c.relkind = 'r' AND n.nspname = current_schema()
+		AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'part' AND a.attnum > 0 AND NOT a.attisdropped)
+		AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.conname = 'schema_migrations_pkey')
+		AND EXISTS (SELECT 1 FROM pg_class i WHERE i.relnamespace = c.relnamespace AND i.relname = 'schema_migrations_version_part')
+	FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = to_regclass('schema_migrations')), false)`
+
 // splitSchemaMigrations makes schema_migrations, or gives one from before the split its part column: the rows it has
-// keep part NULL, and a version may have a row for each part.
+// keep part NULL, and a version may have a row for each part. A table that is so already is left alone: an ALTER TABLE
+// that changes nothing still takes an ACCESS EXCLUSIVE lock and a transaction id, on every start.
 func splitSchemaMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	var split bool
+	if err := conn.QueryRow(ctx, schemaMigrationsSplit).Scan(&split); err != nil {
+		return fmt.Errorf("schema_migrations: %w", err)
+	}
+	if split {
+		return nil
+	}
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS schema_migrations (
 			version int NOT NULL, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), part text)`,
@@ -309,8 +340,55 @@ func splitSchemaMigrations(ctx context.Context, conn *pgxpool.Conn) error {
 	return nil
 }
 
-// migrateSet applies the migrations in migrations/<part> that part has not.
-func migrateSet(ctx context.Context, conn *pgxpool.Conn, fsys fs.FS, part string) error {
+// schemaRecord is a schema_migrations row of some version: part is NULL on the rows from before the split.
+type schemaRecord struct {
+	name string
+	part pgtype.Text
+}
+
+// schemaRecords are schema_migrations' rows by version.
+type schemaRecords map[int][]schemaRecord
+
+func readSchemaRecords(ctx context.Context, conn *pgxpool.Conn) (schemaRecords, error) {
+	rows, err := conn.Query(ctx, `SELECT version, name, part FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	recs := schemaRecords{}
+	var version int
+	var r schemaRecord
+	_, err = pgx.ForEachRow(rows, []any{&version, &r.name, &r.part}, func() error {
+		recs[version] = append(recs[version], r)
+		return nil
+	})
+	return recs, err
+}
+
+// named says whether a row records the file name.
+func (recs schemaRecords) named(name string) bool {
+	for _, rs := range recs {
+		for _, r := range rs {
+			if r.name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// done says whether part has migration name (numbered version) applied: a row of that part, or a NULL-part one from up
+// to lastUnified or of the same file (migrateFrom).
+func (recs schemaRecords) done(version int, name, part string) bool {
+	for _, r := range recs[version] {
+		if r.part.Valid && r.part.String == part || !r.part.Valid && (version <= lastUnified || r.name == name) {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateSet applies the migrations in migrations/<part> that part has not (recs), adding each to recs as it records it.
+func migrateSet(ctx context.Context, conn *pgxpool.Conn, fsys fs.FS, part string, recs schemaRecords) error {
 	dir := "migrations/" + part
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -323,12 +401,7 @@ func migrateSet(ctx context.Context, conn *pgxpool.Conn, fsys fs.FS, part string
 		if err != nil {
 			return err
 		}
-		var done bool
-		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations
-			WHERE version = $1 AND (part = $2 OR part IS NULL AND (version <= $3 OR name = $4)))`, version, part, lastUnified, name).Scan(&done); err != nil {
-			return err
-		}
-		if done {
+		if recs.done(version, name, part) {
 			continue
 		}
 		sql, err := fs.ReadFile(fsys, dir+"/"+name)
@@ -345,6 +418,7 @@ func migrateSet(ctx context.Context, conn *pgxpool.Conn, fsys fs.FS, part string
 		if err != nil {
 			return fmt.Errorf("migration %s/%s: %w", part, name, err)
 		}
+		recs[version] = append(recs[version], schemaRecord{name: name, part: pgtype.Text{String: part, Valid: true}})
 	}
 	return nil
 }
@@ -375,18 +449,56 @@ func renumberMigration(ctx context.Context, conn *pgxpool.Conn, from, to string)
 	})
 }
 
-// TruncateForTest clears tables in tests: those of them the database's sets have.
+// TruncateForTest clears tables in tests: those of them the database's sets have, with what refers to them.
 func (d *DB) TruncateForTest(ctx context.Context) error {
-	var tables []string
-	err := d.pool.QueryRow(ctx, `SELECT coalesce(array_agg(t), '{}') FROM unnest($1::text[]) AS t WHERE to_regclass(t) IS NOT NULL`,
-		[]string{"workspace_board", "workspace_snapshots", "push_device_retirements", "devices", "device_tokens", "live_activities", "phone_tools", "phone_write_queue",
-			"node_sessions", "mail_accounts", "interactions", "settings", "inbox_items", "kb_entities", "connector_secrets",
-			"machine_systems", "machine_metrics", "sent_messages", "todos", "todo_agents", "assistant_always", "machine_trust", "hub_settings",
-			"manager_outbox", "handed_over",
-			"machine_audit", "sent_as_user"}).Scan(&tables)
-	if err != nil || len(tables) == 0 {
+	cascade, err := d.truncateCascade(ctx, []string{"workspace_board", "workspace_snapshots", "push_device_retirements", "devices",
+		"device_tokens", "live_activities", "phone_tools", "phone_write_queue", "node_sessions", "mail_accounts", "interactions",
+		"settings", "inbox_items", "kb_entities", "connector_secrets", "machine_systems", "machine_metrics", "sent_messages",
+		"todos", "todo_agents", "assistant_always", "machine_trust", "hub_settings", "manager_outbox", "handed_over",
+		"machine_audit", "sent_as_user"})
+	if err != nil {
 		return err
 	}
-	_, err = d.pool.Exec(ctx, `TRUNCATE `+strings.Join(tables, ", ")+` CASCADE`)
+	return d.truncateNonEmpty(ctx, cascade)
+}
+
+// truncateCascade is what TRUNCATE tables CASCADE empties: those of tables the database has, and each table whose
+// foreign key refers to one of these, and so on.
+func (d *DB) truncateCascade(ctx context.Context, tables []string) ([]string, error) {
+	var out []string
+	err := d.pool.QueryRow(ctx, `WITH RECURSIVE c(rel) AS (
+			SELECT to_regclass(t) FROM unnest($1::text[]) AS t WHERE to_regclass(t) IS NOT NULL
+			UNION SELECT k.conrelid FROM pg_constraint k JOIN c ON k.confrelid = c.rel WHERE k.contype = 'f')
+		SELECT coalesce(array_agg(rel::regclass::text ORDER BY rel::regclass::text), '{}') FROM c`, tables).Scan(&out)
+	return out, err
+}
+
+// truncateNonEmpty empties tables (truncateCascade's) with one TRUNCATE ... CASCADE of those that have a row. TRUNCATE
+// gives every table it names new files, a row in it or not: clearing two dozen tables, mostly empty, cost a test
+// more than most of what it then did. The tables left empty are the same.
+//
+// The probe and the TRUNCATE are two statements: a row not yet committed when the probe looks, or written to a table it
+// found empty after it, stays, where one TRUNCATE of every table would wait for the writer's lock and clear it. So it is
+// for the start of a test, before anything it starts writes there.
+func (d *DB) truncateNonEmpty(ctx context.Context, tables []string) error {
+	if len(tables) == 0 {
+		return nil
+	}
+	probe := make([]string, len(tables))
+	for i, t := range tables {
+		probe[i] = `SELECT ` + strconv.Itoa(i) + ` WHERE EXISTS (SELECT FROM ` + t + `)`
+	}
+	var rowful []int
+	if err := d.pool.QueryRow(ctx, `SELECT coalesce(array_agg(i), '{}') FROM (`+strings.Join(probe, " UNION ALL ")+`) AS p(i)`).Scan(&rowful); err != nil {
+		return err
+	}
+	if len(rowful) == 0 {
+		return nil
+	}
+	names := make([]string, len(rowful))
+	for i, n := range rowful {
+		names[i] = tables[n]
+	}
+	_, err := d.pool.Exec(ctx, `TRUNCATE `+strings.Join(names, ", ")+` CASCADE`)
 	return err
 }

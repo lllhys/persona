@@ -55,12 +55,12 @@ func (d *Devices) attentionFor(id, webURL string) *link.Attention {
 	if a == nil {
 		return nil
 	}
-	pending, err := d.PendingMachineIDs(context.Background())
+	eligible, known := d.summaryEligible(id)
 	out := *a
 	switch {
-	case d.IsWork(id) || err == nil && slices.Contains(pending, id):
+	case known && !eligible:
 		out, webURL = link.Attention{Items: []link.AttentionItem{}}, ""
-	case err != nil:
+	case !known:
 		return nil
 	}
 	out.Rev, out.WebURL = "", webURL
@@ -68,6 +68,20 @@ func (d *Devices) attentionFor(id, webURL string) *link.Attention {
 	sum := sha256.Sum256(b)
 	out.Rev = hex.EncodeToString(sum[:8])
 	return &out
+}
+
+// summaryEligible is whether computer id gets the "Needs you" summary as it is: not a work computer, nor one waiting
+// to be confirmed. known is false while the hub cannot say which computers wait (a work computer is known anyway). The
+// presence of a computer counts by the same rule (presence.go).
+func (d *Devices) summaryEligible(id string) (eligible, known bool) {
+	if d.IsWork(id) {
+		return false, true
+	}
+	pending, err := d.PendingMachineIDs(context.Background())
+	if err != nil {
+		return false, false
+	}
+	return !slices.Contains(pending, id), true
 }
 
 // readyForAttention: the link's endpoints went out, so a summary may follow them; the latest goes now.
@@ -78,9 +92,8 @@ func (l *mgrLink) readyForAttention() {
 	l.sendAttention()
 }
 
-// sendAttention sends the link the summary for its computer (attentionFor), unless its hello did not ask for one, its
-// endpoints have not gone out yet, or it has this one already. The web address is the hub's public one, else the hub
-// address the link went to.
+// sendAttention sends the link the summary for its computer (summary), unless its hello did not ask for one, its
+// endpoints have not gone out yet, or it took this one already.
 func (l *mgrLink) sendAttention() {
 	if !l.attention {
 		return
@@ -90,13 +103,28 @@ func (l *mgrLink) sendAttention() {
 	if !l.attReady {
 		return
 	}
-	a := l.m.d.attentionFor(l.m.cfg.ID, cmp.Or(l.m.d.config().WebURL, l.address))
-	if a == nil || a.Rev == l.attSent {
+	a := l.summary()
+	if a == nil {
 		return
 	}
-	if l.send(link.Message{Type: "attention", Attention: a}) == nil {
-		l.attSent = a.Rev
+	l.heldMu.Lock()
+	if a.Rev == l.held.sent {
+		l.heldMu.Unlock()
+		return
 	}
+	l.held.begin(a)
+	l.heldMu.Unlock()
+	ok := l.send(link.Message{Type: "attention", Attention: a}) == nil
+	l.heldMu.Lock()
+	l.held.done(a, ok)
+	l.heldMu.Unlock()
+	l.m.d.delivered()
+}
+
+// summary is the summary for the link's computer as it is now (attentionFor): the web address is the hub's public one,
+// else the hub address the link went to.
+func (l *mgrLink) summary() *link.Attention {
+	return l.m.d.attentionFor(l.m.cfg.ID, cmp.Or(l.m.d.config().WebURL, l.address))
 }
 
 // wakeAttention has the machine's sender look at the summary soon; a wake already waiting covers this one.

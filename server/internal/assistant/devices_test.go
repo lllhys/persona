@@ -68,5 +68,6 @@ func (f *fakeDevices) Session(string, string) (proto.Session, bool) { return pro
 func (f *fakeDevices) ConnectedAt(string) time.Time                 { return time.Time{} }
 func (f *fakeDevices) Usage() assistantwire.UsageSummary            { return assistantwire.UsageSummary{} }
 
-func (f *fakeDevices) Follow(context.Context, string, string, bool) error { return nil }
-func (f *fakeDevices) SetAttention(link.Attention)                        {}
+func (f *fakeDevices) Follow(context.Context, string, string, bool) error   { return nil }
+func (f *fakeDevices) SetAttention(link.Attention)                          {}
+func (f *fakeDevices) LinkRang(context.Context, string, time.Duration) bool { return false }

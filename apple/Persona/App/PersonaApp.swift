@@ -73,7 +73,12 @@ struct PersonaApp: App {
                 // The home screen icon in step with the Avatar and Light & Dark (a scheme from a launch argument, a switch the system
                 // cut short, the old App Icon setting); nothing happens when it already is, so no alert.
                 model.followAppIcon()
-                if old != new { Task { await model.refresh() } }
+                Task {
+                    if old != new { await model.refresh() }
+                    #if os(iOS)
+                    await WorkoutReports.shared.refresh(model: model)
+                    #endif
+                }
             } else if new == .background {
                 // A suspended app's socket looks alive to the hub until it times out, and phone_* calls sent to it hang.
                 // Closed, the hub knows the phone is away and wakes it with a silent push instead; and nothing opens it

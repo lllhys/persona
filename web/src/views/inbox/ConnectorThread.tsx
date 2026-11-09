@@ -189,7 +189,7 @@ function ConnectorText({ item, problem }: { item: InboxItem; problem?: string })
         {(c?.url || (c?.reply_to && c.can_reply)) && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             {c?.url && (
-              <Button tone="secondary" icon="external" onClick={() => openLink(c.url!, item.title)}>
+              <Button tone="secondary" icon="external" onClick={() => openLink(c.url!, item.title, item.manager)}>
                 {tightCJK(t("inbox-connectorthread.open_in", { name: item.account_name || item.source }))}
               </Button>
             )}

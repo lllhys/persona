@@ -6,5 +6,6 @@
   "mail_target_changed": "The email you’re replying to has changed. Check the latest message, then confirm sending.",
   "item_done": "This was already dealt with, so the reply wasn’t sent. To reply, move it back to the inbox first.",
   "suggestion_stale": "The suggestion was updated",
-  "by_policy": "Your rule: {name}"
+  "by_policy": "Your rule: {name}",
+  "refresh_failed": "The sources couldn’t be read just now, so the list wasn’t updated. Try again in a moment."
 }

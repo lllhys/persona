@@ -8,6 +8,7 @@ import { clientIdFor, ON_DOCUMENT, readComments, replyText, sendComment, sendKey
 import { ago } from "../../lib/format";
 import { mentionsIn, type LarkPerson } from "../../lib/lark-people";
 import { clickLink } from "../../lib/links";
+import { useLinkManager } from "../../lib/manager-choice";
 import { Button, cx, EASE, IconButton, Loading, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { LarkPeopleMenu, useLarkPeoplePicker } from "../../ui/LarkPeoplePicker";
@@ -38,6 +39,7 @@ function readError(e: unknown): string {
 
 /** The threads of `url` (read as soon as the reader opens, so the count and the list are there at once) and the box. */
 export function useDocComments(url: string, on: boolean): DocComments {
+  const manager = useLinkManager();
   const [threads, setThreads] = useState<DocThread[] | null>(null);
   const [loadError, setLoadError] = useState("");
   const [round, setRound] = useState(0);
@@ -62,7 +64,7 @@ export function useDocComments(url: string, on: boolean): DocComments {
   useEffect(() => {
     if (!on) return;
     let live = true;
-    readComments(url)
+    readComments(url, manager)
       .then((t) => {
         if (!live) return;
         setThreads(t);
@@ -72,7 +74,7 @@ export function useDocComments(url: string, on: boolean): DocComments {
     return () => {
       live = false;
     };
-  }, [url, on, round]);
+  }, [url, manager, on, round]);
 
   const reload = useCallback(() => {
     setLoadError("");
@@ -81,7 +83,7 @@ export function useDocComments(url: string, on: boolean): DocComments {
 
   /** After a write: the threads its answer brought, else read again (the write went through either way). */
   const settle = async (t: DocThread[] | null) => {
-    const fresh = t ?? (await readComments(url).catch(() => null));
+    const fresh = t ?? (await readComments(url, manager).catch(() => null));
     if (fresh) setThreads(fresh);
   };
 
@@ -91,7 +93,7 @@ export function useDocComments(url: string, on: boolean): DocComments {
     pending.current = clientIdFor(pending.current, sendKey(url, target, text));
     setSending(true);
     try {
-      const sent = await sendComment(url, target, text, mentionsIn(text, picked), pending.current.id);
+      const sent = await sendComment(url, target, text, mentionsIn(text, picked), pending.current.id, manager);
       pending.current = null;
       setDraft("");
       setPicked([]);
@@ -108,7 +110,7 @@ export function useDocComments(url: string, on: boolean): DocComments {
     if (resolving.has(th.id)) return;
     setResolving((s) => new Set(s).add(th.id));
     try {
-      await settle(await setResolved(url, th.id, resolved));
+      await settle(await setResolved(url, th.id, resolved, manager));
       if (target.kind === "thread" && target.id === th.id && resolved) setTarget(ON_DOCUMENT);
     } catch (e) {
       toast(resolved ? t("link-doccomments.resolve_failed", { error: writeErrorText(e) }) : t("link-doccomments.reopen_failed", { error: writeErrorText(e) }), "error");
@@ -235,6 +237,7 @@ function ThreadCard({ thread, writes, replying, resolving, onReply, onResolve }:
 
 function Reply({ reply }: { reply: DocReply }) {
   const when = ago(reply.createdAt);
+  const manager = useLinkManager();
   return (
     <div className="flex gap-2">
       <span aria-hidden className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-field text-[11px] font-semibold text-ink-2">
@@ -253,7 +256,7 @@ function Reply({ reply }: { reply: DocReply }) {
                 {s.text}
               </span>
             ) : s.href ? (
-              <a key={i} href={s.href} onClick={(e) => clickLink(e, s.href)} target="_blank" rel="noreferrer noopener" className="text-accent underline-offset-2 hover:underline">
+              <a key={i} href={s.href} onClick={(e) => clickLink(e, s.href, undefined, manager)} target="_blank" rel="noreferrer noopener" className="text-accent underline-offset-2 hover:underline">
                 {s.text}
               </a>
             ) : (
@@ -288,7 +291,8 @@ function CommentBox({ url, model, box, focus }: { url: string; model: DocComment
     box.current.setSelectionRange(at, at);
   });
   const { draft, setDraft, target } = model;
-  const find = useCallback((q: string, signal: AbortSignal) => findDocPeople(url, q, signal), [url]);
+  const manager = useLinkManager();
+  const find = useCallback((q: string, signal: AbortSignal) => findDocPeople(url, q, signal, manager), [url, manager]);
   const picker = useLarkPeoplePicker({
     text: draft,
     caret,

@@ -15,12 +15,12 @@ import (
 // left as it was.
 func TestCopyTables(t *testing.T) {
 	ctx := context.Background()
-	from, err := Open(ctx, freshDatabase(t), AllSets)
+	from, err := Open(ctx, migratedDatabase(t, AllSets), AllSets)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer from.Close()
-	to, err := Open(ctx, freshDatabase(t), ManagerSet)
+	to, err := Open(ctx, migratedDatabase(t, ManagerSet), ManagerSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ and a tab	and a \ backslash')`,
 // from before (no application_name), and gives up after its wait.
 func TestLockManagerMove(t *testing.T) {
 	ctx := context.Background()
-	url := freshDatabase(t)
+	url := migratedDatabase(t, ManagerSet)
 	running, err := Open(ctx, url, ManagerSet)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestLockManagerMove(t *testing.T) {
 // A copy into data that is there already, or into the source itself, is refused before it touches anything.
 func TestCopyTablesRefuses(t *testing.T) {
 	ctx := context.Background()
-	url := freshDatabase(t)
+	url := migratedDatabase(t, AllSets)
 	from, err := Open(ctx, url, AllSets)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestCopyTablesRefuses(t *testing.T) {
 	if _, err := CopyTables(ctx, from, same, t.Logf); !errors.Is(err, ErrSameDatabase) {
 		t.Fatalf("into itself: %v", err)
 	}
-	to, err := Open(ctx, freshDatabase(t), ManagerSet)
+	to, err := Open(ctx, migratedDatabase(t, ManagerSet), ManagerSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestCopyTablesRefuses(t *testing.T) {
 // Dates and times mean the same on both sides whatever each server's DateStyle is.
 func TestCopyTablesKeepsDates(t *testing.T) {
 	ctx := context.Background()
-	src, dst := freshDatabase(t), freshDatabase(t)
+	src, dst := migratedDatabase(t, AllSets), migratedDatabase(t, ManagerSet)
 	for url, style := range map[string]string{src: "SQL, DMY", dst: "SQL, MDY"} {
 		c, err := pgx.Connect(ctx, url)
 		if err != nil {
@@ -199,7 +199,7 @@ func TestCopyTablesKeepsDates(t *testing.T) {
 // HubTables are exactly the tables a database the hub's set alone was migrated with has.
 func TestHubTablesAreTheHubSets(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, freshDatabase(t), HubSet)
+	d, err := Open(ctx, migratedDatabase(t, HubSet), HubSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestHubTablesAreTheHubSets(t *testing.T) {
 			t.Errorf("%s: in a hub-set database, not in HubTables", tbl)
 		}
 	}
-	m, err := Open(ctx, freshDatabase(t), ManagerSet)
+	m, err := Open(ctx, migratedDatabase(t, ManagerSet), ManagerSet)
 	if err != nil {
 		t.Fatal(err)
 	}

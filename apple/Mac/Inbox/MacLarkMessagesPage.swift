@@ -278,7 +278,7 @@ private struct MacLarkChatColumn: View {
         .id(conversation?.id)
         .environment(\.macSectionStack, true)
         .environment(\.feishuOpen) { route in
-            if case .doc(let url, _) = route, let u = URL(string: url) { link = LinkTarget(url: u) } else { path.append(route) }
+            if case .doc(let url, _, let manager) = route, let u = URL(string: url) { link = LinkTarget(url: u, manager: manager) } else { path.append(route) }
         }
         .macOpensLinksInPanel($link)
         .macLinkPanel($link, wide: true)

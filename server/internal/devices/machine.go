@@ -115,6 +115,8 @@ type Machine struct {
 	link                       *mgrLink      // kind link: the link Persona Link keeps open, nil while there is none
 	linkDown                   error         // why the last link went away
 	linkUp                     chan struct{} // a link arrived
+	// presence: what its Persona Link last said about the user (presence.go).
+	presence *presence
 	// herdrAsked: when the node last said whether herdr's server answers (herdr.go, its row).
 	herdrAsked time.Time
 	// herdrInstall: what the node last said of installing herdr (herdr.go).

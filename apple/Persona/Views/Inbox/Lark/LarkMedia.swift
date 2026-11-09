@@ -111,10 +111,41 @@ final class LarkMedia {
         #endif
     }
 
-    private func cacheKey(_ url: String, size: Int?) -> String {
+    private func cacheKey(_ url: String, size: Int?) -> String { Self.cacheKey(url, size: size) }
+
+    /// The name the bytes of `url` are kept under: a URL that names a manager (`url(_:manager:)`) is its own entry.
+    nonisolated static func cacheKey(_ url: String, size: Int?) -> String {
         let digest = SHA256.hash(data: Data((url + "#" + String(size ?? 0)).utf8))
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// `url` as manager `manager` reads it (docs/assistant/managers.md "Clients"): a hub path gets `manager=`, as a picture
+    /// or file loaded by URL can't send the header. As it is for nil (the default's, nothing named), a full URL (a CDN's)
+    /// and one that names a manager already.
+    nonisolated static func url(_ url: String, manager: String?) -> String {
+        guard let manager, !manager.isEmpty, url.hasPrefix("/"), !url.hasPrefix("//"),
+              URLComponents(string: url)?.queryItems?.contains(where: { $0.name == "manager" }) != true else { return url }
+        let hash = url.firstIndex(of: "#") ?? url.endIndex
+        var head = String(url[..<hash])
+        head += head.contains("?") ? "&" : "?"
+        let value = manager.addingPercentEncoding(withAllowedCharacters: unreserved) ?? manager
+        return head + "manager=" + value + String(url[hash...])
+    }
+
+    /// Where the player streams `url` from: a hub path under the hub's address, a named manager's as `url(_:manager:)`
+    /// names it, its query kept (AVPlayer sends no header but the bearer); a full URL as it is.
+    nonisolated static func streamURL(_ url: String, hub: URL, manager: String?) -> URL {
+        guard url.hasPrefix("/") else { return URL(string: url) ?? hub }
+        guard let manager, !manager.isEmpty, !url.hasPrefix("//"), let named = URLComponents(string: Self.url(url, manager: manager)),
+              var c = URLComponents(url: hub, resolvingAgainstBaseURL: false) else { return hub.appending(path: url) }
+        var base = c.percentEncodedPath
+        while base.hasSuffix("/") { base.removeLast() }
+        c.percentEncodedPath = base + named.percentEncodedPath
+        c.percentEncodedQuery = named.percentEncodedQuery
+        return c.url ?? hub.appending(path: url)
+    }
+
+    private nonisolated static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
     // MARK: Emoji
 
@@ -164,7 +195,8 @@ final class LarkMedia {
     }
 }
 
-/// An image from Feishu with a quiet placeholder while it loads and a broken-image mark when it fails.
+/// An image from Feishu with a quiet placeholder while it loads and a broken-image mark when it fails. In a chat, a hub
+/// path is loaded through the chat's manager (`larkManager`, `LarkMedia.url(_:manager:)`), avatars too.
 struct LarkRemoteImage: View {
     var url: String
     var size: Int? = nil
@@ -172,10 +204,12 @@ struct LarkRemoteImage: View {
     var contentMode: ContentMode = .fill
     /// Called when the image cannot be loaded, for callers that draw something else instead of the broken mark.
     var onFailure: (() -> Void)? = nil
+    @Environment(\.larkManager) private var manager
     @State private var image: UIImage?
     @State private var failed = false
 
     var body: some View {
+        let url = LarkMedia.url(self.url, manager: manager)
         ZStack {
             if let image {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
@@ -229,10 +263,12 @@ struct LarkAvatarImage: View {
 
 // MARK: - Viewers
 
-/// Plays a Feishu video or voice message through the hub (the bearer header rides on the asset request).
+/// Plays a Feishu video or voice message through the hub (the bearer header rides on the asset request), in a chat
+/// through the chat's manager (`larkManager`).
 struct LarkPlayerView: View {
     var url: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.larkManager) private var manager
     @State private var player: AVPlayer?
 
     var body: some View {
@@ -251,7 +287,7 @@ struct LarkPlayerView: View {
         }
         .task {
             guard let cfg = AppModel.shared.config else { return }
-            let full = url.hasPrefix("/") ? cfg.url.appending(path: url) : (URL(string: url) ?? cfg.url)
+            let full = LarkMedia.streamURL(url, hub: cfg.url, manager: manager)
             let asset = AVURLAsset(url: full, options: ["AVURLAssetHTTPHeaderFieldsKey": ["Authorization": "Bearer \(cfg.token)"]])
             let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = p
@@ -261,9 +297,11 @@ struct LarkPlayerView: View {
     }
 }
 
-/// Downloads a Feishu file and opens it in Quick Look (which also offers share / save to Files).
+/// Downloads a Feishu file and opens it in Quick Look (which also offers share / save to Files), in a chat through the
+/// chat's manager (`larkManager`).
 struct LarkFileOpener: ViewModifier {
     @Binding var request: (url: String, name: String)?
+    @Environment(\.larkManager) private var manager
     @State private var local: URL?
     @State private var loading = false
 
@@ -279,9 +317,10 @@ struct LarkFileOpener: ViewModifier {
                 guard let r = request else { return }
                 request = nil
                 loading = true
+                let url = LarkMedia.url(r.url, manager: manager)
                 Task {
                     defer { loading = false }
-                    do { local = try await LarkMedia.shared.file(r.url, name: r.name) } catch { AppModel.shared.show(error) }
+                    do { local = try await LarkMedia.shared.file(url, name: r.name) } catch { AppModel.shared.show(error) }
                 }
             }
     }

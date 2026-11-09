@@ -90,7 +90,7 @@ func TestOneDesktopPerDeviceNewestWins(t *testing.T) {
 	h.onClientMessage(context.Background(), old, []byte(`{"type":"register_desktop","device_name":"Old"}`))
 	h.onClientMessage(context.Background(), fresh, []byte(`{"type":"register_desktop","device_name":"New"}`))
 	for i := 0; i < 5; i++ { // map order is random: ask a few times
-		if got := h.desktops(); len(got) != 1 || got[0].Name != "New" {
+		if got := h.desktops(false); len(got) != 1 || got[0].Name != "New" {
 			t.Fatalf("desktops = %+v", got)
 		}
 	}

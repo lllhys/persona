@@ -102,11 +102,11 @@ class LarkLinkReaderShotsTest {
         override suspend fun saveDraft(target: ReplyTarget, draft: ReplyDraft) = Unit
         override suspend fun reply(target: ReplyTarget, request: ReplyRequest) = Unit
         override suspend fun downloadFile(file: LarkPart.File): String = error("not used")
-        override suspend fun momentsPost(postId: String): LarkMomentsPost =
+        override suspend fun momentsPost(postId: String, manager: String?): LarkMomentsPost =
             if (failing) error("连不上飞书") else LarkMomentsPost(postId, userName = "示例同事",
                 content = LarkMomentsContent("周五下午的分享会改到三楼大会议室，欢迎大家来听压测踩过的坑。"),
                 reactionCount = 12, commentCount = 2, createTime = 1_762_300_000_000.0)
-        override suspend fun momentsComments(postId: String) = listOf(
+        override suspend fun momentsComments(postId: String, manager: String?) = listOf(
             LarkMomentsComment("c1", userName = "另一位同事", content = LarkMomentsContent("会录屏吗？"), createTime = 1_762_301_000_000.0),
             LarkMomentsComment("c2", userName = "示例同事", content = LarkMomentsContent("会，结束后发群里。"), createTime = 1_762_302_000_000.0,
                 replyUserName = "另一位同事"),

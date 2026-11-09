@@ -281,7 +281,7 @@ export function Chain({ item, onSource }: { item: InboxItem; onSource: (at: Sour
   const tap = (x: ChainTap) => {
     if (x.kind === "source") {
       if (x.url) {
-        openLink(x.url);
+        openLink(x.url, undefined, item.manager);
         return;
       }
       onSource({ position: x.position, uid: x.uid });

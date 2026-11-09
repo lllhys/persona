@@ -29,6 +29,7 @@ Place necessary historical text under its module directory and list it below.
 | `apple/persona-native-6152-reversible-acceptance.md` | Apple reversible native-state compatibility acceptance (#6152) |
 | `assistant/assistant-rich-ui-predeployment-2026-11-06.md` | Main chat rich UI: pre-deployment acceptance |
 | `assistant/assistant-records.md` | Main chat before the 2026-10-26 capability upgrade, the tests added for it, and the capability measurements and retest on the production hub (2026-10-26 to 2026-10-31) |
+| `assistant/voice-plan.md` | Voice mode phase one: work breakdown, acceptance and test plan, risks and the design-review answers (2026-11-05 / 06) |
 | `extensions/feishu-records.md` | Lark gateway topic paging: read-only review of the gateway's source (2026-10-31) |
 | `extensions/plan-telegram.md` | Plan: Telegram connector (the user's own account) |
 | `extensions/source-extension-migration-2026-11-07.md` | Server-rendered source extensions: migration and acceptance record |
@@ -38,6 +39,7 @@ Place necessary historical text under its module directory and list it below.
 | `integrations/session-verify.md` | Real-data verification of session reading and message sending (2026-10-31) |
 | `integrations/terminal-records.md` | Terminal measurements: latency and frame intervals, phone control, pane streams, two full clients, CJK widths and focus-sync runs (2026-10-29 to 2026-11-05) |
 | `integrations/codex-app-server-records.md` | Codex app-server first implementation: acceptance record (2026-11-02) |
+| `integrations/codex-app-server-research.md` | Codex app-server: source research behind the integration, pinned upstream and Persona line references (2026-11-01 to 2026-11-07) |
 | `operations/tab-switch-performance-739.md` | Persona/Agents switching CPU and request measurements, targeted fixes and the separate Mac/TestFlight acceptance boundary (#739) |
 | `operations/apple-tab-switch-validation-739.md` | Original Apple 240-sample matrix, cadence/payload observations, hidden HTTP follow-up and open acceptance gates (#739 / #1159) |
 | `operations/node-link-update-validation.md` | Persona Link node update acceptance (#1158) |

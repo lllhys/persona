@@ -213,7 +213,7 @@ nonisolated struct APIClient: Sendable {
     }
 
     /// What a request to `path` carries besides the caller's own headers: the manager it names.
-    private func routing(_ path: String, _ query: [String: String]) -> [String: String] {
+    func routing(_ path: String, _ query: [String: String]) -> [String: String] {
         let named = managerID ?? (Self.assistantRoute(path, query: query) ? shownManager : nil)
         return named.map { [Self.managerHeader: $0] } ?? [:]
     }

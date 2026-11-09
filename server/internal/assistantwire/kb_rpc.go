@@ -18,6 +18,8 @@ const (
 	// MethodKBExtensionUpdate is how the manager hands the assistant an extension's kb.update: with the extension's
 	// id, which the extension cannot set (KBExtensionUpdate). Not on the extensions' allowlist.
 	MethodKBExtensionUpdate = "kb.extension_update"
+	// MethodKBExtensionDay adds sent provenance after the extension manager checks sent.read.
+	MethodKBExtensionDay = "kb.extension_day"
 	// CodeKBConflict: an extension's kb.update touches fields the user or another extension holds; data is
 	// KBConflict.
 	CodeKBConflict = "conflict"
@@ -88,10 +90,11 @@ type KBDayParams struct {
 }
 
 type KBDayResult struct {
-	Day      string              `json:"day"`
-	Messages []kbwire.DayMessage `json:"messages"` // n is the first source-file line, 1-based
-	Prev     string              `json:"prev"`
-	Next     string              `json:"next"`
+	SentOrigin string              `json:"sent_origin"` // available, missing_scope, or unavailable
+	Day        string              `json:"day"`
+	Messages   []kbwire.DayMessage `json:"messages"` // n is the first source-file line, 1-based
+	Prev       string              `json:"prev"`
+	Next       string              `json:"next"`
 }
 
 type KBSearchParams struct {

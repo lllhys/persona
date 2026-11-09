@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "../../ui/remark-gfm-parse";
 import { lazyPage } from "../../lib/lazy-page";
 import { openLink } from "../../lib/links";
+import { useLinkManager } from "../../lib/manager-choice";
 import {
   blocks, initials, isHttps, numberProblem, percent, tableRows, toneOf,
   type RowIcon, type UIAction, type UIItem, type UIMore, type UISection, type UITone, type UIView,
@@ -330,6 +331,7 @@ function Item(props: Omit<SectionProps, "section" | "embedded" | "onMore" | "bar
 }
 
 function NativeItem({ item: it, compact, values, setValue, busy, onPress, onChoose, canPress, chosen, locked, onAct, onPicked, draft, local, nativeFetch, nativeAvailable, ...v6 }: Omit<SectionProps, "section" | "embedded" | "onMore" | "bare"> & { item: UIItem }) {
+  const manager = useLinkManager();
   const pressable = (a: UIAction) => (canPress ? canPress(a) : true);
   const tiles = { glyphs: ROW_ICON, busy, onPress, canPress, ...v6 };
   const code = { act: onAct ?? ((a: UIAction) => onPress(a)), busy: locked ? busy || "stream-locked" : busy, reveal: revealDiff, local, fetch: nativeFetch, canFetch: nativeAvailable };
@@ -435,7 +437,7 @@ function NativeItem({ item: it, compact, values, setValue, busy, onPress, onChoo
           onClick={(e) => {
             if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
             e.preventDefault();
-            openLink(it.url!, it.title);
+            openLink(it.url!, it.title, manager);
           }}
           className="flex items-center gap-3 px-4 py-2.5 whitespace-nowrap transition-colors hover:bg-hover"
         >
@@ -719,6 +721,7 @@ function sliderText(c: NonNullable<UIItem["control"]>, h: V6Handlers): string {
 const MD_ALLOWED = ["p", "h1", "h2", "h3", "ul", "ol", "li", "strong", "em", "del", "code", "pre", "blockquote", "a", "br", "hr", "table", "thead", "tbody", "tr", "th", "td", "input"];
 
 export function ViewMarkdown({ text, compact }: { text: string; compact?: boolean }) {
+  const manager = useLinkManager();
   return (
     <div className={cx("prose-j prose-sm px-4 py-2.5 select-text", compact && "prose-compact")}>
       <ReactMarkdown
@@ -740,7 +743,7 @@ export function ViewMarkdown({ text, compact }: { text: string; compact?: boolea
                 onClick={(e) => {
                   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
                   e.preventDefault();
-                  openLink(href);
+                  openLink(href, undefined, manager);
                 }}
               >
                 {children}

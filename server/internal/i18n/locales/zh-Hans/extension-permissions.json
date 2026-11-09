@@ -58,6 +58,7 @@
   "shortcuts_title": "快捷指令和 Siri 里的动作：",
   "scope_kb_read": "读知识库",
   "scope_kb_write": "改知识库里的条目",
+  "scope_sent_read": "查看归档中哪些消息是 Persona 代你发送的",
   "scope_inbox_read": "读收件箱",
   "scope_inbox_write": "处理收件箱（标为已处理、起草和发送回复、静音）",
   "scope_agents_read": "看各台电脑上的 Agent 和对话",

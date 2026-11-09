@@ -10,7 +10,7 @@ import type { FitAddon as XFit } from "@xterm/addon-fit";
 import type { SearchAddon as XSearch } from "@xterm/addon-search";
 import { api, errorText, isAbort, sessionPath } from "../../../lib/api";
 import { openLink } from "../../../lib/links";
-import { getState, isOpen, onHubEvent, send } from "../../../lib/store";
+import { getSession, getState, isOpen, onHubEvent, send } from "../../../lib/store";
 import { passesToApp } from "../../../lib/shortcuts";
 import {
   FrameOrder,
@@ -924,7 +924,7 @@ export class TerminalFeed {
     const url = webLink(uri);
     if (!url) return;
     this.linkHit = true;
-    openLink(url);
+    openLink(url, undefined, getSession(this.mid, this.sid)?.manager);
   }
 
   /** Driving, a plain click is a click in the terminal at that cell (`terminal_click`); a drag selects instead. */

@@ -11,6 +11,8 @@ struct FeishuDocsCommentsView: View {
     var title: String
     /// Opened to comment on a passage of the document (the reader's Comment): the box starts there.
     var passage: FeishuDocsCommentsModel.Target? = nil
+    /// The manager the reader reads through; nil: the default's.
+    var manager: String? = nil
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var model: FeishuDocsCommentsModel?
@@ -40,7 +42,7 @@ struct FeishuDocsCommentsView: View {
                             .padding(.top, Theme.Space.xxl)
                     } else {
                         ForEach(shown) { t in
-                            FeishuDocsThreadCard(thread: t, actions: writes ? actions(model, t) : nil)
+                            FeishuDocsThreadCard(thread: t, actions: writes ? actions(model, t) : nil, manager: manager)
                         }
                     }
                 }
@@ -71,7 +73,7 @@ struct FeishuDocsCommentsView: View {
         }
         .task {
             LarkMedia.shared.loadEmojiCatalog()
-            guard self.model == nil, let api = app.api else { return }
+            guard self.model == nil, let api = app.api?.manager(manager) else { return }
             let m = FeishuDocsCommentsModel(url: url, api: api, target: passage ?? .document)
             #if DEBUG
             // Screenshots: `-showDocCommentDraft <text>` is in the box when it appears (not focused: its @ is looked up at the end);
@@ -142,6 +144,7 @@ struct FeishuDocsThreadCard: View {
 
     var thread: FeishuDocsComments.Thread
     var actions: Actions? = nil
+    var manager: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -162,7 +165,7 @@ struct FeishuDocsThreadCard: View {
             }
             ForEach(thread.replies) { r in
                 HStack(alignment: .top, spacing: Theme.Space.s) {
-                    LarkAvatarImage(name: r.author.name, url: r.author.avatarUrl, size: Theme.Size.wellXS)
+                    LarkAvatarImage(name: r.author.name, url: r.author.avatarUrl.map { LarkMedia.url($0, manager: manager) }, size: Theme.Size.wellXS)
                     VStack(alignment: .leading, spacing: Theme.Space.xs) {
                         HStack(spacing: Theme.Space.sm) {
                             Text(r.author.name).font(Theme.Font.captionStrong).lineLimit(1)

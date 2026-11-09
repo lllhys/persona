@@ -40,6 +40,7 @@ vi.mock("../../lib/store", async (original) => ({
   },
 }));
 vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
+import { setToken } from "../../lib/api";
 import { Extensions } from "./Extensions";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,6 +48,7 @@ import { Extensions } from "./Extensions";
 let host: HTMLDivElement;
 let root: Root;
 let seq = 0;
+let login = 0;
 const flush = async () => {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 };
@@ -60,6 +62,7 @@ const pushOp = async (extension: string, kind: "install" | "upgrade" | "uninstal
 const ext = (over: Partial<HubExtension>): HubExtension => ({ id: "example-ext", name: "Example", kind: "process", status: "running", source: "installed", enabled: true, ...over });
 
 beforeEach(() => {
+  setToken(`token-${++login}`); // unsaved edits outlive the page (#2800): a new credential drops the case before's
   hub.listReads = 0;
   hub.detailReads = 0;
   hub.held = null;

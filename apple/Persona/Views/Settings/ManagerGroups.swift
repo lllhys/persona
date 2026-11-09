@@ -104,15 +104,16 @@ extension ManagerRoster {
     /// What lists read from each manager follow: which are installed and online, and which is the default; none with one.
     var readKey: [String] { isMulti ? [defaultID] + installed.map { "\($0.id):\($0.online)" } : [] }
 
-    /// `read` asked of every installed manager at once, each one named (the default's names none), the default first,
-    /// their items stamped with its id. One that fails gets `said`'s words; nil when the reading was cancelled.
+    /// `read` asked of every installed manager at once, each one named (the default's too: the device's idea of it may be
+    /// stale, and what it answers is stamped with the one asked), the default first, their items stamped with its id. One
+    /// that fails gets `said`'s words; nil when the reading was cancelled.
     @MainActor
     func readEach<T: ManagerStamped>(_ api: APIClient, said: (HubManager, any Error) -> String,
                                      _ read: @escaping @Sendable (APIClient) async throws -> [T]) async -> [ManagerShare<T>]? {
         let managers = installed
         let answers = await withTaskGroup(of: (Int, Result<[T], any Error>).self) { group in
             for (i, m) in managers.enumerated() {
-                let id = m.id, client = api.manager(named(id))
+                let id = m.id, client = api.manager(id)
                 group.addTask {
                     do {
                         return (i, .success(try await read(client).map { var x = $0; x.manager = id; return x }))

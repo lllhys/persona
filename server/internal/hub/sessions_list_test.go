@@ -552,3 +552,84 @@ func TestIndexRowReuseMatchesFullPath(t *testing.T) {
 	}
 	check("end")
 }
+
+// A sessions.revs reindexes the machine from its kept list and kept rows (indexKeptLocked) to the index the full
+// computation gives for its decorated list: the same items (full row, summary with its manager, search text, every
+// scalar) under the same ids, and a new revision exactly when the full computation makes one. The lists hide rows
+// (archived, deleted), name a session twice or come without their bytes; the manager changes between two revs, and
+// revs name sessions that are hidden or not listed.
+func TestReindexKeptMatchesDecorated(t *testing.T) {
+	h := newTestHub(t)
+	m := newMachine(h, MachineConfig{ID: "demo"})
+	h.machines, h.byID["demo"] = []*Machine{m}, m
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	h.deleted.mu.Lock()
+	h.deleted.loaded, h.deleted.m = true, map[string]time.Time{"demo/s03": base.Add(time.Hour)}
+	h.deleted.byMachine = notesByMachine(h.deleted.m)
+	h.deleted.mu.Unlock()
+	rows := func() []proto.Session {
+		var out []proto.Session
+		for i := range 8 {
+			out = append(out, proto.Session{MachineID: "demo", SessionID: fmt.Sprintf("s%02d", i), Title: fmt.Sprintf("needle %d", i),
+				Cwd: "/demo/app", State: "idle", Status: proto.StatusIdle, UpdatedAt: base.Add(time.Duration(i) * time.Minute),
+				LastText: "Demo preview", Archived: i == 2})
+		}
+		return out
+	}
+	take := func(list []proto.Session, withBytes bool) { // a manager's list (takeFleetSessionsFrom)
+		var raws []string
+		for i := range list {
+			if b, _ := json.Marshal(list[i]); withBytes {
+				raws = append(raws, string(b))
+			}
+		}
+		m.setSessionListRaws(list, raws)
+		h.broadcastSessions(m, m.keptSessions())
+	}
+	revs := func(revs string) { m.onEvent("sessions.revs", json.RawMessage(`{"revs":`+revs+`}`)) }
+	got := h.sessionListIndex()
+	var ref sessionlist.Index
+	ids := []string{runtimeListID("demo", "gone")}
+	for i := range 8 {
+		ids = append(ids, runtimeListID("demo", fmt.Sprintf("s%02d", i)))
+	}
+	for _, step := range []struct {
+		name string
+		do   func()
+	}{
+		{"a list with its bytes", func() { take(rows(), true) }},
+		{"revs", func() { revs(`{"s00":2}`) }},
+		{"the same revs", func() { revs(`{"s00":2}`) }},
+		{"a revs naming a session not listed", func() { revs(`{"s01":3,"gone":9}`) }},
+		{"a revs of a hidden session", func() { revs(`{"s02":4,"s03":4}`) }},
+		{"the manager changes", func() {
+			h.devices.mu.Lock()
+			h.devices.kept = map[string]string{"demo": "m-0b0b0b"}
+			h.devices.mu.Unlock()
+			revs(`{"s01":5}`)
+		}},
+		{"a session listed twice", func() {
+			list := rows()
+			twice := list[5]
+			twice.Title = "another row under the same id"
+			take(append(list, twice), true)
+		}},
+		{"revs of a session listed twice", func() { revs(`{"s05":6,"s06":6}`) }},
+		{"a list without its bytes", func() { take(rows(), false) }},
+		{"revs without the bytes", func() { revs(`{"s00":7}`) }},
+	} {
+		before := [2]string{got.Revision(), ref.Revision()}
+		step.do()
+		list := h.shown("demo", h.decorated(m))
+		ref.Replace("demo", fullIndexItems("demo", list, encodeSessions(list)))
+		if a, b := got.Items(ids), ref.Items(ids); !reflect.DeepEqual(a, b) {
+			t.Fatalf("%s: the index differs from the full computation\nkept: %+v\nfull: %+v", step.name, a, b)
+		}
+		if moved, want := got.Revision() != before[0], ref.Revision() != before[1]; moved != want {
+			t.Fatalf("%s: new revision %v, want %v", step.name, moved, want)
+		}
+	}
+	if s := got.Items(ids[2:3])[0].Summary.(json.RawMessage); !strings.Contains(string(s), `"manager":"m-0b0b0b"`) {
+		t.Fatalf("a summary without its new manager: %s", s)
+	}
+}

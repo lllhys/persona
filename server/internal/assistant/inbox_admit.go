@@ -260,15 +260,28 @@ func (s *Service) inboxTriage() InboxTriage {
 				i = len(out.Sources)
 				out.Sources = append(out.Sources, InboxTriageSource{Source: src, Name: b.names[src], State: "ok"})
 			}
-			switch code {
-			case assistantwire.ReadTimeout, assistantwire.ReadRateLimited, assistantwire.ReadFailed:
-			default:
-				code = assistantwire.ReadFailed // a code this build does not know: no raw i18n key shows
-			}
+			code = knownReadError(code)
 			out.Sources[i].ReadError, out.Sources[i].ReadReason = code, i18n.T(l, "assistant-inbox_admit.read_"+code)
 		}
 		b.srcMu.RUnlock()
 	}
+	// A mail account is a source of its own here, "mail:<account>" (as a source that moves between managers is
+	// named), so the apps name the one behind by its address.
+	for id, f := range b.mailReadErrs {
+		code := knownReadError(f.ReadError)
+		out.Sources = append(out.Sources, InboxTriageSource{Source: "mail:" + id, Name: f.Email, State: "ok", ReadError: code,
+			ReadReason: i18n.T(l, "assistant-inbox_admit.read_"+code)})
+	}
 	sort.Slice(out.Sources, func(i, j int) bool { return out.Sources[i].Source < out.Sources[j].Source })
 	return out
+}
+
+// knownReadError is a read code this build has words for; any other (a newer hub's) is ReadFailed, so no raw i18n
+// key shows.
+func knownReadError(code string) string {
+	switch code {
+	case assistantwire.ReadTimeout, assistantwire.ReadRateLimited, assistantwire.ReadLoginRefused, assistantwire.ReadFailed:
+		return code
+	}
+	return assistantwire.ReadFailed
 }

@@ -9878,13 +9878,30 @@ def case_route(h, method, p, q, body):
         CASE = sync_case.CaseHub(case)
         case_json(h, CASE.state())
         return True
+    if method == "GET" and MOCK_WEB and not p.startswith(("/api/", "/mock/")):
+        # MOCK_WEB=<web/dist> with a case: the built web app itself, so a browser talks to the mock directly (a dev
+        # server's proxy answers a cut connection with an error of its own, which the page takes as a definite failure)
+        root = os.path.realpath(MOCK_WEB)
+        f = os.path.realpath(os.path.join(root, p.lstrip("/")))
+        if not (f.startswith(root + os.sep) and os.path.isfile(f)):
+            f = os.path.join(root, "index.html")
+        types = {".js": "text/javascript", ".css": "text/css", ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml",
+                 ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".woff2": "font/woff2"}
+        with open(f, "rb") as fh:
+            data = fh.read()
+        h.send_response(200)
+        h.send_header("Content-Type", types.get(os.path.splitext(f)[1], "application/octet-stream"))
+        h.send_header("Content-Length", str(len(data)))
+        h.end_headers()
+        h.wfile.write(data)
+        return True
     if p == "/mock/case/step" and method == "POST":
         try:
             case_json(h, CASE.step())
         except sync_case.CaseError as e:
             case_json(h, {"error": str(e)}, 409)
         return True
-    device = CASE.device_of(h.headers.get("Authorization", "").removeprefix("Bearer ").strip())
+    device = CASE.device_of(sync_case.token_of(h))
     try:
         data = json.loads(body or b"{}")
     except ValueError:

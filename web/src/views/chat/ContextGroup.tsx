@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { clickLink, linkHref } from "../../lib/links";
+import { useLinkManager } from "../../lib/manager-choice";
 import type { Context } from "../../lib/turns";
 import { Collapse, cx } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
@@ -64,6 +65,7 @@ function ContextRow({ c, first }: { c: Context; first: boolean }) {
 }
 
 function ContextBody({ c }: { c: Context }) {
+  const manager = useLinkManager();
   return (
     <div className="flex flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       {c.text ? (
@@ -76,7 +78,7 @@ function ContextBody({ c }: { c: Context }) {
           href={linkHref(c.url)}
           target="_blank"
           rel="noreferrer"
-          onClick={(e) => clickLink(e, c.url, c.title)}
+          onClick={(e) => clickLink(e, c.url, c.title, manager)}
           className="flex w-fit max-w-full min-w-0 items-center gap-1 text-[12px] whitespace-nowrap text-accent hover:underline"
         >
           <Icon name="external" size={12} className="shrink-0" />

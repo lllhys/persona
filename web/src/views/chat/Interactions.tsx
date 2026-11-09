@@ -1,6 +1,6 @@
 // What the agent is waiting on (questions, plans, permissions, terminal dialogs, MCP forms and links), as Beautiful UI's Approval Card.
 import { createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { answerCard } from "../../lib/card-answer";
+import { answerCard, usePendingLine } from "../../lib/card-answer";
 import { cardKeyAction, focusComposer } from "../../lib/card-keys";
 import { delegateLines, isDelegating, recommendedLabels, type DelegatedAnswer } from "../../lib/delegate";
 import { Choice, DigitHint } from "./Choice";
@@ -96,9 +96,14 @@ type CardKeys = ReturnType<typeof useCardKeys>;
  */
 /** The card the voice is asking about (docs/web/web.md "Voice"): InteractionCard says so, Card marks its kicker row. */
 const AskedByVoice = createContext(false);
+/** The answer on its way for the card, as a line for its footer ("Sending: Allowed"); empty when none, or for its first
+ *  moment online. InteractionCard says so (lib/card-answer.ts usePendingLine, past the card's own state) and disables
+ *  every answer meanwhile. */
+const SendingAnswer = createContext("");
 
 function Card({ title, kicker, onDismiss, busy, children, footer, looking = false, cardKeys }: { title: string; kicker: string; onDismiss?: () => void; busy?: boolean; children: React.ReactNode; footer: React.ReactNode; looking?: boolean; cardKeys?: CardKeys }) {
   const asked = useContext(AskedByVoice);
+  const sending = useContext(SendingAnswer);
   return (
     <div {...(cardKeys?.root ?? {})} aria-label={title} className="shrink-0 overflow-clip rounded-card bg-surface shadow-card outline-none focus-visible:ring-2 focus-visible:ring-accent" style={{ animation: `fade-up 350ms ${EASE} both` }}>
       <div className="px-3.5 pt-3 pb-2.5">
@@ -137,7 +142,10 @@ function Card({ title, kicker, onDismiss, busy, children, footer, looking = fals
         )}
       </div>
       {/* data-card-actions: what answers the card (with hand back above), for the sync scenarios (spec/fixtures/sync) */}
-      <div data-card-actions className="sticky -bottom-1 flex items-center justify-between gap-2 border-t border-line bg-inset px-3 py-2">{footer}</div>
+      <div data-card-actions className={cx("sticky -bottom-1 flex items-center justify-between gap-2 border-t border-line bg-inset px-3 py-2", sending && "flex-wrap")}>
+        {sending && <p data-card-pending role="status" className="basis-full truncate text-[12px] text-ink-2">{sending}</p>}
+        {footer}
+      </div>
     </div>
   );
 }
@@ -1052,6 +1060,8 @@ export function AnsweredCard({ card }: { card: Answered }) {
 
 export function InteractionCard({ ix }: { ix: Interaction }) {
   const canApprove = useStore(() => interactionCanAnswer(ix, getSession(ix.machine_id, ix.session_id)));
+  // an answer still on its way (the hub away, apiOp retrying) holds the card, also after leaving the chat and coming back
+  const { pending, line } = usePendingLine(ix);
   const card = ix.kind === "question" && ix.tool_name === "persona_tool_loop" ? <ToolLoopCard key={ix.id} ix={ix} />
     : ix.kind === "question" ? <QuestionCard ix={ix} />
     : ix.kind === "plan" ? <PlanCard ix={ix} />
@@ -1059,8 +1069,18 @@ export function InteractionCard({ ix }: { ix: Interaction }) {
     : ix.kind === "permission" ? <PermissionCard ix={ix} />
     : ix.kind === "elicitation" ? <ElicitationCard ix={ix} /> : <ScreenCard ix={ix} />;
   const asked = useVoiceAsking(ix);
-  // data-card: which card this is, for the sync scenarios (spec/fixtures/sync); `contents` keeps the layout as it was
-  return <div data-card={ix.id} className="contents"><AskedByVoice.Provider value={asked}>{canApprove ? card : <fieldset disabled>{card}</fieldset>}</AskedByVoice.Provider></div>;
+  // data-card: which card this is, for the sync scenarios (spec/fixtures/sync); `contents` keeps the layout as it was.
+  // The fieldset is always there (switching it in would remount the card): disabled, it stops every answer and the
+  // card's keys (lib/card-keys.ts) while the session can't be approved here or an answer is on its way
+  return (
+    <div data-card={ix.id} className="contents">
+      <AskedByVoice.Provider value={asked}>
+        <SendingAnswer.Provider value={line}>
+          <fieldset disabled={!canApprove || pending} className={canApprove ? "contents" : undefined}>{card}</fieldset>
+        </SendingAnswer.Provider>
+      </AskedByVoice.Provider>
+    </div>
+  );
 }
 
 /**

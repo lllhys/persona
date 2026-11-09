@@ -118,6 +118,8 @@ func (d *mirrorDevices) Usage() assistantwire.UsageSummary {
 
 func (d *mirrorDevices) SetAttention(link.Attention) {}
 
+func (d *mirrorDevices) LinkRang(context.Context, string, time.Duration) bool { return false }
+
 // mirrors are the tests' hubs' mirror devices.
 var mirrors sync.Map // *Hub → *mirrorDevices
 

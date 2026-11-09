@@ -290,19 +290,18 @@ func TestSettingsTool(t *testing.T) {
 		t.Fatalf("a hub setting: %s", out)
 	}
 	answer := func(allow bool) {
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-			if qs := s.pendingQuestions(); len(qs) == 1 {
-				raw, _ := json.Marshal(proto.Resolution{Allow: &allow})
-				if qs[0].Kind != proto.IxPermission || qs[0].ToolName != "persona_settings" || qs[0].SessionID != "c1" {
-					t.Errorf("card: %+v", qs[0])
-				}
-				if _, err := s.Action(ctx, Action{Op: "answer", InteractionID: qs[0].ID, Answer: raw}); err != nil {
-					t.Error(err)
-				}
-				return
-			}
+		q, ok := awaitCard(s)
+		if !ok {
+			t.Error("no card on the phone")
+			return
 		}
-		t.Error("no card on the phone")
+		raw, _ := json.Marshal(proto.Resolution{Allow: &allow})
+		if q.Kind != proto.IxPermission || q.ToolName != "persona_settings" || q.SessionID != "c1" {
+			t.Errorf("card: %+v", q)
+		}
+		if _, err := s.Action(ctx, Action{Op: "answer", InteractionID: q.ID, Answer: raw}); err != nil {
+			t.Error(err)
+		}
 	}
 	go answer(false)
 	if out := tool(`{"action":"set","key":"assistant.notes","value":"示例备注"}`); !strings.Contains(out, "declined") || s.notes(ctx) != "" {
@@ -340,19 +339,18 @@ func TestBoolSettingsSet(t *testing.T) {
 	word := map[bool]string{true: i18n.T(i18n.Default, "assistant-settings_tool.on"), false: i18n.T(i18n.Default, "assistant-settings_tool.off")}
 	// answer approves (or not) the one card, which must say card.
 	answer := func(allow bool, card string) {
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) { // sleep-ok: poll pendingQuestions until the approval card arrives
-			if qs := s.pendingQuestions(); len(qs) == 1 {
-				if qs[0].Summary != card {
-					t.Errorf("card %q, want %q", qs[0].Summary, card)
-				}
-				raw, _ := json.Marshal(proto.Resolution{Allow: &allow})
-				if _, err := s.Action(ctx, Action{Op: "answer", InteractionID: qs[0].ID, Answer: raw}); err != nil {
-					t.Error(err)
-				}
-				return
-			}
+		q, ok := awaitCard(s)
+		if !ok {
+			t.Error("no card on the phone")
+			return
 		}
-		t.Error("no card on the phone")
+		if q.Summary != card {
+			t.Errorf("card %q, want %q", q.Summary, card)
+		}
+		raw, _ := json.Marshal(proto.Resolution{Allow: &allow})
+		if _, err := s.Action(ctx, Action{Op: "answer", InteractionID: q.ID, Answer: raw}); err != nil {
+			t.Error(err)
+		}
 	}
 	for _, c := range []struct {
 		name string

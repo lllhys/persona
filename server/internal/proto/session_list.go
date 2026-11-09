@@ -2,10 +2,11 @@ package proto
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
-	"io"
+	"math/bits"
 	"sync"
 )
 
@@ -82,52 +83,70 @@ var emptyObject = []byte("{}")
 // "sessions", written without escapes, is one of its members and an array; no member name is given twice, written
 // with escapes, or read as "sessions" by json.Unmarshal's case-insensitive matching; and it has at most
 // maxListMembers other members. When ok is false, decode data with json.Unmarshal: it then decodes it as it always
-// has, a repeated or differently cased "sessions" included.
+// has, a repeated or differently cased "sessions" included. data is read once, byte by byte (scanValue).
 func ScanSessionList(data []byte) (rest []byte, rows []jsontext.Value, ok bool) {
-	dec := jsontext.NewDecoder(bytes.NewBuffer(data), json.DefaultOptionsV1()) // parses data in place
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
+	i := skipSpace(data, 0)
+	if i >= len(data) || data[i] != '{' {
 		return nil, nil, false
 	}
 	var names [maxListMembers + 1][]byte
 	n, listed := 0, false
-	for dec.PeekKind() != '}' {
-		name, err := readRaw(dec, data)
-		if err != nil || n == len(names) || bytes.IndexByte(name, '\\') >= 0 {
-			return nil, nil, false
-		}
-		bare := name[1 : len(name)-1]
-		for _, seen := range names[:n] {
-			if bytes.Equal(seen[1:len(seen)-1], bare) {
+	if i = skipSpace(data, i+1); i < len(data) && data[i] == '}' {
+		i++
+	} else {
+		for {
+			at := i
+			if i = scanString(data, i); i < 0 || n == len(names) {
 				return nil, nil, false
 			}
-		}
-		names[n] = name
-		n++
-		if string(bare) == "sessions" {
-			if rows, ok = scanRows(dec, data); !ok {
+			name := data[at:i]
+			if bytes.IndexByte(name, '\\') >= 0 {
 				return nil, nil, false
 			}
-			listed = true
-			continue
+			bare := name[1 : len(name)-1]
+			for _, seen := range names[:n] {
+				if bytes.Equal(seen[1:len(seen)-1], bare) {
+					return nil, nil, false
+				}
+			}
+			names[n] = name
+			n++
+			if i = skipSpace(data, i); i >= len(data) || data[i] != ':' {
+				return nil, nil, false
+			}
+			i = skipSpace(data, i+1)
+			if string(bare) == "sessions" {
+				if rows, i = scanRows(data, i); i < 0 {
+					return nil, nil, false
+				}
+				listed = true
+			} else {
+				if foldsToSessions(bare) {
+					return nil, nil, false
+				}
+				at = i
+				if i = scanValue(data, i, 1); i < 0 {
+					return nil, nil, false
+				}
+				val := data[at:i]
+				if rest == nil {
+					rest = append(make([]byte, 0, len(name)+len(val)+16), '{')
+				} else {
+					rest = append(rest, ',')
+				}
+				rest = append(append(append(rest, name...), ':'), val...)
+			}
+			if i = skipSpace(data, i); i < len(data) && data[i] == '}' {
+				i++
+				break
+			}
+			if i >= len(data) || data[i] != ',' {
+				return nil, nil, false
+			}
+			i = skipSpace(data, i+1)
 		}
-		if foldsToSessions(bare) {
-			return nil, nil, false
-		}
-		val, err := readRaw(dec, data)
-		if err != nil {
-			return nil, nil, false
-		}
-		if rest == nil {
-			rest = append(make([]byte, 0, len(name)+len(val)+16), '{')
-		} else {
-			rest = append(rest, ',')
-		}
-		rest = append(append(append(rest, name...), ':'), val...)
 	}
-	if _, err := dec.ReadToken(); err != nil { // the object's end
-		return nil, nil, false
-	}
-	if _, err := dec.ReadToken(); err != io.EOF || !listed { // nothing after it but space
+	if skipSpace(data, i) != len(data) || !listed { // nothing after the object but space
 		return nil, nil, false
 	}
 	if rest == nil {
@@ -136,36 +155,234 @@ func ScanSessionList(data []byte) (rest []byte, rows []jsontext.Value, ok bool) 
 	return append(rest, '}'), rows, true
 }
 
-// scanRows reads the "sessions" member's value: an array, its elements as slices of data. A list is never empty for
-// json.Unmarshal (an empty array is an empty list), so neither are rows.
-func scanRows(dec *jsontext.Decoder, data []byte) ([]jsontext.Value, bool) {
-	if dec.PeekKind() != '[' {
-		return nil, false // null or another type: json.Unmarshal says what that is
-	}
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, false
+// scanRows reads the "sessions" member's value at data[i:]: an array, its elements as slices of data, and where it
+// ends (-1: it is not one). A list is never empty for json.Unmarshal (an empty array is an empty list), so neither are
+// rows.
+func scanRows(data []byte, i int) ([]jsontext.Value, int) {
+	if i >= len(data) || data[i] != '[' {
+		return nil, -1 // null or another type: json.Unmarshal says what that is
 	}
 	rows := make([]jsontext.Value, 0, min(len(data)/512, 4096)+8) // sessions are rarely under 512 bytes
-	for dec.PeekKind() != ']' {
-		v, err := readRaw(dec, data)
-		if err != nil {
-			return nil, false
-		}
-		rows = append(rows, v)
+	if i = skipSpace(data, i+1); i < len(data) && data[i] == ']' {
+		return rows, i + 1
 	}
-	_, err := dec.ReadToken()
-	return rows, err == nil
+	for {
+		at := i
+		if i = scanValue(data, i, 2); i < 0 {
+			return nil, -1
+		}
+		rows = append(rows, jsontext.Value(data[at:i:i]))
+		if i = skipSpace(data, i); i < len(data) && data[i] == ']' {
+			return rows, i + 1
+		}
+		if i >= len(data) || data[i] != ',' {
+			return nil, -1
+		}
+		i = skipSpace(data, i+1)
+	}
 }
 
-// readRaw reads the next value (or member name) as the slice of data it was read from.
-func readRaw(dec *jsontext.Decoder, data []byte) (jsontext.Value, error) {
-	v, err := dec.ReadValue()
-	if err != nil {
-		return nil, err
+// The scan reads JSON as json.Unmarshal reads it, with encoding/json's options (json.DefaultOptionsV1): RFC 8259's
+// grammar, any byte from 0x80 up in a string (invalid UTF-8 is let through), a name given twice in an object (not
+// checked, apart from ScanSessionList's own), and at most maxNestingDepth arrays and objects one in another. It takes
+// what jsontext's decoder takes, in less time: about 1 KB per session, every session, on every change of a machine's
+// list, most of it the text of strings (scanString). Each function returns where what it read ends, -1 when it is
+// not there.
+
+// maxNestingDepth is the most arrays and objects jsontext reads one in another (its own maxNestingDepth).
+const maxNestingDepth = 10000
+
+// scanValue reads the value at b[i:] (no space before it), inside depth arrays and objects.
+func scanValue(b []byte, i, depth int) int {
+	var buf [64]byte
+	open := buf[:0] // the arrays ('[') and objects ('{') open in it, the innermost last
+	for {
+		if i >= len(b) {
+			return -1
+		}
+		switch c := b[i]; c {
+		case '"':
+			i = scanString(b, i)
+		case '{', '[':
+			if depth+len(open) >= maxNestingDepth {
+				return -1
+			}
+			if i = skipSpace(b, i+1); i < len(b) && b[i] == c+2 { // '{'+2 is '}', '['+2 is ']'
+				i++
+				break
+			}
+			open = append(open, c)
+			if c == '{' {
+				if i = scanName(b, i); i < 0 {
+					return -1
+				}
+			}
+			continue // to its first value
+		case 't':
+			i = scanLiteral(b, i, "true")
+		case 'f':
+			i = scanLiteral(b, i, "false")
+		case 'n':
+			i = scanLiteral(b, i, "null")
+		default:
+			i = scanNumber(b, i)
+		}
+		// After a value: the ends of what it closes, to the next value (after a comma), or the end of the outermost.
+		for {
+			if i < 0 {
+				return -1
+			}
+			if len(open) == 0 {
+				return i
+			}
+			if i = skipSpace(b, i); i >= len(b) {
+				return -1
+			}
+			c := open[len(open)-1]
+			if b[i] == c+2 {
+				i++
+				open = open[:len(open)-1]
+				continue
+			}
+			if b[i] != ',' {
+				return -1
+			}
+			if i = skipSpace(b, i+1); c == '{' {
+				i = scanName(b, i)
+			}
+			if i < 0 {
+				return -1
+			}
+			break
+		}
 	}
-	end := int(dec.InputOffset())
-	return jsontext.Value(data[end-len(v) : end : end]), nil
 }
+
+// scanName reads an object member's name and colon, and the space after them, to its value.
+func scanName(b []byte, i int) int {
+	if i = scanString(b, i); i < 0 {
+		return -1
+	}
+	if i = skipSpace(b, i); i >= len(b) || b[i] != ':' {
+		return -1
+	}
+	return skipSpace(b, i+1)
+}
+
+// skipSpace skips JSON's whitespace.
+func skipSpace(b []byte, i int) int {
+	for i < len(b) && (b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+// scanLiteral reads lit.
+func scanLiteral(b []byte, i int, lit string) int {
+	if len(b)-i < len(lit) || string(b[i:i+len(lit)]) != lit {
+		return -1
+	}
+	return i + len(lit)
+}
+
+// scanNumber reads a number: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?. What follows it is the caller's to
+// read: a digit after a leading 0 is not a comma, and fails there, as in jsontext.
+func scanNumber(b []byte, i int) int {
+	if i < len(b) && b[i] == '-' {
+		i++
+	}
+	if i < len(b) && b[i] == '0' {
+		i++
+	} else if i = scanDigits(b, i); i < 0 {
+		return -1
+	}
+	if i < len(b) && b[i] == '.' {
+		if i = scanDigits(b, i+1); i < 0 {
+			return -1
+		}
+	}
+	if i < len(b) && (b[i] == 'e' || b[i] == 'E') {
+		if i++; i < len(b) && (b[i] == '+' || b[i] == '-') {
+			i++
+		}
+		return scanDigits(b, i)
+	}
+	return i
+}
+
+// scanDigits reads one digit or more.
+func scanDigits(b []byte, i int) int {
+	at := i
+	for i < len(b) && '0' <= b[i] && b[i] <= '9' {
+		i++
+	}
+	if i == at {
+		return -1
+	}
+	return i
+}
+
+// scanString reads a string as jsontext reads it with invalid UTF-8 allowed: between quotes, any byte but a control
+// character, '"' and '\\', and the escapes \" \\ \/ \b \f \n \r \t and \u with four hex digits (a lone surrogate
+// included). Most of a session's bytes are the text of its strings: they are passed over eight at a time, to the
+// first that is a quote, a backslash or a control character (specials).
+func scanString(b []byte, i int) int {
+	if i >= len(b) || b[i] != '"' {
+		return -1
+	}
+	for i++; ; {
+		for i+8 <= len(b) {
+			if m := specials(binary.LittleEndian.Uint64(b[i : i+8])); m != 0 {
+				i += bits.TrailingZeros64(m) / 8
+				break
+			}
+			i += 8
+		}
+		if i >= len(b) {
+			return -1
+		}
+		switch c := b[i]; {
+		case c == '"':
+			return i + 1
+		case c == '\\':
+			if i+1 >= len(b) {
+				return -1
+			}
+			switch b[i+1] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				i += 2
+			case 'u':
+				if len(b)-i < 6 || !isHex(b[i+2]) || !isHex(b[i+3]) || !isHex(b[i+4]) || !isHex(b[i+5]) {
+					return -1
+				}
+				i += 6
+			default:
+				return -1
+			}
+		case c < ' ':
+			return -1
+		default:
+			i++
+		}
+	}
+}
+
+const (
+	lowBits  = 0x0101010101010101
+	highBits = 0x8080808080808080
+)
+
+// specials has the high bit set of each byte of w (eight bytes of a string, the first in the low byte) that is '"',
+// '\\' or under ' ', and maybe of bytes after the first of those, never of one before it: a byte borrows from the
+// next only when it is one of them itself. Bytes from 0x80 up are never set but by a borrow.
+func specials(w uint64) uint64 {
+	q := w ^ ('"' * lowBits)
+	e := w ^ ('\\' * lowBits)
+	return ((q-lowBits)&^q | (e-lowBits)&^e | (w-' '*lowBits)&^w) & highBits
+}
+
+// isHex: c is a hex digit, in either case.
+func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
 
 // foldsToSessions: json.Unmarshal could read a member of this name (other than "sessions" itself) into a field named
 // "sessions": the same letters in another case, Unicode folding included, with or without dashes and underscores.

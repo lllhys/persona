@@ -21,6 +21,7 @@ struct LarkReplyHandler {
 struct LarkComposer: View {
     @Environment(AppModel.self) private var model
     @Environment(\.larkAccount) private var larkAccount
+    @Environment(\.larkManager) private var larkManager
     var placeholder: String
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
@@ -150,7 +151,7 @@ struct LarkComposer: View {
             let found: [LarkMember]
             if let findPeople {
                 found = try await findPeople(query)
-            } else if let feed = mentionFeed, let api = model.api?.lark(larkAccount) {
+            } else if let feed = mentionFeed, let api = model.api?.manager(larkManager).lark(larkAccount) {
                 found = try await api.larkMembers(feed, query: query).members
             } else {
                 return

@@ -201,15 +201,19 @@
         "day": {"type": "string"},
         "messages": {"type": "array", "items": {"$ref": "#/$defs/KBDayMessage"}},
         "prev": {"type": "string"},
-        "next": {"type": "string"}
+        "next": {"type": "string"},
+        "sent_origin": {"type": "string", "enum": ["available", "missing_scope", "unavailable"], "description": "available means ledger matching ran, not that unmarked messages are human-authored. missing_scope requires sent.read; unavailable means the service cannot provide provenance. Older hosts omit this field: treat absence as unavailable."}
       },
-      "required": ["day", "messages", "prev", "next"]
+      "required": ["day", "messages", "prev", "next", "sent_origin"]
     },
     "KBDayMessage": {
       "type": "object",
       "properties": {
         "n": {"type": "integer", "description": "The message's first line in the day's file, from 1."},
-        "text": {"type": "string"}
+        "text": {"type": "string"},
+        "sent_by": {"type": "string", "enum": ["assistant"], "description": "Present only for a unique match in the sent-as-user ledger, with sent.read."},
+        "sent_ledger_id": {"type": "integer", "x-go-type": "int64", "description": "The matching ledger row."},
+        "recalled_at": {"type": "string", "format": "date-time", "x-go-pointer": true, "description": "When this matched send was recalled; the archive may still contain its text."}
       },
       "required": ["n", "text"]
     },

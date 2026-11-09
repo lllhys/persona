@@ -2,6 +2,7 @@ package hub
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -61,6 +62,8 @@ const (
 	notifyPayloadMost = 3500
 	// notifyCollapse keeps a caller's ids apart from the hub's own (interaction ids).
 	notifyCollapse = "notify:"
+	// extensionCollapse keeps an extension's (extensionNotifyIDs) apart from every other caller's.
+	extensionCollapse = "notify-ext:"
 	// kindAlert is the WebSocket notify event's kind for these (docs/protocol/protocol.md "Notifications over the persistent connection (ws_notify)").
 	kindAlert = "alert"
 )
@@ -196,6 +199,22 @@ func (h *Hub) machineNameFor(in notifyRequest) string {
 	return h.machineName(in.MachineID)
 }
 
+// extensionNotifyIDs are what an extension's notification with id goes out under: ws on the WebSocket, collapse on the
+// push. The same id from the same extension of the same manager still replaces its earlier alert, but another
+// extension's, another manager's or any other caller's does not: ws is longer than a caller's own id may be
+// (notifyIDMost), and collapse is not under notifyCollapse.
+func extensionNotifyIDs(manager, extension, id string) (ws, collapse string) {
+	sum := sha256.New()
+	sum.Write([]byte("notify\x00"))
+	for _, s := range []string{manager, extension} {
+		sum.Write(binary.AppendUvarint(nil, uint64(len(s))))
+		sum.Write([]byte(s))
+	}
+	sum.Write([]byte(id))
+	h := hex.EncodeToString(sum.Sum(nil))
+	return "ext:" + h, extensionCollapse + h[:32]
+}
+
 // deliverNotify sends a validated notification to the devices that take them: the reply is {"sent":true} when a
 // recipient is selected, or {"sent":false,"reason":"muted"|"no_device"|"filtered"}. An error is the caller's
 // (a payload too large for APNs). machine is the subtitle:
@@ -210,19 +229,22 @@ func (h *Hub) deliverNotify(in notifyRequest, machine, extID, manager string) (m
 	if raw, _ := json.Marshal(payload); len(raw) > notifyPayloadMost {
 		return nil, errors.New("notification is too large")
 	}
-	collapse := ""
-	if in.ID != "" {
-		collapse = notifyCollapse + in.ID
+	id, collapse := in.ID, ""
+	switch {
+	case id != "" && extID != "":
+		id, collapse = extensionNotifyIDs(manager, extID, id)
+	case id != "":
+		collapse = notifyCollapse + id
 	}
 	// Something that needs you: devices that turned off "Needs you" (prefs.input) get none of these either.
 	wants := pushWants{Kind: "input"}.fn()
 	build := func(i18n.Lang) map[string]any { return payload }
 	pushSelected, pushReachable := h.push.sendFrom(manager, build, collapse, wants, quietNone, nil)
 	ws := build
-	if in.ID != "" {
+	if id != "" {
 		// The WebSocket event carries the id itself (not the push), so an Android phone replaces the earlier alert too.
 		withID := maps.Clone(payload)
-		withID["id"] = in.ID
+		withID["id"] = id
 		ws = func(i18n.Lang) map[string]any { return withID }
 	}
 	wsSelected, wsReachable := h.notifyWSFrom(manager, kindAlert, ws, wants, quietNone)

@@ -10,21 +10,45 @@ import (
 // Keys, IDs, ordinary text, unknown object members and scalar values stay intact.
 // Session source booleans are emitted by proto.Session's typed adapter instead.
 func ProjectJSON(raw []byte, canonical bool) []byte {
-	if canonical || !bytes.Contains(raw, []byte("persona")) {
+	if canonical {
 		return raw
+	}
+	value, changed := project(raw)
+	if !changed {
+		return raw
+	}
+	if encoded, err := json.Marshal(value); err == nil {
+		return encoded
+	}
+	return raw
+}
+
+// Projects reports whether ProjectJSON(raw, false) changes raw, without encoding what it changes it to. Each object
+// is projected by its own members alone, so a message whose own members are left as they are (an id, a type) and
+// whose values are side by side in it (a list's rows) is changed exactly when one of those values is: a caller that
+// knows that of each row can skip projecting the message.
+func Projects(raw []byte) bool {
+	_, changed := project(raw)
+	return changed
+}
+
+// project is raw decoded with what ProjectJSON renames renamed, and whether anything was.
+func project(raw []byte) (any, bool) {
+	if !bytes.Contains(raw, []byte("persona")) {
+		return nil, false
 	}
 	// Large session lists contain the canonical boolean key, but usually no
 	// aliasable scalar. Avoid decoding those snapshots solely for that key.
 	if !bytes.Contains(raw, []byte("persona-")) && !bytes.Contains(raw, []byte("persona://")) &&
 		!bytes.Contains(raw, []byte("target_kind")) && !bytes.Contains(raw, []byte("tool_name")) &&
 		!bytes.Contains(raw, []byte(`"type":"look"`)) {
-		return raw
+		return nil, false
 	}
 	var value any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if decoder.Decode(&value) != nil {
-		return raw
+		return nil, false
 	}
 	changed := false
 	var walk func(any)
@@ -70,14 +94,9 @@ func ProjectJSON(raw []byte, canonical bool) []byte {
 		}
 	}
 	walk(value)
-	if !changed {
-		return raw
-	}
-	if encoded, err := json.Marshal(value); err == nil {
-		return encoded
-	}
-	return raw
+	return value, changed
 }
+
 func LegacyLook(name string) string {
 	switch name {
 	case "persona-visor":

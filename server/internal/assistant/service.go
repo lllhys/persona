@@ -78,6 +78,9 @@ type Service struct {
 
 	startingAssistants assistantStarts // machine_privacy.go
 
+	// running is Run's context: it ends when the service stops (runCtx).
+	running atomic.Pointer[context.Context]
+
 	titles     titleBook         // titles.go
 	prefs      settingsBook      // profile.go
 	main       mainBook          // start.go
@@ -162,6 +165,7 @@ func New(o Options) *Service {
 	s.profileRoutes()
 	s.readinessRoutes()
 	s.startRoutes()
+	s.workoutRoutes()
 	s.scheduleRoutes()
 	s.placeRoutes()
 	s.taskRoutes()
@@ -208,6 +212,14 @@ func fullRole(r *http.Request) bool {
 // here already means the extension holds todos.write.
 func todoWriter(r *http.Request) bool {
 	return fullRole(r) || r.Header.Get(RoleHeader) == roleExtension
+}
+
+// runCtx ends when the service stops: Run's context; background before Run (tests).
+func (s *Service) runCtx() context.Context {
+	if p := s.running.Load(); p != nil {
+		return *p
+	}
+	return context.Background()
 }
 
 // owner is how the assistant calls the user: manager.json's assistant.owner, else the Chinese word for "user".

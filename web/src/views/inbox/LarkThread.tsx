@@ -1297,15 +1297,16 @@ function safeURL(u?: string, manager?: string) {
 }
 
 function LinkText({ url, children }: { url?: string; children: React.ReactNode }) {
-  const safe = safeURL(url, useItemManager());
+  const manager = useItemManager();
+  const safe = safeURL(url, manager);
   if (!safe) return <>{children}</>;
   return (
     <a
       href={linkHref(safe)}
       target="_blank"
       rel="noopener noreferrer"
-      onClick={(e) => clickLink(e, safe, typeof children === "string" ? children : undefined)}
-      onMouseEnter={() => prefetchLink(safe)}
+      onClick={(e) => clickLink(e, safe, typeof children === "string" ? children : undefined, manager)}
+      onMouseEnter={() => prefetchLink(safe, manager)}
       className="text-accent-ink underline decoration-accent-ink/35 underline-offset-[3px] hover:decoration-accent-ink"
     >
       {children}

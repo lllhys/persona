@@ -61,7 +61,7 @@ func TestKeepLinkPutsTheSummaryInItsStatus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
 	done := make(chan error, 1)
-	go func() { done <- keepLink(ctx, path, "", &out) }()
+	go func() { done <- keepLink(ctx, path, "", &out, nil) }()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	timeout := time.After(10 * time.Second)

@@ -156,6 +156,12 @@ struct SettingsView: View {
                             SettingsRow(title: String(localized: "Devices"), symbol: Theme.Icon.credentials, tint: Theme.Hue.gray)
                         }
                         .settingsListRow(SettingsPage.devices)
+                        #if os(iOS)
+                        NavigationLink(value: SettingsPage.health) {
+                            SettingsRow(title: String(localized: "Health"), symbol: Theme.Icon.health, tint: Theme.accent)
+                        }
+                        .settingsListRow(SettingsPage.health)
+                        #endif
                         NavigationLink(value: SettingsPage.notifications) {
                             SettingsRow(title: String(localized: "Notifications"), symbol: Theme.Icon.notifications, tint: Theme.needsYou)
                         }
@@ -424,6 +430,9 @@ struct SettingsView: View {
             p.append(ModelLaunchersRoute())
             if let n = d.string(forKey: "openModelLauncher") { p.append(ModelLauncherRoute(name: n)) }
         }
+        #if os(iOS)
+        if d.bool(forKey: "openWorkoutReports") { p = NavigationPath(); p.append(SettingsPage.health) }
+        #endif
         guard !p.isEmpty else { return }
         Self.debugOpened = true
         model.settingsPath = p
@@ -472,6 +481,9 @@ struct SettingsView: View {
 
 /// The pages of Settings that are not routes of their own elsewhere.
 enum SettingsPage: Hashable {
+    #if os(iOS)
+    case health
+    #endif
     case persona, themeColor, style, colorScheme, language, assistant, claude, codex, devices, phoneData, mail, feishu, feishuBot, notifications, storage, translation, modelConfiguration
     /// Settings › Session Triage (docs/assistant/agent-work.md「开关」).
     case triage
@@ -558,6 +570,9 @@ private struct SettingsDestinations: ViewModifier {
         case .connector(let id, let manager):
             if id == "imessage" { MessagesConnectorView(manager: manager) } else { HubConnectorView(id: id, manager: manager) }
         case .feishuBot: FeishuBotView()
+        #if os(iOS)
+        case .health: WorkoutReportSettingsView()
+        #endif
         case .notifications: NotificationSettingsView()
         case .storage: StorageView()
         case .translation: TranslationSettingsView()

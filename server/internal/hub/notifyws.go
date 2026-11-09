@@ -65,7 +65,9 @@ func (h *Hub) notifyDecide(owner, machineID, machine, sessionID, title, text str
 	h.notifyWSFrom(owner, "assistant", build, wants.fn(), wants.quiet())
 }
 
-func (h *Hub) notifyInteraction(owner string, ix proto.Interaction, machine string) {
+// notifyInteraction pushes a new card. linkCovered: owner says its Persona Link summary rings for this card
+// (assistantwire.Notification.LinkCovered).
+func (h *Hub) notifyInteraction(owner string, ix proto.Interaction, machine string, linkCovered bool) {
 	build := func(l i18n.Lang) map[string]any { return interactionPayloadIn(l, ix, machine) }
 	h.emitToExtensions(owner, "agent.needs_you", map[string]any{"machine_id": ix.MachineID, "machine": machine, "session_id": ix.SessionID,
 		"interaction_id": ix.ID, "kind": ix.Kind, "summary": ix.Summary})
@@ -76,8 +78,12 @@ func (h *Hub) notifyInteraction(owner string, ix proto.Interaction, machine stri
 		h.push.sendCard(owner, build, ix.ID, wants.fn(), wants.quiet(), takesElicitation)
 		h.notifyWSFrom(owner, "interaction", build, wants.fn(), wants.quiet(), "elicitation")
 	} else {
-		h.push.sendCard(owner, build, ix.ID, wants.fn(), wants.quiet(), nil)
-		h.notifyWSFrom(owner, "interaction", build, wants.fn(), wants.quiet())
+		// A card owner's Persona Link summary rings for: "Phone Muted" holds it back while one of owner's Persona Link
+		// desktops is there too (desktops.go); which cards those are is owner's to say. The desktop app's online check
+		// follows in sendCard and notifyWSFrom.
+		fn := alertWanted(wants.fn(), linkCovered && h.linkDesktopOnline(owner))
+		h.push.sendCard(owner, build, ix.ID, fn, wants.quiet(), nil)
+		h.notifyWSFrom(owner, "interaction", build, fn, wants.quiet())
 	}
 }
 

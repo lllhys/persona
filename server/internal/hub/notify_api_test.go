@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/sdk/go/wire"
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/extension"
 )
 
@@ -392,12 +393,27 @@ func TestNotifyAPNs(t *testing.T) {
 		}
 	}
 
+	// An extension's id goes out as its own, its manager's and its id's: the same one again replaces it.
+	beforeID := len(f.calls(t, beforePlain+2))
+	post(extTok, `{"title":"预算 50%","id":"budget"}`)
+	post(extTok, `{"title":"预算 90%","id":"budget"}`)
+	var collapses []string
+	for _, c := range f.calls(t, beforeID+4)[beforeID:] {
+		collapses = append(collapses, c.Collapse)
+	}
+	_, want := extensionNotifyIDs(assistantwire.AssistantID, "example-gateway", "budget")
+	for _, c := range collapses {
+		if c != want {
+			t.Fatalf("an extension's collapse ids: %q", collapses)
+		}
+	}
+
 	// "Phone Muted" with the Mac app connected: the phone gets nothing.
 	if err := h.push.setPrefs("phone", NotifyPrefs{Input: true, Done: DoneLong, MuteWhileDesktop: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.push.desktopOnline = func() bool { return true }
-	before := len(f.calls(t, beforePlain+2))
+	before := len(f.calls(t, beforeID+4))
 	post(h.cfg.Token, `{"title":"t"}`)
 	time.Sleep(200 * time.Millisecond)
 	for _, c := range f.calls(t, before)[before:] {

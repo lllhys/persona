@@ -6,5 +6,6 @@
   "mail_target_changed": "邮件回复对象已变化，请查看最新邮件后确认发送",
   "item_done": "这件事已经处理过了，回复没有发出去。要回复的话，先把它移回收件箱。",
   "suggestion_stale": "建议已更新",
-  "by_policy": "按你的规则：{name}"
+  "by_policy": "按你的规则：{name}",
+  "refresh_failed": "现在读不到各个来源，列表没有更新。稍后再试。"
 }

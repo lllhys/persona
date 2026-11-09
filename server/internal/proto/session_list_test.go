@@ -33,41 +33,83 @@ func decodeEvent(d *SessionListDecoder, data []byte) (sessionsEvent, bool, error
 	return p, true, err
 }
 
+// scanOne is a session's bytes, for scanCases.
+const scanOne = `{"session_id":"s1","title":"one"}`
+
+// scanCases are events, and whether ScanSessionList takes the fast way for each (FuzzScanSessionList's seeds too).
+var scanCases = []struct {
+	data string
+	fast bool
+}{
+	{`{"machine_id":"m","sessions":[` + scanOne + `,{"session_id":"s2"}],"muted":["s1"]}`, true},
+	{" \n{ \"sessions\" : [ " + scanOne + " , null ] }\n\t", true},
+	{`{"sessions":[]}`, true},
+	{`{"Machine_ID":"m","sessions":[` + scanOne + `]}`, true},
+	{`{"sessions":[` + scanOne + `,` + scanOne + `]}`, true}, // the same session twice
+	{`{"sessions":[{"session_id":"a","session_id":"b",` + legacyStartedMember + `true}]}`, true},
+	{"{\"sessions\":[{\"title\":\"bad \xff utf-8\"}]}", true},
+	{`{"sessions":[{"title":5}]}`, true},
+	{`{"sessions":[1]}`, true},
+	{`{"machine_id":5,"sessions":[]}`, true},
+	{`{"Sessions":[` + scanOne + `]}`, false},
+	{`{"SESSIONS":[` + scanOne + `]}`, false},
+	{`{"sessions":[` + scanOne + `],"Sessions":[{"session_id":"s2"}]}`, false},
+	{`{"sessions":[` + scanOne + `],"sessions":[{"session_id":"s2"}]}`, false},
+	{`{"machine_id":"a","sessions":[],"machine_id":"b"}`, false},
+	{"{\"\u017fessions\":[" + scanOne + "]}", false}, // U+017F folds to s
+	{`{"ses_sions":[` + scanOne + `]}`, false},
+	{`{"` + `\u0073essions":[` + scanOne + `]}`, false},
+	{`{"sessions":null}`, false},
+	{`{"sessions":{}}`, false},
+	{`{"machine_id":"m"}`, false},
+	{`{"sessions":[` + scanOne + `]} {}`, false},
+	{`{"sessions":[` + scanOne + `]`, false},
+	{`[` + scanOne + `]`, false},
+	{``, false},
+	// The grammar, as jsontext reads it: each of these is read whole, or left to json.Unmarshal to fail.
+	{`{"sessions" :[ ] , "muted" : [ "s1" , "s2" ] }`, true},
+	{`{"sessions":[-0.5e-3,0,-0,1E+2,12.25,true,false,null,"",[],{},[[{}]],{"a":{"b":[]}}]}`, true},
+	{`{"sessions":["\"\\\/\b\f\n\r\t\u00e9\u00C9\ud800 lone"]}`, true},
+	{"{\"\xff\":1,\"\xfe\":2,\"sessions\":[\"\xff\xff\xff\xff\xff\xff\xff\xff\\\"\xe2\x80\xa8\"]}", true},
+	{`{"sessions":[{"title":"0123456789abcdef\"0123456789abcdef\\"}]}`, true},
+	{`{"sessions":[{"a":1,}]}`, false},
+	{`{"sessions":[1,]}`, false},
+	{`{"sessions":[,1]}`, false},
+	{`{"sessions":[],}`, false},
+	{`{,"sessions":[]}`, false},
+	{`{"sessions":[] "muted":[]}`, false},
+	{`{"sessions"[]}`, false},
+	{`{"sessions":[01]}`, false},
+	{`{"sessions":[1.]}`, false},
+	{`{"sessions":[.5]}`, false},
+	{`{"sessions":[-]}`, false},
+	{`{"sessions":[1e]}`, false},
+	{`{"sessions":[1e+]}`, false},
+	{`{"sessions":[+1]}`, false},
+	{`{"sessions":[tru]}`, false},
+	{`{"sessions":[truex]}`, false},
+	{`{"sessions":[nulL]}`, false},
+	{`{"sessions":["\x"]}`, false},
+	{`{"sessions":["\u00zz"]}`, false},
+	{`{"sessions":["\u00e"]}`, false},
+	{"{\"sessions\":[\"a\tb\"]}", false},
+	{"{\"sessions\":[\"0123456789\x01\"]}", false},
+	{"{\"sessions\":[]\v}", false},
+	{"{\"sessions\":[\"unterminated\\\"]}", false},
+	{`{"sessions":[{"a" 1}]}`, false},
+	{`{"sessions":[{1:1}]}`, false},
+	{`{"sessions":[{"a":1]]}`, false},
+	{`{"sessions":[}`, false},
+	{"\ufeff{\"sessions\":[]}", false},
+	{`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10,"k":11,"l":12,"m":13,"n":14,"o":15,"p":16,"sessions":[]}`, true},
+	{`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10,"k":11,"l":12,"m":13,"n":14,"o":15,"p":16,"q":17,"sessions":[]}`, false},
+}
+
 // The scan takes the fast way only for an object json.Unmarshal reads the same way in parts; everything else (a
 // "sessions" in another case or twice, escapes in a name, a list that is not an array, bytes after the object) goes
 // back to json.Unmarshal. Either way the event decodes as json.Unmarshal decodes it.
 func TestScanSessionListMatchesUnmarshal(t *testing.T) {
-	one := `{"session_id":"s1","title":"one"}`
-	for _, tc := range []struct {
-		data string
-		fast bool
-	}{
-		{`{"machine_id":"m","sessions":[` + one + `,{"session_id":"s2"}],"muted":["s1"]}`, true},
-		{" \n{ \"sessions\" : [ " + one + " , null ] }\n\t", true},
-		{`{"sessions":[]}`, true},
-		{`{"Machine_ID":"m","sessions":[` + one + `]}`, true},
-		{`{"sessions":[` + one + `,` + one + `]}`, true}, // the same session twice
-		{`{"sessions":[{"session_id":"a","session_id":"b",` + legacyStartedMember + `true}]}`, true},
-		{"{\"sessions\":[{\"title\":\"bad \xff utf-8\"}]}", true},
-		{`{"sessions":[{"title":5}]}`, true},
-		{`{"sessions":[1]}`, true},
-		{`{"machine_id":5,"sessions":[]}`, true},
-		{`{"Sessions":[` + one + `]}`, false},
-		{`{"SESSIONS":[` + one + `]}`, false},
-		{`{"sessions":[` + one + `],"Sessions":[{"session_id":"s2"}]}`, false},
-		{`{"sessions":[` + one + `],"sessions":[{"session_id":"s2"}]}`, false},
-		{`{"machine_id":"a","sessions":[],"machine_id":"b"}`, false},
-		{"{\"\u017fessions\":[" + one + "]}", false}, // U+017F folds to s
-		{`{"ses_sions":[` + one + `]}`, false},
-		{`{"` + `\u0073essions":[` + one + `]}`, false},
-		{`{"sessions":null}`, false},
-		{`{"sessions":{}}`, false},
-		{`{"machine_id":"m"}`, false},
-		{`{"sessions":[` + one + `]} {}`, false},
-		{`{"sessions":[` + one + `]`, false},
-		{`[` + one + `]`, false},
-		{``, false},
-	} {
+	for _, tc := range scanCases {
 		var want sessionsEvent
 		wantErr := json.Unmarshal([]byte(tc.data), &want)
 		var d SessionListDecoder
@@ -182,8 +224,9 @@ func BenchmarkDecodeSessionListOneChanged(b *testing.B) {
 	}
 }
 
-// A list with one session changed costs its scan, the list it decodes into and that one session: 14 allocations
-// measured (237 KB, most of it the 150 sessions of the list itself), 517 (900 KB) decoded whole.
+// A list with one session changed costs its scan, the list it decodes into and that one session: 8 allocations
+// measured (237 KB, most of it the 150 sessions of the list itself), 14 with jsontext's decoder splitting the list,
+// 517 (900 KB) decoded whole.
 func TestSessionListOneChangedAllocations(t *testing.T) {
 	before, after := oneChangedLists(t)
 	var d SessionListDecoder
@@ -199,7 +242,7 @@ func TestSessionListOneChangedAllocations(t *testing.T) {
 		}
 	}
 	decode()
-	if allocs := testing.AllocsPerRun(20, decode); allocs > 15 && !raceEnabled {
+	if allocs := testing.AllocsPerRun(20, decode); allocs > 9 && !raceEnabled {
 		t.Fatalf("decoding a list with one session changed allocates %v times", allocs)
 	}
 }

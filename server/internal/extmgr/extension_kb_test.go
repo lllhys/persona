@@ -37,6 +37,11 @@ func init() {
 			return nil, nil
 		},
 		Namespaces: map[string]pserve.Handler{"kbtest": func(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+			if method == "day" {
+				var result assistantwire.KBDayResult
+				err := hub.Call(ctx, assistantwire.MethodKBDay, raw, &result)
+				return result, err
+			}
 			if method != "roundtrip" {
 				return nil, pserve.UnknownMethod(method)
 			}
@@ -118,7 +123,7 @@ func withFakeKB(h *Manager) *fakeKB {
 		return map[string]any{"query": raw}, nil
 	})
 	k.a.on(assistantwire.MethodKBDay, func(json.RawMessage) (any, error) {
-		return map[string]any{"n": 3, "text": "20:00 Example: source line\ncontinued"}, nil
+		return map[string]any{"messages": []map[string]any{{"n": 3, "text": "20:00 Example: source line\ncontinued"}}}, nil
 	})
 	return k
 }
@@ -130,10 +135,42 @@ func (k *fakeKB) summary(id string) (string, bool) {
 	return s, ok
 }
 
+func startKBProcess(t *testing.T, h *Manager, id, scopes string) {
+	t.Helper()
+	mux := h.routes()
+	dir := t.TempDir()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted := "'" + strings.ReplaceAll(self, "'", "'\\''") + "'"
+	if err := os.WriteFile(filepath.Join(dir, "program"), []byte("#!/bin/sh\nPERSONA_TEST_EXTENSION_KB=1 exec "+quoted+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := fmt.Sprintf(`{"manifest_version":1,"id":%q,"name":"KB process","version":"1.0.0",
+		"engines":{"extension_protocol":1},"runtime":{"command":{%q:"program"}},"activation_events":["on_startup"],
+		"contributes":{"events":[{"id":%q,"subscribe":["agent.finished"]}]},"permissions":{"hub":%s}}`, id, runtime.GOOS+"-"+runtime.GOARCH, id, scopes)
+	if err := os.WriteFile(filepath.Join(dir, extension.ManifestFile), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, preview := call(t, mux, "POST", "/api/v1/extensions/-/preview", h.cfg.Token, fmt.Sprintf(`{"source":%q}`, "dir:"+dir))
+	if code != 200 {
+		t.Fatalf("preview %s: %d %v", id, code, preview)
+	}
+	code, installed := call(t, mux, "POST", "/api/v1/extensions/-/install", h.cfg.Token,
+		fmt.Sprintf(`{"preview_id":%q,"permissions_digest":%q}`, preview["preview_id"], preview["permissions_digest"]))
+	if code != 200 {
+		t.Fatalf("install %s: %d %v", id, code, installed)
+	}
+	waitLong(t, "the KB extension process", func() bool {
+		p := h.extensions.get(id)
+		return p != nil && p.proc != nil && p.proc.Ready()
+	})
+}
+
 func TestExtensionKBRPCFromProcess(t *testing.T) {
 	h, _ := extensionTestHub(t)
 	e := withFakeKB(h)
-	mux := h.routes()
 	for _, tc := range []struct {
 		id, project, scopes string
 		write               bool
@@ -141,37 +178,10 @@ func TestExtensionKBRPCFromProcess(t *testing.T) {
 		{"kb-process-write", "process-project", `["kb.read","kb.write"]`, true},
 		{"kb-process-read", "refused-project", `["kb.read"]`, false},
 	} {
-		dir := t.TempDir()
-		self, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		quoted := "'" + strings.ReplaceAll(self, "'", "'\\''") + "'"
-		if err := os.WriteFile(filepath.Join(dir, "program"), []byte("#!/bin/sh\nPERSONA_TEST_EXTENSION_KB=1 exec "+quoted+" \"$@\"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		manifest := fmt.Sprintf(`{"manifest_version":1,"id":%q,"name":"KB process","version":"1.0.0",
-			"engines":{"extension_protocol":1},"runtime":{"command":{%q:"program"}},"activation_events":["on_startup"],
-			"contributes":{"events":[{"id":%q,"subscribe":["agent.finished"]}]},"permissions":{"hub":%s}}`, tc.id, runtime.GOOS+"-"+runtime.GOARCH, tc.id, tc.scopes)
-		if err := os.WriteFile(filepath.Join(dir, extension.ManifestFile), []byte(manifest), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		code, preview := call(t, mux, "POST", "/api/v1/extensions/-/preview", h.cfg.Token, fmt.Sprintf(`{"source":%q}`, "dir:"+dir))
-		if code != 200 {
-			t.Fatalf("preview %s: %d %v", tc.id, code, preview)
-		}
-		code, installed := call(t, mux, "POST", "/api/v1/extensions/-/install", h.cfg.Token,
-			fmt.Sprintf(`{"preview_id":%q,"permissions_digest":%q}`, preview["preview_id"], preview["permissions_digest"]))
-		if code != 200 {
-			t.Fatalf("install %s: %d %v", tc.id, code, installed)
-		}
-		waitLong(t, "the KB extension process", func() bool {
-			p := h.extensions.get(tc.id)
-			return p != nil && p.proc != nil && p.proc.Ready()
-		})
+		startKBProcess(t, h, tc.id, tc.scopes)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var got assistantwire.KBGetResult
-		err = h.extensions.get(tc.id).proc.Call(ctx, "kbtest.roundtrip", map[string]string{"id": tc.project}, &got)
+		err := h.extensions.get(tc.id).proc.Call(ctx, "kbtest.roundtrip", map[string]string{"id": tc.project}, &got)
 		cancel()
 		if tc.write {
 			if err != nil || got.Detail == nil || got.Detail.ID != tc.project || strings.TrimSpace(got.Detail.Summary) != "process correction" {
@@ -278,7 +288,7 @@ func TestExtensionKBRPCScopesAndAssistantBridge(t *testing.T) {
 	if out, err := callRPC(full, assistantwire.MethodKBGet, `{"kind":"projects","id":"legacy"}`); err != nil || !strings.Contains(out, "Legacy") {
 		t.Fatalf("legacy full read: %s %v", out, err)
 	}
-	for _, method := range []string{"kb.forget", "kb.context", "kb.posts_put", "kb.nope", "kb.owner.update", assistantwire.MethodKBExtensionUpdate} {
+	for _, method := range []string{"kb.forget", "kb.context", "kb.posts_put", "kb.nope", "kb.owner.update", assistantwire.MethodKBExtensionUpdate, assistantwire.MethodKBExtensionDay} {
 		_, err := callRPC(full, method, `{}`)
 		var re *rpc.Error
 		if !errors.As(err, &re) || re.Code != extension.CodeUnknownMethod {

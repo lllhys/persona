@@ -2,11 +2,15 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/connector"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // A source the round could not read keeps what it listed, and the inbox status says which one is behind and why, so
@@ -70,5 +74,49 @@ func TestInboxAppliesThingsAFailedSourceCarries(t *testing.T) {
 	if tr := h.inboxTriage(); len(tr.Sources) != 1 || tr.Sources[0].ReadError != assistantwire.ReadFailed ||
 		tr.Sources[0].ReadReason == "" || tr.Sources[0].ReadReason == "assistant-inbox_admit.read_a_code_from_a_newer_hub" {
 		t.Fatalf("an unknown code: %+v", tr.Sources)
+	}
+}
+
+// failingCollectHub is the test hub, except that collecting the sources now (inbox.collect) fails with err while it
+// is set.
+type failingCollectHub struct {
+	Hub
+	err error
+}
+
+func (h *failingCollectHub) AppCall(ctx context.Context, p AppCall) (json.RawMessage, error) {
+	if h.err != nil && p.AppID == AppInbox && p.Method == assistantwire.InboxCollect {
+		return nil, h.err
+	}
+	return h.Hub.AppCall(ctx, p)
+}
+
+// A pull to refresh whose collect call fails says so (#1849): 502 inbox_refresh_failed with a sentence in the
+// request's language and the collect error as the detail. It used to answer 200 with the list as it was, so the apps
+// took it for a refresh that worked. One that collects lists what it read.
+func TestInboxRefreshSaysWhenTheCollectFailed(t *testing.T) {
+	h := newInboxHub(t)
+	h.addConnector(&inboxConnector{things: []connector.InboxThing{thing("a", time.Now())}}, false)
+	bridge := &failingCollectHub{Hub: h.Service.hub, err: errors.New("hand the round to the manager: context deadline exceeded")}
+	h.Service.hub = bridge
+	said := map[any]bool{}
+	for _, l := range []i18n.Lang{i18n.En, i18n.Ja} {
+		status, body := serveJSON(t, h.Service, "POST", "/api/v1/inbox/refresh?sources=all", string(l), `{}`)
+		if status != http.StatusBadGateway || body["code"] != "inbox_refresh_failed" || body["error"] != i18n.T(l, "assistant-inbox.refresh_failed") ||
+			body["detail"] != bridge.err.Error() || body["retryable"] != true || body["items"] != nil {
+			t.Fatalf("%s, the collect failed: %d %v", l, status, body)
+		}
+		said[body["error"]] = true
+	}
+	if len(said) != 2 || said["assistant-inbox.refresh_failed"] {
+		t.Fatalf("the failure is not said in each language: %v", said)
+	}
+	if n := len(openItems(h)); n != 0 {
+		t.Fatalf("a failed refresh collected %d items", n)
+	}
+	bridge.err = nil
+	status, body := serveJSON(t, h.Service, "POST", "/api/v1/inbox/refresh?sources=all", "en", `{}`)
+	if items, _ := body["items"].([]any); status != http.StatusOK || len(items) != 1 || body["triage"] == nil {
+		t.Fatalf("the collect worked: %d %v", status, body)
 	}
 }

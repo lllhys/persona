@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FROM_LIST, NAV_GROUPS, openedFromList, redirectLegacySettings, searchSettings, settingsAt, settingsHref, TAB_INFO, TABS } from "./nav";
+import { categoryState, FROM_LIST, itemState, NAV_GROUPS, openedFromList, redirectLegacySettings, searchSettings, settingsAt, settingsHref, stepsToList, TAB_INFO, TABS } from "./nav";
 
 describe("settings location", () => {
   it("names no category on plain /settings: the phone's list (通用 on a wide screen)", () => {
@@ -32,6 +32,10 @@ describe("settings location", () => {
     expect(openedFromList({ [FROM_LIST]: true, personaOverlay: "o1" })).toBe(true);
     expect(openedFromList(null)).toBe(false);
     expect(openedFromList({ personaOverlay: "o1" })).toBe(false);
+    // an item's page over it is two entries above the list; another category in its place keeps only that way back
+    expect(stepsToList(itemState({ [FROM_LIST]: true }))).toBe(2);
+    expect(stepsToList(itemState(null))).toBe(0);
+    expect(categoryState(itemState({ [FROM_LIST]: true }))).toEqual({ [FROM_LIST]: 2 });
   });
   it("redirects each old combined category to its new section and preserves its destination", () => {
     expect(redirectLegacySettings("?tab=model-config&purpose=agent.triage&manager=work", "")).toBe("/settings?tab=models&purpose=agent.triage&manager=work#settings-model-config");

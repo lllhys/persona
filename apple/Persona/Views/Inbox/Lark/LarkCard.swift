@@ -166,6 +166,7 @@ struct LarkCardInlineRun: View {
     var nodes: [LarkCardNode]
     var inMarkdown: Bool
     @Environment(\.larkTextBase) private var base
+    @Environment(\.larkManager) private var manager
 
     var body: some View {
         let chipsOnly = nodes.allSatisfy { $0.tag == "text_tag" || $0.isIcon || ($0.tag == "plain_text" && ($0.text ?? "").trimmingCharacters(in: .whitespaces).isEmpty) }
@@ -184,7 +185,7 @@ struct LarkCardInlineRun: View {
                            alignment: align == "center" ? .center : align == "right" ? .trailing : .leading)
                 .frame(maxWidth: align == "center" || align == "right" ? .infinity : nil,
                        alignment: align == "center" ? .center : align == "right" ? .trailing : .leading)
-                .task { await LarkCardRuns.preloadIcons(nodes) }
+                .task { await LarkCardRuns.preloadIcons(nodes, manager: manager) }
         }
     }
 }
@@ -281,10 +282,11 @@ nonisolated enum LarkCardRuns {
         }
     }
 
-    /// Custom icons drawn as images need their pixels before the text can embed them.
-    @MainActor static func preloadIcons(_ nodes: [LarkCardNode]) async {
+    /// Custom icons drawn as images need their pixels before the text can embed them (`LarkInlineText`, through the same
+    /// manager).
+    @MainActor static func preloadIcons(_ nodes: [LarkCardNode], manager: String? = nil) async {
         for n in nodes where n.isIcon && LarkCardIcon.symbol(n.token) == nil {
-            if let url = n.imageURL, LarkMedia.shared.cached(url, size: larkThumbEdge(points: 20)) == nil {
+            if let url = n.imageURL.map({ LarkMedia.url($0, manager: manager) }), LarkMedia.shared.cached(url, size: larkThumbEdge(points: 20)) == nil {
                 _ = await LarkMedia.shared.image(url, size: larkThumbEdge(points: 20), maxPixel: 96)
             }
         }
@@ -682,6 +684,7 @@ struct LarkCardFields: View {
 struct LarkCardImage: View {
     var node: LarkCardNode
     var square = false
+    @Environment(\.larkManager) private var manager
     @State private var viewing = false
     @Namespace private var zoom
 
@@ -708,7 +711,9 @@ struct LarkCardImage: View {
             .contentShape(.rect)
             .matchedTransitionSource(id: url, in: zoom)
             .onTapGesture { if node.raw["preview"]?.bool != false { viewing = true } }
-            .fullScreenCover(isPresented: $viewing) { ImageViewer(urls: [url], index: 0).navigationTransition(.zoom(sourceID: url, in: zoom)) }
+            .fullScreenCover(isPresented: $viewing) {
+                ImageViewer(urls: [LarkMedia.url(url, manager: manager)], index: 0).navigationTransition(.zoom(sourceID: url, in: zoom))
+            }
             .accessibilityLabel(node.text ?? String(localized: "images"))
         }
     }
@@ -721,6 +726,7 @@ struct LarkCardButton: View {
     @Environment(\.larkContext) private var context
     @Environment(\.larkRefresh) private var refresh
     @Environment(\.larkAccount) private var larkAccount
+    @Environment(\.larkManager) private var larkManager
     @State private var pending = false
 
     var body: some View {
@@ -738,7 +744,7 @@ struct LarkCardButton: View {
             Task {
                 defer { pending = false }
                 do {
-                    try await AppModel.shared.api?.lark(larkAccount).larkCardAction(message: mid, action: aid)
+                    try await AppModel.shared.api?.manager(larkManager).lark(larkAccount).larkCardAction(message: mid, action: aid)
                     Haptics.success()
                     AppModel.shared.toast = Toast(String(localized: "Submitted “\(label)”"), style: .success)
                     try? await Task.sleep(for: .seconds(1.2))
@@ -943,6 +949,7 @@ struct LarkCardOverflow: View {
     @Environment(\.larkContext) private var context
     @Environment(\.larkRefresh) private var refresh
     @Environment(\.larkAccount) private var larkAccount
+    @Environment(\.larkManager) private var larkManager
 
     var body: some View {
         let options = (node.raw["options"]?.array ?? []).filter { $0["disabled"]?.bool != true }
@@ -955,7 +962,7 @@ struct LarkCardOverflow: View {
                     Button {
                         Task {
                             do {
-                                try await AppModel.shared.api?.lark(larkAccount).larkCardAction(message: mid, action: aid)
+                                try await AppModel.shared.api?.manager(larkManager).lark(larkAccount).larkCardAction(message: mid, action: aid)
                                 Haptics.success()
                                 AppModel.shared.toast = Toast(String(localized: "Submitted “\(text)”"), style: .success)
                                 try? await Task.sleep(for: .seconds(1.2))

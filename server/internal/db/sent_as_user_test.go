@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // A row is read back as it was written, newest first; empty JSON fields come back as empty objects.
@@ -90,6 +93,100 @@ func TestSentAsUserPaging(t *testing.T) {
 	}
 	if rows, next, err = d.SentAsUsers(ctx, 0, 1000, ""); err != nil || len(rows) != SentAsUserMost || next == 0 {
 		t.Fatalf("too many asked for: %d rows, next %d, %v", len(rows), next, err)
+	}
+}
+
+func TestSentAsUsersForArchive(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	// This local day starts on the previous UTC date. SQL compares instants, not dates.
+	since := time.Date(2026, 11, 6, 0, 0, 0, 0, time.FixedZone("archive", 9*60*60))
+	until := since.AddDate(0, 0, 1)
+	record := func(connector string, at time.Time, text string) int64 {
+		t.Helper()
+		id, err := d.RecordSentAsUser(ctx, SentAsUser{At: at, Connector: connector, Action: "send",
+			Target: json.RawMessage(`{"chat":"thread"}`), Text: text, MessageRef: "ref-" + text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	record("example", since.Add(-time.Microsecond), "before")
+	record("example", until, "until")
+	record("other", since, "other connector")
+	first := record("example", since.UTC(), "start")
+	second := record("example", since.UTC(), "same time")
+	last := record("example", until.Add(-time.Microsecond).UTC(), "end")
+	// A complete day must not stop at the settings page's 200-row limit.
+	for i := SentAsUserMost + 1; i > 0; i-- {
+		record("example", since.Add(time.Duration(i)*time.Minute), fmt.Sprint(i))
+	}
+	recalled := until.Add(time.Hour)
+	if ok, err := d.MarkSentAsUserRecalled(ctx, second, recalled); err != nil || !ok {
+		t.Fatalf("recall: %v %v", ok, err)
+	}
+	rows, err := d.SentAsUsersForArchive(ctx, "example", since, until)
+	if err != nil || len(rows) != SentAsUserMost+4 {
+		t.Fatalf("archive: %d rows, %v", len(rows), err)
+	}
+	if rows[0].ID != first || rows[1].ID != second || rows[len(rows)-1].ID != last {
+		t.Fatalf("boundary and tie order: %+v", rows)
+	}
+	if rows[1].RecalledAt == nil || !rows[1].RecalledAt.Equal(recalled) || rows[1].MessageRef != "ref-same time" ||
+		string(rows[1].Target) != `{"chat": "thread"}` {
+		t.Fatalf("lost matching metadata: %+v", rows[1])
+	}
+	for i, row := range rows {
+		if row.Connector != "example" || row.At.Before(since) || !row.At.Before(until) ||
+			(i > 0 && row.At.Before(rows[i-1].At)) {
+			t.Fatalf("wrong candidate at %d: %+v", i, row)
+		}
+	}
+	for _, bounds := range [][2]time.Time{{since, since}, {until, since}} {
+		if rows, err := d.SentAsUsersForArchive(ctx, "example", bounds[0], bounds[1]); err != nil || len(rows) != 0 {
+			t.Fatalf("empty interval: %+v %v", rows, err)
+		}
+	}
+	if rows, err := d.SentAsUsersForArchive(ctx, "", since, until); err != nil || len(rows) != 0 {
+		t.Fatalf("an empty connector must not read every connector: %+v %v", rows, err)
+	}
+}
+
+// A prepared query must use both connector and time in its index conditions after pgx starts using a generic plan.
+func TestSentAsUsersForArchiveIndexed(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO sent_as_user (connector, action, at)
+		SELECT 'example-' || (g % 40), 'send', '2026-11-06T00:00:00Z'::timestamptz - g * interval '1 minute'
+		FROM generate_series(1, 6000) g`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `ANALYZE sent_as_user`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `PREPARE archive_sends(text, timestamptz, timestamptz) AS `+sentAsUsersForArchiveSQL); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = tx.Exec(ctx, `DEALLOCATE archive_sends`) }()
+	for _, mode := range []string{"force_custom_plan", "force_generic_plan"} {
+		if _, err := tx.Exec(ctx, `SET LOCAL plan_cache_mode = `+mode); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := tx.Query(ctx, `EXPLAIN EXECUTE archive_sends('example-7', '2026-11-05T00:00:00Z', '2026-11-06T00:00:00Z')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := strings.Join(lines, "\n")
+		if !strings.Contains(plan, "sent_as_user_connector_at") || strings.Contains(plan, "Seq Scan") {
+			t.Fatalf("%s did not use the archive index:\n%s", mode, plan)
+		}
 	}
 }
 

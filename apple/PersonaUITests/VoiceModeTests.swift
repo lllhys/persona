@@ -79,8 +79,9 @@ final class VoiceModeTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    /// The real path against the mock's script (docs/assistant/voice.md 7「#3508 验收」): connected → handed over → run → paused →
-    /// asked → refused, Clear and Send → done → Stop; then the background, another page and leaving each end the call.
+    /// The real path against the mock's script (docs/archive/assistant/voice-plan.md ("Acceptance", #3508)): connected →
+    /// handed over → run → paused → asked → refused, Clear and Send → done → Stop; then the background, another page and
+    /// leaving each end the call.
     @MainActor func testOpenVoiceWalksTheScript() throws {
         let hub = try hub
         let app = try launch(Self.agent + ["-openVoice", "silent"])

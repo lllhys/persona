@@ -27,7 +27,7 @@ import { useStore } from "../../lib/store";
 import { canTryUIStream } from "../../lib/extension-ui-stream-gate";
 import { lazyPage } from "../../lib/lazy-page";
 import { PageBoundary } from "../PageBoundary";
-import { otherManager } from "../../lib/manager-choice";
+import { otherManager, useLinkManager } from "../../lib/manager-choice";
 import type { UIRowControl } from "../../lib/extension-ui-v6";
 import { t } from "../../i18n";
 
@@ -183,6 +183,7 @@ export function LegacyExtensionUI({
   onWide?: (wide: boolean) => void;
 }) {
   const [stack, setStack] = useState<UIPage[]>(() => [{ ui, ...(firstState ? { state: firstState } : {}) }]);
+  const linkManager = useLinkManager();
   const top = stack[stack.length - 1];
   const [view, setView] = useState<UIView | null>(null);
   const [error, setError] = useState("");
@@ -327,7 +328,7 @@ export function LegacyExtensionUI({
       if (r.view && latest) show(r.view, !!(extra && "q" in extra)); // a search keeps what is typed
       if (r.items && latest) setView((v) => (v ? patchView(v, r.items) : v));
       if (r.toast) toast(r.toast, "ok");
-      if (r.url) openLink(r.url);
+      if (r.url) openLink(r.url, undefined, linkManager);
       if (r.source) onOpenSource?.();
       // an extension's own settings (persona://settings/extensions/<id>) open in the app
       if (r.settings) navigate(r.settings);
@@ -390,7 +391,7 @@ export function LegacyExtensionUI({
     if (r.items) setView((v) => (v ? patchView(v, r.items) : v));
     if ((r.view || r.items) && !entry.queued) setControls((x) => without(x, c.name));
     if (r.toast) toast(r.toast, "ok");
-    if (r.url) openLink(r.url);
+    if (r.url) openLink(r.url, undefined, linkManager);
     if (r.push) push(r.push);
     if (r.pop) pop();
     if (r.reload) load(true);

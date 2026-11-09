@@ -1,6 +1,6 @@
 # Connector protocol (v2)
 
-The protocol between hub and a connector running as its own program. Used by the first-party Telegram extension (#1704); third-party connectors follow this too. Design / relationship to in-hub connectors: `docs/extensions/connectors.md` (“II · 4”). Program side `server/internal/connector/serve`, hub side `server/internal/connector/proc`, conformance tests server/internal/connector/conformance.
+The protocol between hub and a connector running as its own program. Used by the first-party Telegram extension (#1704); third-party connectors follow this too. Design / relationship to in-hub connectors: `docs/extensions/connectors.md` (“II · 4”). Program side the Go SDK (`sdk/go/ext`, below), hub side `server/internal/connector/proc`, conformance tests server/internal/connector/conformance; `server/internal/connector/serve` has the method names and types both sides use, and a runner only the conformance kit and tests start.
 
 **Now the connector namespace of the process-extension protocol** (#1101, `docs/extensions/extensions.md`, “Process-extension protocol”). Connector program is an extension contributing connectors. Hub opens via initialize; prefix every method below with `connector.` (status → `connector.status`), add contribution (connector ID) to params. All other params, results, requirements unchanged. Program-to-hub `secrets.*` and changed also prefixed with contribution. Process startup / stop / restart, config / user secrets are extension-platform responsibilities (`docs/extensions/extensions.md`).
 
@@ -12,7 +12,7 @@ and `exttest.CheckConnectors` / `exttest.Start` hold it to the protocol against 
 below hold every message both ways to the schema, and `server/internal/extension/conformance/plugin_schema_test.go`
 holds the schema to the server's Go types (schema/extension/README.md, "Plugin-side schemas and calls").
 
-`connector/serve` accepts process-extension initialize + `connector.*` (hub now uses only this), and legacy init + unprefixed methods below (standalone protocol retained one release cycle, removed at next protocol change). Go programs use `serve.MainWith`, also receiving declared user secrets (`Init.Declared`) and data directory under process protocol.
+`connector/serve` accepts process-extension initialize + `connector.*` (hub now uses only this), and legacy init + unprefixed methods below (standalone protocol retained one release cycle, removed at next protocol change). The standalone handshake is left in two places: the conformance kit (`conformance.Check` runs both handshakes) and `connector/proc`'s `Config.Path`, which only proc's own tests use. Go programs use the SDK (`ext.Serve` / `ext.Main` with `ext.Methods`), whose `ext.Init` carries the config, the declared user secrets and the data directory.
 
 ## Transport
 
@@ -263,7 +263,7 @@ Current 2. Changed field meaning / removal increments; optional additions do not
 
 ## Conformance tests
 
-`conformance.Check(t, c)` places Go connector on program side via `serve.Serve` / pipe pair, calls every declared capability directly and over wire, requiring byte-identical JSON. Lost fields / changed types fail. Test both legacy init / bare methods and initialize / connector.*. Process initialization also checks manifest contributions / unknown connector no_contribution. `extension/conformance` checks overall process protocol (`docs/extensions/extensions.md` “Conformance tests”). GitHub, Messages, Telegram tests all run this. `TestWireTypesAreTagged` requires explicit snake_case wire names. Third-party Go programs can wire `serve.Serve` similarly with same tests.
+`conformance.Check(t, c)` places Go connector on program side via `serve.Serve` / pipe pair, calls every declared capability directly and over wire, requiring byte-identical JSON. Lost fields / changed types fail. Test both legacy init / bare methods and initialize / connector.*. Process initialization also checks manifest contributions / unknown connector no_contribution. `extension/conformance` checks overall process protocol (`docs/extensions/extensions.md` “Conformance tests”). The GitHub and Messages connectors' tests run this. `TestWireTypesAreTagged` requires explicit snake_case wire names. A program outside this repository cannot import `server/internal`: it uses the SDK's `exttest.CheckConnectors` / `exttest.Start` (above).
 
 ### Other languages: `CheckProgram`
 

@@ -145,9 +145,27 @@ export function useItemManager(): string | undefined {
   return useContext(ItemManager);
 }
 
+/** The manager of the chat (an agent's, a conversation) or the opened document a link is in: a document or post the
+ *  link opens in the page is read through it (docs/assistant/managers.md "Grouping"). Where none is provided, an inbox
+ *  item's (ItemManager), else the default's. */
+export const LinkManager = createContext<string | undefined>(undefined);
+
+export function useLinkManager(): string | undefined {
+  const chat = useContext(LinkManager);
+  const item = useContext(ItemManager);
+  return chat ?? item;
+}
+
 /** The header naming manager on a request about one of its things; none for the default's, or none known. */
 export function itemHeaders(manager: string | undefined): Record<string, string> | undefined {
   return manager && manager !== rosterDefault ? { [MANAGER_HEADER]: manager } : undefined;
+}
+
+/** The header naming manager on a change to a thing a list read from each manager stamped with it (several managers),
+ *  even when it is the default: the default may have changed since the list was read. None for an unstamped thing (one
+ *  manager). */
+export function stampedHeaders(manager: string | undefined): Record<string, string> | undefined {
+  return manager ? { [MANAGER_HEADER]: manager } : undefined;
 }
 
 /** url (an /api/v1 path or a full /api/ URL) with `manager=` for another manager's thing, as an <img> or a link

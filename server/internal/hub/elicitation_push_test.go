@@ -75,7 +75,7 @@ func TestElicitationPushGoesOnlyToPhonesThatTakeIt(t *testing.T) {
 	form := proto.Interaction{ID: "ix_form", Kind: proto.IxElicitation, MachineID: "m1", SessionID: "s1", SessionTitle: "Fix the login",
 		MCPServerName: "example-mcp", Summary: "Choose the environment", Elicitation: &proto.Elicitation{Mode: "form",
 			Message: "Choose the environment", RequestedSchema: json.RawMessage(`{"type":"object","properties":{"env":{"type":"string","default":"staging-value"}}}`)}}
-	h.notifyInteraction("", form, "Laptop")
+	h.notifyInteraction("", form, "Laptop", false)
 	if went := cardWentTo(h, form.ID); len(went) != 1 || !went["phone"] {
 		t.Fatalf("the form was pushed to %v", went)
 	}
@@ -103,7 +103,7 @@ func TestElicitationPushGoesOnlyToPhonesThatTakeIt(t *testing.T) {
 		Summary: "Authorize at https://auth.example.com/authorize?token=secret-value.", Elicitation: &proto.Elicitation{Mode: "url",
 			Message: "Authorize at https://auth.example.com/authorize?token=secret-value.", URL: "https://auth.example.com/authorize?token=secret-value",
 			ID: "request_example"}}
-	h.notifyInteraction("", link, "Laptop")
+	h.notifyInteraction("", link, "Laptop", false)
 	if went := cardWentTo(h, link.ID); len(went) != 1 || !went["phone"] {
 		t.Fatalf("the link was pushed to %v", went)
 	}
@@ -123,7 +123,7 @@ func TestElicitationPushGoesOnlyToPhonesThatTakeIt(t *testing.T) {
 	}
 
 	// Every other card goes to both phones, as ever.
-	h.notifyInteraction("", card("ix_permission"), "Laptop")
+	h.notifyInteraction("", card("ix_permission"), "Laptop", false)
 	if went := cardWentTo(h, "ix_permission"); len(went) != 2 {
 		t.Fatalf("a permission card was pushed to %v", went)
 	}

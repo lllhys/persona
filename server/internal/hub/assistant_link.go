@@ -81,8 +81,21 @@ func (h *Hub) assistantRoutesRelayed(api *http.ServeMux) {
 		case strings.Contains(pattern, "/todos/{id}"):
 			by = h.byTodo
 		}
-		api.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.forwardOwned(w, r, by) })
+		var relay http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) { h.forwardOwned(w, r, by) }
+		if slices.Contains(storedTerminalTexts, pattern) {
+			relay = h.withoutTerminalControls(relay)
+		}
+		api.HandleFunc(pattern, relay)
 	}
+}
+
+// storedTerminalTexts are the assistant's routes that keep text it later puts in an agent's prompt (a todo, its
+// decisions, a knowledge-base entry): an extension's token may not send terminal control characters on them either.
+var storedTerminalTexts = []string{
+	"POST /api/v1/todos",
+	"PATCH /api/v1/todos/{id}",
+	"POST /api/v1/todos/{id}/decisions",
+	"PUT /api/v1/kb/{kind}/{id}",
 }
 
 // startConversationOnce relays a new conversation's start (its first message) with an operation receipt (#1349): an app

@@ -312,6 +312,8 @@ fun MarkerText(text: String, style: TextStyle, modifier: Modifier = Modifier) {
  * One answer to choose. The [recommended] one stands out by its label, icon and outline,
  * not a second solid action or a colored backing. A [multiSelect] option is read as a checkbox (ticked or not), otherwise as a
  * radio button; [position] ("current" of "total") is read after the label so a screen reader hears how many there are.
+ * The label keeps to 2 lines and the [detail] to 3, unless [fullText] (a full-page view, where an option must be readable
+ * in full before it is picked).
  */
 @Composable
 fun DecisionOption(
@@ -324,6 +326,7 @@ fun DecisionOption(
     enabled: Boolean = true,
     multiSelect: Boolean = false,
     position: Pair<Int, Int>? = null,
+    fullText: Boolean = false,
 ) {
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
@@ -351,8 +354,8 @@ fun DecisionOption(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(label, style = type.label, color = ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            detail?.let { Text(it, style = type.caption.copy(fontWeight = FontWeight.Normal), color = palette.ink2, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            Text(label, style = type.label, color = ink, maxLines = if (fullText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
+            detail?.let { Text(it, style = type.caption.copy(fontWeight = FontWeight.Normal), color = palette.ink2, maxLines = if (fullText) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis) }
         }
         if (selected) { Spacer(Modifier.width(8.dp)); JIcon(PhIcons.CheckCircle, null, size = 20.dp, tint = palette.accent, selected = true) }
         else if (recommended) {

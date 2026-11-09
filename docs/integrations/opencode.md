@@ -118,7 +118,7 @@ Other opencode plugins (notification ones) can subscribe to the event stream at 
 | `answerFirst` | `auto` | Who gets the permission card first (see above) |
 | `listDays` | `7` | How many recent days of non-running sessions to list (sessions the phone touched, running ones and waiting ones are always listed) |
 | `maxSessions` | `80` | Maximum list length |
-| `socket` | `~/.persona/runtime.sock` | node's runtime socket; `PERSONA_RUNTIME_SOCKET` (compatible with `PERSONA_RUNTIME_SOCKET`) also works |
+| `socket` | `~/.persona/runtime.sock` | node's runtime socket; `PERSONA_RUNTIME_SOCKET` (or its old name: [rolling-upgrade-compatibility.md](../protocol/rolling-upgrade-compatibility.md)) also works |
 
 Environment variables: `PERSONA_OPENCODE_DB` (location of opencode.db), `PERSONA_OPENCODE_DEBUG=1` (plugin logs to stderr, visible in the opencode server's output).
 

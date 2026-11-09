@@ -7,26 +7,28 @@
 // and an outline of its headings ("Contents" in the header) that scrolls to the one picked.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, enc, getToken } from "../../lib/api";
+import { BASE } from "../../lib/base";
 import { ago } from "../../lib/format";
 import { DOC_LABEL, docKind, linkRoute, newContext, type ContextRef } from "../../lib/links";
+import { itemHeaders, LinkManager, useLinkManager } from "../../lib/manager-choice";
 import { useDocCommentsOn, useLarkOn } from "../../lib/store";
 import { Button, copyText, cx, Dialog, EASE, IconButton, Menu, useMenu } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { PanelHeader } from "../../ui/PanelHeader";
 import { DocCommentsView, useDocComments } from "./DocComments";
 import { DocMarkdown, DocTree } from "./DocContent";
-import { docOutline, loadDoc, mediaURL, prepareMarkdown, readInfo, readSummary, type DocContent, type DocInfo, type OutlineItem } from "./feishu-doc";
+import { docOutline, hubReader, loadDoc, mediaURL, prepareMarkdown, readInfo, readSummary, type DocContent, type DocInfo, type OutlineItem } from "./feishu-doc";
 import { giveContext, giveEdit, handoffLabel } from "./handoff";
 import { QuoteIcon } from "./QuoteIcon";
 import { t } from "../../i18n";
 import { tRich } from "../../i18n/rich";
 
-export function LinkPanel({ url, title, onClose }: { url: string; title?: string; onClose: () => void }) {
+/** `manager`: the one whose chat the link was in; everything the panel reads, and the links in it, go as it. */
+export function LinkPanel({ url, title, manager, onClose }: { url: string; title?: string; manager?: string; onClose: () => void }) {
   // a panel opened before the hub said what it has turns into the ordinary page once it says it has no Feishu
   const r = linkRoute(url, useLarkOn());
-  if (r.kind === "doc") return <DocPanel url={url} title={title} onClose={onClose} />;
-  if (r.kind === "moments") return <MomentsPanel id={r.id} url={url} onClose={onClose} />;
-  return <WebPanel url={url} title={title} onClose={onClose} />;
+  const page = r.kind === "doc" ? <DocPanel url={url} title={title} onClose={onClose} /> : r.kind === "moments" ? <MomentsPanel id={r.id} url={url} onClose={onClose} /> : <WebPanel url={url} title={title} onClose={onClose} />;
+  return <LinkManager.Provider value={manager}>{page}</LinkManager.Provider>;
 }
 
 function host(url: string) {
@@ -102,6 +104,7 @@ function CommentsButton({ count, active, onClick }: { count: number; active: boo
 
 function DocPanel({ url, title, onClose }: { url: string; title?: string; onClose: () => void }) {
   const kind = docKind(url);
+  const manager = useLinkManager();
   const [content, setContent] = useState<DocContent | null>(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState<DocInfo | null>(null);
@@ -130,17 +133,17 @@ function DocPanel({ url, title, onClose }: { url: string; title?: string; onClos
   useEffect(() => {
     let live = true;
     setError("");
-    loadDoc(url, title, round > 0)
+    loadDoc(url, title, round > 0, manager)
       .then((c) => live && setContent(c))
       .catch((e: unknown) => {
         if (!live) return;
         setContent(null);
         setError(e instanceof Error ? e.message : String(e));
       });
-    readInfo(url)
+    readInfo(url, hubReader(manager))
       .then((i) => live && setInfo(i))
       .catch(() => {});
-    readSummary(url)
+    readSummary(url, hubReader(manager))
       .then((s) => live && setSummary(s))
       .catch(() => {});
     return () => {
@@ -148,7 +151,7 @@ function DocPanel({ url, title, onClose }: { url: string; title?: string; onClos
     };
     // the title only names it while it loads
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, round]);
+  }, [url, manager, round]);
 
   const docTitle = content?.title || title || DOC_LABEL[kind];
   const pick = useCallback(
@@ -320,7 +323,8 @@ function DocBody({
   comments?: { open: number; onOpen: () => void; writes: boolean };
   url: string;
 }) {
-  const markdown = useMemo(() => (content.kind === "markdown" ? prepareMarkdown(content.markdown, content.title, getToken()) : ""), [content]);
+  const manager = useLinkManager();
+  const markdown = useMemo(() => (content.kind === "markdown" ? prepareMarkdown(content.markdown, content.title, getToken(), BASE, manager) : ""), [content, manager]);
   const meta = metaLine(info);
   return (
     <div ref={bodyRef} style={{ animation: `fade-in 200ms ease-out both` }}>
@@ -347,11 +351,12 @@ function DocBody({
 }
 
 function Unsupported({ content, url }: { content: Extract<DocContent, { kind: "unsupported" }>; url: string }) {
+  const manager = useLinkManager();
   return (
     <div className="flex flex-col items-center gap-3 pt-12 text-center" style={{ animation: `fade-up 300ms ${EASE} both` }}>
       {content.image ? (
-        <a href={mediaURL(content.image)} target="_blank" rel="noreferrer noopener" className="block w-full">
-          <img src={mediaURL(content.image)} alt={content.title} className="w-full rounded-card bg-inset shadow-hairline" />
+        <a href={mediaURL(content.image, manager)} target="_blank" rel="noreferrer noopener" className="block w-full">
+          <img src={mediaURL(content.image, manager)} alt={content.title} className="w-full rounded-card bg-inset shadow-hairline" />
         </a>
       ) : (
         <span className="flex size-14 items-center justify-center rounded-[14px] bg-field text-ink-2">
@@ -365,7 +370,7 @@ function Unsupported({ content, url }: { content: Extract<DocContent, { kind: "u
       <div className="mt-2 flex flex-wrap justify-center gap-2">
         {content.file && (
           <a
-            href={mediaURL(`/api/v1/lark/raw/documents/drive/files/${enc(content.file)}/download`)}
+            href={mediaURL(`/api/v1/lark/raw/documents/drive/files/${enc(content.file)}/download`, manager)}
             download
             className="inline-flex h-8 items-center gap-1.5 rounded-control bg-ink px-3 text-[12.5px] font-medium whitespace-nowrap text-surface"
           >
@@ -444,6 +449,7 @@ function when(t?: number | string) {
 }
 
 function MomentsPanel({ id, url, onClose }: { id: string; url: string; onClose: () => void }) {
+  const manager = useLinkManager();
   const [post, setPost] = useState<MomentsPost | null>(null);
   const [comments, setComments] = useState<MomentsComment[]>([]);
   const [error, setError] = useState("");
@@ -454,16 +460,16 @@ function MomentsPanel({ id, url, onClose }: { id: string; url: string; onClose: 
     let live = true;
     setError("");
     // the explicit token: a Feishu-side 401 must not sign this browser out of the hub
-    api<MomentsPost>(`/lark/moments/posts/${enc(id)}`, { token: getToken() })
+    api<MomentsPost>(`/lark/moments/posts/${enc(id)}`, { token: getToken(), headers: itemHeaders(manager) })
       .then((p) => live && setPost(p))
       .catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)));
-    api<{ comments?: MomentsComment[] }>(`/lark/moments/posts/${enc(id)}/comments`, { token: getToken() })
+    api<{ comments?: MomentsComment[] }>(`/lark/moments/posts/${enc(id)}/comments`, { token: getToken(), headers: itemHeaders(manager) })
       .then((c) => live && setComments(c.comments ?? []))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [id, round]);
+  }, [id, manager, round]);
 
   const name = post?.userName ? t("link-linkpanel.moments_by", { name: post.userName }) : t("link-linkpanel.moments");
   const pick = (text: string, k: ContextRef["kind"]) => {

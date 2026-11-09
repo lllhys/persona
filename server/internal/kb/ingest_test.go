@@ -174,6 +174,11 @@ func TestIngestRecoversEveryWriteBoundary(t *testing.T) {
 						if strings.Count(text, m.Text) != 1 {
 							t.Fatalf("missing or repeated %q: %q", m.ID, text)
 						}
+						day := m.At.In(s.Zone()).Format("2006-01-02")
+						lines, _, _, identity, err := e.DayWithIdentity(c.ID, day)
+						if err != nil || len(lines) != 1 || identity.Messages[lines[0].N].Ref != m.ID {
+							t.Fatalf("recovered message identity %q: %+v, %v", m.ID, identity, err)
+						}
 					}
 					cur, _ := s.Chat(c.ID)
 					if cur.Pinned != c.Pinned || cur.Name != "Example" {
@@ -502,7 +507,7 @@ func TestIngestRetentionAndForgetReceipts(t *testing.T) {
 	if n := s.Prune(now, 1, 30); n != 2 {
 		t.Fatalf("pruned %d days, want 2", n)
 	}
-	if r, err := s.receipts("example", "thread", "example-thread"); err != nil || len(r.IDs) != 0 {
+	if r, err := s.receipts("example", "thread", "example-thread"); err != nil || len(r.IDs) != 0 || len(r.Lines) != 0 {
 		t.Fatalf("retained expired receipts: %+v, %v", r, err)
 	}
 	old.At, old.Text = now.Add(-time.Hour), "New synthetic message with reused ID"

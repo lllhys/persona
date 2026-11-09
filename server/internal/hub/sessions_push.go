@@ -44,25 +44,36 @@ type sentSession struct {
 	// history: a Codex session known only from its rollout (codex_history). Not pushed to a delta app unless it has the
 	// session already (a live one that ended): the app fetches the history when it wants it (GET /api/v1/sessions).
 	history bool
-	raw     json.RawMessage
+	// asIs: compat.ProjectJSON is known to leave raw as it is for an older app (worked out once per row, encodeKept);
+	// false is not known. A whole list whose rows are all asIs goes to older apps without projecting it (broadcastSessions).
+	asIs bool
+	raw  json.RawMessage
 }
 
 // encodeSessions encodes each session of list (the same bytes json.Marshal gives) into one buffer, each raw a slice
 // of it: one allocation for the list rather than a copy of every session and then a clone of its bytes, what a push
 // spent most of its memory on. The raws share the buffer and are only read from then on.
-func encodeSessions(list []proto.Session) []sentSession { return encodeRows(list, false, "") }
+func encodeSessions(list []proto.Session) []sentSession { return encodeRows(list, false, "", 0) }
 
 // encodeStamped is encodeSessions of list as stamped with manager (stamped), without the copy of the list: a session
 // that names another manager is copied alone, into one scratch session, to be encoded.
 func encodeStamped(list []proto.Session, manager string) []sentSession {
-	return encodeRows(list, true, manager)
+	return encodeRows(list, true, manager, 0)
 }
 
-func encodeRows(list []proto.Session, stamp bool, manager string) []sentSession {
+// encodeRows writes the rows into one buffer of size bytes, or (0) one sized from the first row.
+func encodeRows(list []proto.Session, stamp bool, manager string, size int) []sentSession {
 	var w rowWriter
+	if size > 0 {
+		w.b = make([]byte, 0, size)
+	}
 	spans := make([]rowSpan, len(list))
 	for i := range list {
-		spans[i] = w.add(&list[i], stamp, manager, len(list)-i-1)
+		more := len(list) - i - 1
+		if size > 0 {
+			more = 0 // sized already
+		}
+		spans[i] = w.add(&list[i], stamp, manager, more)
 	}
 	out := make([]sentSession, 0, len(list))
 	for i, sp := range spans {
@@ -127,12 +138,14 @@ func (w *rowWriter) row(sp rowSpan) []byte { return w.b[sp.start:sp.end:sp.end] 
 
 // keptRow is a session's row as last encoded from the manager's list (Machine.rows): what the session's bytes in
 // that list (raw), its rev and its manager give. A session decoded from the same bytes is the same session, and
-// sessions.revs changes only its rev, so while all three are the same the row is too.
+// sessions.revs changes only its rev, so while all three are the same the row is too, and so is what projection
+// makes of it (asIs).
 type keptRow struct {
 	raw   string
 	rev   int64
 	owner string
 	row   []byte
+	asIs  bool
 }
 
 // encodeKept is encodeStamped of list, the kept list or what shown left of it, with raws, what each of its sessions
@@ -142,7 +155,9 @@ type keptRow struct {
 // hold the rest of a list's buffer.
 func (m *Machine) encodeKept(list []proto.Session, owner string, raws map[string]string) []sentSession {
 	if raws == nil {
-		return encodeStamped(list, owner)
+		out := encodeRows(list, true, owner, m.rowsSize(len(list)))
+		m.noteRows(out)
+		return out
 	}
 	m.rowsMu.Lock()
 	defer m.rowsMu.Unlock()
@@ -156,7 +171,9 @@ func (m *Machine) encodeKept(list []proto.Session, owner string, raws map[string
 		raw := raws[s.SessionID] // "" for one listed twice: encoded every time
 		last, had := m.rows[s.SessionID]
 		if raw != "" && had && last.raw == raw && last.rev == s.Rev && last.owner == owner {
-			out = append(out, sentRow(s, last.row))
+			sent := sentRow(s, last.row)
+			sent.asIs = last.asIs
+			out = append(out, sent)
 			continue
 		}
 		w.b = w.b[:0]
@@ -165,11 +182,14 @@ func (m *Machine) encodeKept(list []proto.Session, owner string, raws map[string
 			continue // it does not encode: left out
 		}
 		row := append(make([]byte, 0, sp.end-sp.start), w.row(sp)...)
+		sent := sentRow(s, row)
+		sent.asIs = !compat.Projects(row) // most rows say "persona" (started_by_persona), few have a name it renames
 		if raw != "" {
-			m.rows[s.SessionID] = keptRow{raw: raw, rev: s.Rev, owner: owner, row: row}
+			m.rows[s.SessionID] = keptRow{raw: raw, rev: s.Rev, owner: owner, row: row, asIs: sent.asIs}
 		}
-		out = append(out, sentRow(s, row))
+		out = append(out, sent)
 	}
+	m.noteRows(out)
 	if len(m.rows) > len(raws)+len(raws)/4+8 { // sessions the lists no longer name: their rows go
 		for id := range m.rows {
 			if _, listed := raws[id]; !listed {
@@ -178,6 +198,29 @@ func (m *Machine) encodeKept(list []proto.Session, owner string, raws map[string
 		}
 	}
 	return out
+}
+
+// rowsSize is room for n rows of the length encodeKept's rows had on average last time, and a little more for these
+// to differ: a list encoded whole again (no raws) goes into one buffer of about its size, not one sized from its first
+// row with a quarter more to spare. 0 (sized from the first row) before any.
+func (m *Machine) rowsSize(n int) int {
+	size := int(m.rowLen.Load()) * n
+	if size == 0 {
+		return 0
+	}
+	return size + size/16 + 1<<10
+}
+
+// noteRows keeps the average length of out's rows, for the next list encoded whole to be sized from (rowsSize).
+func (m *Machine) noteRows(out []sentSession) {
+	if len(out) == 0 {
+		return
+	}
+	size := 0
+	for _, s := range out {
+		size += len(s.raw)
+	}
+	m.rowLen.Store(int64(size / len(out)))
 }
 
 // sessionsMessage is the whole-list message (the same bytes as marshalling the sessions themselves). Put together
@@ -366,7 +409,12 @@ func (h *Hub) broadcastSessions(m *Machine, list []proto.Session) {
 				k = 1
 			}
 			if projected[k] == nil {
-				projected[k] = compat.ProjectJSON(full, canonical)
+				// The message's own members (machine_id, sessions, type) are never projected, so it is projected exactly when
+				// one of its rows is (compat.Projects): with every row known to stay as it is, so does the message.
+				projected[k] = full
+				if !canonical && !allAsIs(enc) {
+					projected[k] = compat.ProjectJSON(full, false)
+				}
 			}
 			c.queueProjected(projected[k])
 			continue
@@ -375,6 +423,16 @@ func (h *Hub) broadcastSessions(m *Machine, list []proto.Session) {
 			c.queue(b)
 		}
 	}
+}
+
+// allAsIs: compat.ProjectJSON is known to leave every row of list as it is.
+func allAsIs(list []sentSession) bool {
+	for _, s := range list {
+		if !s.asIs {
+			return false
+		}
+	}
+	return true
 }
 
 // snapshotSessions sends a delta app that just connected a machine's whole list (without the Codex history), what

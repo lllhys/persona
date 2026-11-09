@@ -17,9 +17,10 @@ extension View {
         modifier(MacLinkPanelHost(link: link, key: key, wide: wide))
     }
 
-    /// Links followed inside this view (`openURL`) open in the panel; the Feishu ones in the native reader there.
-    func macOpensLinksInPanel(_ link: Binding<LinkTarget?>) -> some View {
-        modifier(MacPanelLinks(link: link))
+    /// Links followed inside this view (`openURL`) open in the panel; the Feishu ones in the native reader there, read
+    /// through `manager` (`LinkTarget.manager`).
+    func macOpensLinksInPanel(_ link: Binding<LinkTarget?>, manager: String? = nil) -> some View {
+        modifier(MacPanelLinks(link: link, manager: manager))
     }
 }
 
@@ -27,6 +28,7 @@ extension View {
 /// ⌘-click opens a tab.
 private struct MacPanelLinks: ViewModifier {
     @Binding var link: LinkTarget?
+    var manager: String?
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
@@ -40,7 +42,8 @@ private struct MacPanelLinks: ViewModifier {
     }
 
     private func open(_ url: URL) {
-        if NSEvent.modifierFlags.contains(.option) { openWindow(id: MacLinkWindow.id, value: url) } else { link = LinkTarget(url: url) }
+        let target = LinkTarget(url: url, manager: manager)
+        if NSEvent.modifierFlags.contains(.option) { openWindow(id: MacLinkWindow.id, value: MacLinkWindow.Value(target)) } else { link = target }
     }
 }
 
@@ -139,7 +142,7 @@ struct MacLinkPanel: View {
     @State private var instruction = ""
 
     /// Feishu links with a native view (documents, company-feed posts), while the hub has them (`LarkFeatures`).
-    private var feishuRoute: FeishuRoute? { FeishuLinks.route(target.url, lark: model.larkFeatures) }
+    private var feishuRoute: FeishuRoute? { FeishuLinks.route(target.url, lark: model.larkFeatures, manager: target.manager) }
     private var isFeishuDoc: Bool { if case .doc = feishuRoute { true } else { false } }
     /// Where 「AI 修改」 and 「作为上下文」 go: the conversation the link came from, else Persona' main one.
     private var destination: SessionKey? { key ?? model.assistantMain ?? model.assistantCurrent }
@@ -203,7 +206,7 @@ struct MacLinkPanel: View {
                 Button { NSWorkspace.shared.open(target.url) } label: { Label("Open in Browser", systemImage: Theme.Icon.safari) }
                 if close != nil {
                     Button {
-                        openWindow(id: MacLinkWindow.id, value: target.url)
+                        openWindow(id: MacLinkWindow.id, value: MacLinkWindow.Value(target))
                         close?()
                     } label: { Label("Open in Separate Window", systemImage: Theme.Icon.newWindow) }
                 }
@@ -264,13 +267,37 @@ struct MacLinkPanel: View {
 /// window. Its 「AI 修改」 / 「作为上下文」 go to Persona.
 struct MacLinkWindow: View {
     static let id = "link"
+
+    /// What the window opens: the link and the manager its native view reads through (`LinkTarget.manager`).
+    nonisolated struct Value: Codable, Hashable, Sendable {
+        var url: URL
+        var manager: String?
+
+        @MainActor init(_ target: LinkTarget) {
+            url = target.url
+            manager = target.manager
+        }
+
+        init(from decoder: any Decoder) throws {
+            // A window restored from a version before managers holds the bare URL.
+            if let url = try? decoder.singleValueContainer().decode(URL.self) {
+                self.url = url
+                manager = nil
+                return
+            }
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            url = try c.decode(URL.self, forKey: .url)
+            manager = try c.decodeIfPresent(String.self, forKey: .manager)
+        }
+    }
+
     @Environment(AppModel.self) private var model
-    var url: URL?
+    var value: Value?
 
     var body: some View {
         Group {
-            if let url {
-                MacLinkPanel(target: LinkTarget(url: url), key: nil, close: nil)
+            if let value {
+                MacLinkPanel(target: LinkTarget(url: value.url, manager: value.manager), key: nil, close: nil)
             } else {
                 EmptyStateView(symbol: Theme.Icon.link, title: String(localized: "No Link"), message: String(localized: "Open a link from a chat or the Inbox."))
             }

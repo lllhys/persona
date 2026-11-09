@@ -90,7 +90,7 @@ nonisolated enum VoiceCapture: Equatable, Sendable {
 }
 
 /// The call's audio: the microphone into the uplink, the voice out of the speaker, `clear` to drop what has not been
-/// played (docs/assistant/voice.md 6.4). `PhoneVoiceAudio` on iOS; the tests' fake elsewhere.
+/// played (docs/assistant/voice.md 6.4). `PhoneVoiceAudio` on iOS and visionOS, `NoVoiceAudio` on the Mac, a fake in tests.
 @MainActor protocol VoiceAudio: AnyObject {
     /// Opens the microphone (PCM16 at `format.inputRate` into `uplink`) and the player (`format.outputRate`).
     func start(_ format: VoiceAudioFormat, uplink: VoiceUplink, events: @escaping @MainActor (VoiceAudioEvent) -> Void) throws
@@ -179,7 +179,7 @@ final class SystemIdleTimer: IdleTimerControl {
     }
 }
 
-/// Where there is no call audio (the Mac and visionOS for now, docs/assistant/voice.md 6.9): starting fails.
+/// Where there is no call audio (the Mac for now, docs/assistant/voice.md 6.9): starting fails.
 final class NoVoiceAudio: VoiceAudio {
     func start(_ format: VoiceAudioFormat, uplink: VoiceUplink, events: @escaping @MainActor (VoiceAudioEvent) -> Void) throws {
         throw VoiceAudioError.unsupported

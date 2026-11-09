@@ -165,11 +165,15 @@ nonisolated enum FeishuDocsInline {
 
 // MARK: - Blocks
 
-/// What the blocks around need to know: the gallery's images, whether text may be copied.
+/// What the blocks around need to know: the gallery's images, whether text may be copied, the manager pictures and files
+/// are read through (nil: the default's).
 struct FeishuDocsRenderContext {
     var images: [String] = []
     var selectable = true
     var openImage: (String) -> Void = { _ in }
+    var manager: String? = nil
+
+    func media(_ url: String) -> String { LarkMedia.url(url, manager: manager) }
 }
 
 extension EnvironmentValues {
@@ -358,7 +362,7 @@ struct FeishuDocsBlock: View {
                 if !assignees.isEmpty || node.attr("due") != nil {
                     HStack(spacing: Theme.Space.sm) {
                         ForEach(Array(assignees.prefix(3).enumerated()), id: \.offset) { _, p in
-                            LarkAvatarImage(name: p.name, url: p.avatarUrl, size: 16)
+                            LarkAvatarImage(name: p.name, url: p.avatarUrl.map(context.media), size: 16)
                         }
                         if let d = node.attr("due").flatMap(JSON.parseDate) {
                             Text("Due \(d.formatted(.dateTime.month().day()))").font(Theme.Font.label).foregroundStyle(.secondary)
@@ -592,7 +596,7 @@ struct FeishuDocsImage: View {
         let ratio = (w > 0 && h > 0) ? w / h : nil
         VStack(spacing: Theme.Space.sm) {
             Button { context.openImage(src) } label: {
-                LarkRemoteImage(url: src, maxPixel: 1600, contentMode: .fit)
+                LarkRemoteImage(url: context.media(src), maxPixel: 1600, contentMode: .fit)
                     .aspectRatio(ratio.map { CGFloat($0) }, contentMode: .fit)
                     .frame(maxWidth: w > 0 ? CGFloat(w) : .infinity, minHeight: ratio == nil ? 120 : nil)
                     .clipShape(.rect(cornerRadius: Theme.Radius.control, style: .continuous))
@@ -609,6 +613,7 @@ struct FeishuDocsImage: View {
 
 struct FeishuDocsFileBlock: View {
     var node: FeishuDocsNode
+    @Environment(\.feishuDocsContext) private var context
     @State private var request: (url: String, name: String)?
 
     var body: some View {
@@ -617,7 +622,7 @@ struct FeishuDocsFileBlock: View {
         let size = node.number("size").flatMap { $0 > 0 ? Int64($0).storageText : nil }
         Button {
             if let token = node.attr("token") {
-                request = ("/api/v1/lark/raw/documents/drive/files/\(token)/download", name)
+                request = (context.media("/api/v1/lark/raw/documents/drive/files/\(token)/download"), name)
             } else if let s = node.attr("sourceUrl") {
                 FeishuDocsLinks.openInFeishu(s)
             }

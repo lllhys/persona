@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -93,7 +94,7 @@ func (f *fakeExt) Request(_ context.Context, method string, params json.RawMessa
 		if !ok {
 			return extwire.Authorized{}, true, nil
 		}
-		out.OK, out.Scope = fakeScopeOpens(out.Scopes, a.Pattern, a.Path)
+		out.OK, out.Scope = fakeScopeOpens(out.Scopes, a.Pattern, a.Method, a.Path)
 		return out, true, nil
 	case extwire.MethodHubCall:
 		var c extwire.HubCall
@@ -118,8 +119,21 @@ func inboxTasks(t *testing.T, h *Hub) []prompts.InboxTask {
 	return assistantOf(t, h).svc.ActiveTasks(context.Background())
 }
 
-// fakeScopeOpens is the manager's check (extmgr scopeOpens) on the hub's patterns.
-func fakeScopeOpens(scopes []string, pattern, path string) (bool, string) {
+// fakeScopeOpens is the manager's check (extmgr scopeOpens) on the hub's patterns. On a route the hub relays to the
+// manager it checks the manager's own route for the request (extmgr Manager.authorize): here the RouteScopes one under
+// it that the request matches.
+func fakeScopeOpens(scopes []string, pattern, method, path string) (bool, string) {
+	if slices.Contains(extwire.Routes, pattern) {
+		mux := http.NewServeMux()
+		for p := range extwire.RouteScopes {
+			if _, route, _ := strings.Cut(p, " "); strings.HasPrefix(route, pattern) {
+				mux.HandleFunc(p, func(http.ResponseWriter, *http.Request) {})
+			}
+		}
+		if req, err := http.NewRequest(method, path, nil); err == nil {
+			_, pattern = mux.Handler(req)
+		}
+	}
 	scope, ok := extwire.RouteScopes[pattern]
 	if !ok {
 		return false, ""

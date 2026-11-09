@@ -222,7 +222,13 @@ func (l *statementLog) take() []string {
 // tracedWorkspaceBoard is a second handle on the test database whose pool logs the statements it sends.
 func tracedWorkspaceBoard(t *testing.T) (*DB, *statementLog) {
 	t.Helper()
-	cfg, err := pgxpool.ParseConfig(os.Getenv("PERSONA_TEST_DATABASE_URL"))
+	return tracedDB(t, os.Getenv("PERSONA_TEST_DATABASE_URL"))
+}
+
+// tracedDB is a handle on database url whose pool logs the statements it sends.
+func tracedDB(t *testing.T, url string) (*DB, *statementLog) {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		t.Fatal(err)
 	}

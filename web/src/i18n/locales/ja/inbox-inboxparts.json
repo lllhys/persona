@@ -2,6 +2,7 @@
   "source_lark": "Lark",
   "source_mail": "メール",
   "draft_title": "AI 分身が下書きした返信",
+  "draft_edited": "編集済み",
   "edit": "編集",
   "draft_expand": "全文を表示",
   "draft_collapse": "折りたたむ",

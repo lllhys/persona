@@ -51,6 +51,10 @@ export function PersonaAssistant({ sid, fresh, onToggleSidebar }: { sid?: string
   const offline = useShownOffline();
   const scope = feedCacheScope();
   const manager = chosenManager() ?? "";
+  // A reloaded conversation link needs its machine before the socket reconnects, so its saved outbox can appear.
+  useEffect(() => {
+    if (sid && !fresh && !assistant && !assistantError) void refreshAssistant().catch(() => {});
+  }, [sid, fresh, assistant, assistantError, manager]);
   const cached = useMemo(() => {
     if (sid || fresh || assistant) return null;
     const page = readFeedCache(scope);

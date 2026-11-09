@@ -150,7 +150,7 @@ function body(p: Panel) {
     case "file":
       return <FileViewerPanel key={`${p.mid}:${p.path}:${p.line ?? ""}-${p.to ?? ""}`} mid={p.mid} sid={p.sid} path={p.path} cwd={p.cwd} line={p.line} to={p.to} onClose={closePanel} />;
     case "link":
-      return <LinkPanel key={p.url} url={p.url} title={p.title} onClose={closePanel} />;
+      return <LinkPanel key={`${p.manager ?? ""} ${p.url}`} url={p.url} title={p.title} manager={p.manager} onClose={closePanel} />;
     case "task":
       return <TaskPanel key={p.todo} todoId={p.todo} onClose={closePanel} />;
     case "agent":

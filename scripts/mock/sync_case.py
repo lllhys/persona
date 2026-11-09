@@ -8,7 +8,8 @@ runner asks (POST /mock/case/step). The runner does the step's user action on sc
 module never looks at a screen. The rules for reads, writes, receipts and the socket are the web consumer's
 (web/src/views/chat/sync/fake-hub.ts), for several devices on real connections:
 
-- Devices: an app paired with the token `mock-<device>` (`token=mock-a`) is that device; any other token is the first.
+- Devices: an app paired with the token `mock-<device>` (`token=mock-a`) is that device, by its Authorization header or
+  its `?token=`; any other token is the first.
 - The chat's reads are answered from the case's hub state at once, unless the case holds them (`hold` / `release`).
 - The chat's writes (a send, a card's answer, a start) wait for their `reply` step; a receipt the reply leaves is what
   later retries with the same op id get at once.
@@ -52,6 +53,13 @@ def load(spec):
                 if c["name"] == name:
                     return c
     raise ValueError("no sync case %r" % spec)
+
+
+def token_of(h):
+    """The token a request came with: its Authorization header, or `?token=` (a browser's WebSocket cannot set headers)."""
+    from urllib.parse import parse_qs, urlparse
+    got = h.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    return got or (parse_qs(urlparse(h.path).query).get("token") or [""])[0]
 
 
 def all_cases():
@@ -209,22 +217,33 @@ class CaseHub:
 
     # ── the socket ──
 
-    def admit(self, device, timeout=APP_WAIT * 4):
+    def admit(self, device, timeout=APP_WAIT * 4, alive=lambda: True):
         """A new socket from `device`: waits while the case keeps the device disconnected, then says what it gets.
-        None: still refused when the wait ran out (the handler answers 503)."""
+        None: still refused when the wait ran out (the handler answers 503), or its app went meanwhile (`alive`: a page
+        that reloaded while its upgrade waited must not take the turn of the one it reloaded into)."""
         d = self.devices[device]
         end = self.now() + timeout
         with self.changed:
             while not d.accepting or d.socket is not None:
                 left = end - self.now()
-                if left <= 0 or self.closed:
+                if left <= 0 or self.closed or not alive():
                     return None
-                self.changed.wait(left)
+                self.changed.wait(min(left, 0.5))
             # Not one the case opens (the first, or one the app made on its own): the hub's own snapshot, cards too.
             ticket = d.next_open or {"resumed": False, "frames": [], "first": True}
             d.next_open = None
             d.accepting = False  # one socket at a time: a second one waits for this one to go
             return ticket
+
+    def unadmit(self, device, ticket):
+        """The admitted socket's app was gone before it opened (a page reloaded while its upgrade waited): the next one
+        gets what it would have."""
+        d = self.devices[device]
+        with self.changed:
+            if ticket.get("resumed") or ticket.get("frames") or not ticket.get("first"):
+                d.next_open = ticket
+            d.accepting = True
+            self.changed.notify_all()
 
     def opened(self, device, conn, ticket):
         """The admitted socket is open: the hello, the connection snapshot, the replay."""
@@ -487,20 +506,32 @@ def serve_socket(h, hub):
     import hashlib
     import socket
     import struct
-    device = hub.device_of(h.headers.get("Authorization", "").removeprefix("Bearer ").strip())
-    ticket = hub.admit(device)
+    import select
+    device = hub.device_of(token_of(h))
+
+    def alive():  # the app still waits for its upgrade (a closed connection reads as end of file)
+        try:
+            readable, _, _ = select.select([h.connection], [], [], 0)
+            return not readable or h.connection.recv(1, socket.MSG_PEEK) != b""
+        except OSError:
+            return False
+    ticket = hub.admit(device, alive=alive)
     if ticket is None:
         h.send_response(503)
         h.end_headers()
         return
     key = h.headers.get("Sec-WebSocket-Key", "")
     accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
-    h.send_response(101, "Switching Protocols")
-    h.send_header("Upgrade", "websocket")
-    h.send_header("Connection", "Upgrade")
-    h.send_header("Sec-WebSocket-Accept", accept)
-    h.end_headers()
-    h.wfile.flush()
+    try:
+        h.send_response(101, "Switching Protocols")
+        h.send_header("Upgrade", "websocket")
+        h.send_header("Connection", "Upgrade")
+        h.send_header("Sec-WebSocket-Accept", accept)
+        h.end_headers()
+        h.wfile.flush()
+    except OSError:
+        hub.unadmit(device, ticket)
+        return
     lock = threading.Lock()
 
     def frame(op, data):
@@ -522,7 +553,12 @@ def serve_socket(h, hub):
             pass
 
     conn = Conn(write, close)
-    hub.opened(device, conn, ticket)
+    try:
+        hub.opened(device, conn, ticket)
+    except OSError:  # gone while the hello went out
+        hub.gone(device, conn)
+        hub.unadmit(device, ticket)
+        return
     r = h.rfile
     try:
         while True:

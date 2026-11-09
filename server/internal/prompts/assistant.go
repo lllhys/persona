@@ -655,3 +655,6 @@ type WorkspaceSession struct {
 func RenderWorkspaceMention(w WorkspaceMention) string {
 	return render("assistant/workspace_mention", w)
 }
+
+// RenderWorkoutReport describes one consented workout, never a medical diagnosis.
+func RenderWorkoutReport(data string) string { return render("assistant/workout_report", data) }

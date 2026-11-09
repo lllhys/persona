@@ -21,6 +21,11 @@ const (
 	EventState = "devices.state"
 	// EventNode {machine_id, event, params}: one of a node's one-way events, as it came, in the order they came.
 	EventNode = "devices.event"
+	// EventDesktops Desktops: the manager's computers whose Persona Link says the user is at them now, all of them, on
+	// every presence the Persona Links say (once a minute while active), after a devices.state when it changed, and in
+	// full after each handshake. Apart from devices.state, whose every change goes to the apps as their machine list.
+	// Older hubs ignore it.
+	EventDesktops = "devices.desktops"
 	// MethodRequest {machine_id, method, params, request} → the hub's answer to a node's request the hub answers
 	// (interaction.create, assistant.lark, mcp.tools, mcp.call).
 	MethodRequest = "devices.request"
@@ -254,6 +259,26 @@ type State struct {
 	// Paths are its ways, for the admin page.
 	Paths []PathInfo `json:"paths,omitempty"`
 }
+
+// Desktops is EventDesktops' params.
+type Desktops struct {
+	Desktops []Desktop `json:"desktops"`
+}
+
+// Desktop is a computer whose Persona Link says the user is at it (docs/operations/link.md "Presence"); the hub counts
+// it as a desktop for "Phone Muted" for TTLMS from when it takes this, on its own clock (at most DesktopTTLMax), while
+// Notifies holds.
+type Desktop struct {
+	MachineID string `json:"machine_id"`
+	// Since: when this run of presence began, on the manager's clock: only for the apps to show.
+	Since    time.Time `json:"since"`
+	TTLMS    int64     `json:"ttl_ms"`
+	Notifies bool      `json:"notifies"`
+}
+
+// DesktopTTLMax caps a desktop's TTL, twice Persona Link's presence TTL (link.PresenceTTL): however a manager counts,
+// no presence keeps phones quiet longer without being said again.
+const DesktopTTLMax = 4 * time.Minute
 
 // PathInfo is a path as the admin page and the machine list show it.
 type PathInfo struct {

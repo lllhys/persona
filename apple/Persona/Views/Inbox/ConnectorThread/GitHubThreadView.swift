@@ -116,7 +116,7 @@ struct GitHubThreadView: View {
     }
 
     private func open(_ raw: String) {
-        if let url = URL(string: raw) { link = LinkTarget(url: url) }
+        if let url = URL(string: raw) { link = LinkTarget(url: url, manager: app.linkManager(item.manager)) }
     }
 
     private func quote(_ m: ThreadMessage) {

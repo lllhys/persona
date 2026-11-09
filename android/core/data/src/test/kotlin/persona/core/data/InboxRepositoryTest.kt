@@ -730,6 +730,30 @@ class InboxRepositoryTest {
     }
 
     /**
+     * A Moments post linked in another manager's chat is read through that manager; the default's names none ("", sent
+     * as no manager), and with no manager known the read is as it was.
+     */
+    @Test fun aMomentsLinkIsReadThroughTheManagerItWasOpenedUnder() = runBlocking {
+        val directory = Files.createTempDirectory("inbox-managers-moments-test").toFile()
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            AssistantManagerChoice.choose("hub", null, "assistant")
+            val transport = FakeTransport()
+            val repository = repository(transport, directory, owner, FakeHub())
+            withTimeout(5_000) { repository.snapshot.first { it.contentSource != null } }
+            assertEquals("p1", repository.momentsPost("p1", "m-2").id)
+            repository.momentsComments("p1", "m-2")
+            repository.momentsPost("p1", "assistant")
+            repository.momentsPost("p1")
+            assertEquals(listOf("post" to "m-2", "comments" to "m-2", "post" to "", "post" to null), transport.momentsReads)
+        } finally {
+            AssistantManagerChoice.reset(); AssistantManagerChoice.forgetItems()
+            owner.coroutineContext[Job]!!.cancelAndJoin()
+            directory.deleteRecursively()
+        }
+    }
+
+    /**
      * A chat's send (ReplyTarget.Lark) names the manager of the one item of that chat; with none known it names nothing,
      * so the chat page's pin still decides (an empty manager would send it to the default).
      */
@@ -1029,7 +1053,8 @@ class InboxRepositoryTest {
             repository.removePolicy("p1")
             assertEquals(listOf("GET null", "GET m-3", "DELETE p1 null"), transport.policyCalls.takeLast(3))
 
-            // From another manager's "Rules" and "Muted": read and changed on it (the default's names none), moving only its items.
+            // From another manager's "Rules" and "Muted": read and changed on it, moving only its items. A stamped rule or
+            // mute names its manager even when it is the default's.
             val during = mutableListOf<Map<String, String>>()
             transport.onUpdatePolicy = { _, _, _ -> during += sections(); buildJsonObject { put("applied", 1) } }
             repository.inboxPolicies(manager = "m-3")
@@ -1039,9 +1064,27 @@ class InboxRepositoryTest {
             repository.inboxMutes("m-3")
             repository.unmute("u1", "m-3")
             repository.unmute("u1")
-            assertEquals(listOf("GET m-3", "PATCH p1 fyi  m-3", "DELETE p1 m-3", "DELETE p1 ", "GET mutes m-3", "DELETE mute u1 m-3",
+            assertEquals(listOf("GET m-3", "PATCH p1 fyi  m-3", "DELETE p1 m-3", "DELETE p1 assistant", "GET mutes m-3", "DELETE mute u1 m-3",
                 "DELETE mute u1 null"), transport.policyCalls.takeLast(7))
             assertEquals("fyi/fyi/false" to "noise/noise/false", during.single().let { it["d"] to it["a"] })
+
+            // m-3 became the default after its lists were read: Remove and Unmute still name it.
+            AssistantManagerChoice.choose(null, null, "m-3")
+            try {
+                repository.removePolicy("p1", "m-3")
+                repository.unmute("u1", "m-3")
+                assertEquals(listOf("DELETE p1 m-3", "DELETE mute u1 m-3"), transport.policyCalls.takeLast(2))
+                // Each manager's lists name it now that it is the default, and so does removing a rule opened from "Rules";
+                // the rule of the default's item names none, as before.
+                repository.inboxPolicies(manager = "m-3")
+                repository.inboxMutes("m-3")
+                repository.savePolicy(InboxPolicyTarget.of(checkNotNull(saved).copy(manager = "m-3")), InboxPolicyTier.None, InboxPolicyTwin.None)
+                repository.inboxPolicies(d)
+                repository.savePolicy(InboxPolicyTarget.of(d, d.mutes.single()).copy(policy = saved), InboxPolicyTier.None, InboxPolicyTwin.None)
+                assertEquals(listOf("GET m-3", "GET mutes m-3", "PATCH p1   m-3", "GET ", "PATCH p1   "), transport.policyCalls.takeLast(5))
+            } finally {
+                AssistantManagerChoice.reset()
+            }
         } finally {
             owner.coroutineContext[Job]!!.cancelAndJoin()
             directory.deleteRecursively()
@@ -1251,6 +1294,12 @@ class InboxRepositoryTest {
         override suspend fun pins() = JsonObject(emptyMap())
         override suspend fun mutes() = JsonObject(emptyMap())
         override suspend fun media(ref: String) = byteArrayOf(1).also { mediaRefs += ref }
+        /** Each Moments read with the manager its request names (RequestManager). */
+        val momentsReads = mutableListOf<Pair<String, String?>>()
+        override suspend fun momentsPost(postId: String) =
+            buildJsonObject { put("id", postId) }.also { momentsReads += "post" to currentCoroutineContext()[RequestManager]?.id }
+        override suspend fun momentsComments(postId: String) =
+            buildJsonObject { put("comments", JsonArray(emptyList())) }.also { momentsReads += "comments" to currentCoroutineContext()[RequestManager]?.id }
         val avatarRefs = mutableListOf<String>()
         override suspend fun avatar(ref: String) = media(ref).also { avatarRefs += ref }
         var onMute: suspend (String, String) -> JsonObject = { _, _ -> JsonObject(emptyMap()) }

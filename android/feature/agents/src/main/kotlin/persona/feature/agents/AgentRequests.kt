@@ -175,7 +175,7 @@ internal fun RequestDetail(
             persona.feature.chat.ChatLinkHost(Modifier.weight(1f),
                 onContext = { feedback?.notice(openForContext) },
                 onEdit = { _, _ -> feedback?.notice(openForEdit) },
-                onVisibilityChanged = { linkVisible = it }) { inset ->
+                onVisibilityChanged = { linkVisible = it }, manager = request.manager) { inset ->
                 Column(Modifier.fillMaxSize().padding(bottom = inset).imePadding(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     JRow(request.headline.text(), subtitle = request.sessionTitle, leadingIcon = request.decisionKind.icon)
                     // The editor below announces "Sending" itself; announcing it here too would say it twice.

@@ -736,6 +736,7 @@ struct InboxAgentRow: View {
 struct InboxDetailView: View {
     var item: InboxItem
     var accounts: [MailAccount]
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var drafting = false
     @State private var handingOff = false
@@ -809,9 +810,9 @@ struct InboxDetailView: View {
         } else if current.connector != nil {
             InboxConnectorDetailView(item: current)
         } else if let m = current.moment {
-            LarkMomentsPostView(postID: m.postID, pushed: true) // the post and its comments, as a shared Moments card opens
+            LarkMomentsPostView(postID: m.postID, pushed: true, manager: model.linkManager(current.manager)) // the post and its comments, as a shared Moments card opens
         } else if let c = item.larkConversation {
-            LarkChatView(conversation: c)
+            LarkChatView(conversation: c, manager: model.linkManager(current.manager))
         } else if let m = item.mailSummary {
             MailDetailView(summary: m, accounts: accounts)
         } else {
@@ -823,22 +824,28 @@ struct InboxDetailView: View {
 /// The pages the inbox opens, in either layout (`SplitNavigation`).
 struct InboxDestinations: ViewModifier {
     var accounts: [MailAccount]
+    @Environment(AppModel.self) private var model
     @Environment(\.feishuOpen) private var feishuOpen
 
     // Links on these pages open in the app (feishuHandlesLinks) wherever the stack is: the shell pushes them onto its
-    // own stack, where the inbox page's handler does not reach.
+    // own stack, where the inbox page's handler does not reach. Those on an item's pages, and on a document or post
+    // opened from one, read through the item's manager.
     func body(content: Content) -> some View {
         content
             // Keyed by the item, as on the Mac: in the split the list's links replace the detail column's page, and an
             // unkeyed one is updated in place with the last item's state — a Feishu chat kept the chat before's messages
             // and draft under the new chat's title (#885).
             .navigationDestination(for: InboxItem.self) {
-                InboxDetailView(item: $0, accounts: accounts).id($0.id).splitDetailPage().feishuHandlesLinks(feishuOpen)
+                InboxDetailView(item: $0, accounts: accounts).id($0.id).splitDetailPage()
+                    .feishuHandlesLinks(feishuOpen, manager: model.linkManager($0.manager))
             }
-            .navigationDestination(for: FeishuRoute.self) { FeishuRouteView(route: $0).splitDetailPage().feishuHandlesLinks(feishuOpen) }
+            .navigationDestination(for: FeishuRoute.self) {
+                FeishuRouteView(route: $0).splitDetailPage().feishuHandlesLinks(feishuOpen, manager: $0.manager)
+            }
             // view original and the chain's links of an event (inbox phase 1).
             .navigationDestination(for: InboxSourceRoute.self) {
-                InboxSourcePage(route: $0, accounts: accounts).splitDetailPage().feishuHandlesLinks(feishuOpen)
+                InboxSourcePage(route: $0, accounts: accounts).splitDetailPage()
+                    .feishuHandlesLinks(feishuOpen, manager: model.linkManager($0.item.manager))
             }
             .extensionPushDestination()
     }

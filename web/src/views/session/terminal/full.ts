@@ -11,7 +11,7 @@ import { t as tr } from "../../../i18n";
 import { openLink } from "../../../lib/links";
 import { followRoute, focusAddress, focusGuard, decideFocus, parseFocus, type HerdrFocus } from "../../../lib/herdr-focus";
 import { navigate } from "../../../lib/router";
-import { getState, isOpen, onHubEvent, send } from "../../../lib/store";
+import { getSession, getState, isOpen, onHubEvent, send } from "../../../lib/store";
 import { currentPlatform, passesToApp } from "../../../lib/shortcuts";
 import { herdrOwnsKey, isCtrlV, linkOpens, rightClickRoute, type RightClick } from "../../../lib/terminal-conflicts";
 import {
@@ -761,7 +761,7 @@ export class FullFeed {
   private openWebLink(e: MouseEvent, uri: string) {
     if (!linkOpens(e, this.mouseTracked, this.pointer)) return; // the click is herdr's (lib/terminal-conflicts.ts)
     const url = webLink(uri);
-    if (url) openLink(url);
+    if (url) openLink(url, undefined, getSession(this.mid, this.target)?.manager);
   }
 
   // ── the clipboard ─────────────────────────────────────

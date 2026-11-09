@@ -66,6 +66,7 @@ type Machine struct {
 	// rows are the sessions' rows as last pushed, by id (encodeKept), under rowsMu; never changed in place.
 	rowsMu   sync.Mutex
 	rows     map[string]keptRow
+	rowLen   atomic.Int64   // the average length of the rows encodeKept gave last (rowsSize)
 	watchers map[string]int // session id -> subscribed clients
 	// What the node was told about each session's watch (syncWatch): watchMu orders the session.watch /
 	// session.unwatch calls per session (a 1-slot channel, so a wait for it can end with the caller's ctx), nodeWatch

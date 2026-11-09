@@ -1,6 +1,8 @@
 // Package serve runs a connector in a program of its own, for the hub (connector/proc): the hub starts the program
 // and talks to it over its stdin / stdout with the hub↔node JSON-lines RPC (internal/rpc). One connector per program.
-// A connector whose dependencies would make personad much bigger lives this way (the Telegram extension, #1704).
+// Connector programs are written on the Go SDK now (sdk/go/ext, docs/protocol/connector-protocol.md): this runner (Main,
+// MainWith, Serve) serves only the connector conformance kit (connector/conformance) and tests, and connector/proc
+// speaks the method names and types here.
 //
 // The hub calls the methods below; the program calls back for its secret (secrets.*: the hub binds them to this
 // program's connector) and tells the hub what changed (the changed event). Nothing here logs what crosses the pipe.
@@ -8,8 +10,8 @@
 //
 // A program answers two openings: init and the bare method names (connector protocol 2 on its own), and the plugin
 // protocol's initialize with the same methods in the connector namespace (connector.status, …; docs/extensions/extensions.md).
-// The extension manager runs connector programs as plugins (connector/proc with a Link). connector/proc still opens a
-// program it starts itself (Config.Path) with init, as its tests and the conformance kit do, so both openings stay.
+// The extension manager runs connector programs as plugins (connector/proc with a Link). Only connector/proc's own tests
+// still start a program with init (Config.Path), and the conformance kit checks both openings, so both stay.
 package serve
 
 import (

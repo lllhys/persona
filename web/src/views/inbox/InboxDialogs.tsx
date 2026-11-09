@@ -8,8 +8,8 @@ import { startConversation } from "../../lib/assistant-start";
 import { adoptConversation, askPersonaOf, noteSent, sendToSession } from "../../lib/outbox";
 import { sessionTitle, stateOf, uuid } from "../../lib/format";
 import {
-  agentDraft, connectorReference, conversationRoute, docChangeLine, HANDOFF_PRESETS, handOffMessage, handOffToMain, isLark, itemKey, itemPath, itemRequest, sendReply,
-  setDone, unsentReplies, type DocChange, type InboxItem,
+  agentDraft, connectorReference, conversationRoute, docChangeKey, docChangeLine, HANDOFF_PRESETS, handOffMessage, handOffToMain, isLark, itemKey, itemPath, itemRequest, keepDropped, keptChanges, sendReply, useDroppedChanges,
+  setDone, unsentReplies, type InboxItem,
 } from "../../lib/inbox";
 import { isTransient } from "../../lib/ops";
 import { machineWithHub } from "../../lib/mesh";
@@ -22,8 +22,6 @@ import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
 import { Spark } from "./InboxParts";
 import { byTime } from "../../lib/times";
-
-const changeKey = (c: DocChange) => `${c.ref}|${c.field}`;
 
 export function draftTitle(it: InboxItem): string {
   if (it.moment) return t("inbox-inboxdialogs.title_moment");
@@ -50,13 +48,15 @@ function DraftEditor({ item, onClose }: { item: InboxItem; onClose: () => void }
   const [instruction, setInstruction] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [dropped, setDropped] = useState<Set<string>>(new Set());
+  // unticked proposed changes are kept with the text: the item's draft card shows and sends the same
+  const dropped = useDroppedChanges(key);
   const proposed = agentText ? item.agent?.changes ?? [] : [];
-  const kept = proposed.filter((c) => !dropped.has(changeKey(c)));
+  const kept = keptChanges(item, dropped);
   const generation = useRef(0);
   const agent = item.agent;
 
-  // Save as text changes: navigation can unmount without onClose, and sendReply owns clearing/restoring on send.
+  // Save as text changes (the draft card shows it): navigation can unmount without onClose, and sendReply owns
+  // clearing/restoring on send.
   const keepText = (value: string) => {
     unsentReplies.set(key, value);
     setText(value);
@@ -87,8 +87,9 @@ function DraftEditor({ item, onClose }: { item: InboxItem; onClose: () => void }
   }, [key]);
 
   const cancel = () => {
-    // Like manual mail, Cancel discards; incidental dismissal keeps the reply.
+    // Like manual mail, Cancel discards; incidental dismissal keeps the reply and the unticked changes.
     unsentReplies.delete(key);
+    keepDropped(key, []);
     onClose();
   };
 
@@ -134,18 +135,13 @@ function DraftEditor({ item, onClose }: { item: InboxItem; onClose: () => void }
         <div className="mb-3">
           <p className="mb-1 text-[11.5px] font-medium text-ink-3">{t("inbox-inboxdialogs.changes_on_send")}</p>
           {proposed.map((c) => {
-            const on = !dropped.has(changeKey(c));
+            const on = !dropped.includes(docChangeKey(c));
             return (
-              <label key={changeKey(c)} className="flex cursor-pointer items-center gap-2 py-1 text-[12.5px] text-ink">
+              <label key={docChangeKey(c)} className="flex cursor-pointer items-center gap-2 py-1 text-[12.5px] text-ink">
                 <input
                   type="checkbox"
                   checked={on}
-                  onChange={() => setDropped((d) => {
-                    const n = new Set(d);
-                    if (on) n.add(changeKey(c));
-                    else n.delete(changeKey(c));
-                    return n;
-                  })}
+                  onChange={() => keepDropped(key, on ? [...dropped, docChangeKey(c)] : dropped.filter((k) => k !== docChangeKey(c)))}
                   className="size-3.5 accent-[var(--accent)]"
                 />
                 <span className={cx("truncate", !on && "text-ink-3 line-through")}>{docChangeLine(c, item.doc)}</span>

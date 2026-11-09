@@ -73,6 +73,10 @@ private class AssistantSendState {
     val started = mutableStateOf<StarterStart?>(null)
 }
 
+/** New chat's blank page (#2804): [from] is the conversation it was opened on, where Back returns; [started] is the
+ *  conversation its first message started, kept so a retry after that message failed does not start another. */
+private data class NewChatStart(val from: SessionKey?, val started: SessionKey? = null)
+
 /** Supply the shared chat content when available, or use the shell's ChatRoute entry. */
 @Composable
 fun AssistantScreen(
@@ -169,6 +173,8 @@ fun AssistantScreen(
     var openedMain by rememberSaveable(managerChoice.hubId, managerChoice.shown) { mutableStateOf(false) }
     var proactiveOpen by rememberSaveable(managerChoice.hubId, managerChoice.shown) { mutableStateOf(false) }
     var settingsOpen by rememberSaveable(managerChoice.hubId, managerChoice.shown) { mutableStateOf(false) }
+    // Per manager, so switching manager leaves New chat's page.
+    var newChat by remember(managerChoice.hubId, managerChoice.shown) { mutableStateOf<NewChatStart?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
     var ending by remember { mutableStateOf<Session?>(null) }
     var endingBusy by remember { mutableStateOf(false) }
@@ -262,6 +268,7 @@ fun AssistantScreen(
         machines, assistantMachine)
     SideEffect { sharedSidebar?.personaState = faceState; sharedSidebar?.active = active }
     fun openConversation(key: SessionKey) {
+        newChat = null
         if (key == PendingMainConversation) {
             viewingMainQueue = true
             return
@@ -286,6 +293,7 @@ fun AssistantScreen(
     }
     fun newConversation() {
         if (sending) return
+        newChat = null
         clearConversation()
         scope.launch { drawerOpen = false }
     }
@@ -366,23 +374,17 @@ fun AssistantScreen(
             newConversation()
             return
         }
-        sending = true
-        scope.launch {
-            try {
-                // Explicit branches are separate from all home and external main-message entry points.
-                openConversation(startConversation())
-                drawerOpen = false
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                // A coded refusal (no computer, Claude Code missing…) says what is missing instead of "Can't start a chat right now".
-                val coded = persona.core.designsystem.operationFeedback(error).takeIf { it.action.readinessAction() != null }
-                scope.launch { snackbar.showSnackbar(coded?.text?.resolve(context) ?: resources.getString(R.string.assistant_new_conversation_failed)) }
-                if (coded != null && readinessOn) mainReadiness.refresh()
-            } finally {
-                sending = false
-            }
-        }
+        // A blank page only (#2804): the chat starts with its first message (submit), so New chat left without one
+        // leaves no empty chat on the hub. Back returns to the conversation it was tapped on.
+        val from = newChat?.from ?: active
+        newConversation()
+        newChat = NewChatStart(from)
+    }
+    suspend fun newChatRefused(error: Exception) {
+        // A coded refusal (no computer, Claude Code missing…) says what is missing instead of "Can't start a chat right now".
+        val coded = persona.core.designsystem.operationFeedback(error).takeIf { it.action.readinessAction() != null }
+        scope.launch { snackbar.showSnackbar(coded?.text?.resolve(context) ?: resources.getString(R.string.assistant_new_conversation_failed)) }
+        if (coded != null && readinessOn) mainReadiness.refresh()
     }
     fun submit() {
         // Not ready (setup): the step opens instead and the draft stays; nothing is queued (docs/assistant/onboarding.md 4.4).
@@ -395,6 +397,8 @@ fun AssistantScreen(
         // A launcher picked on the new-conversation page: a conversation of its own on it, then the message to it.
         val launcher = starterLauncher.takeIf { active == null }
         val startWith = startConversationWith
+        // New chat's page: the message starts that chat and never goes to the main one.
+        val fresh = newChat.takeIf { active == null }
         // Capture the concrete owner before any lookup; a later default change cannot retarget this message.
         val forManager = managerChoice.manager
         val submittedManager = managerChoice.shown
@@ -412,12 +416,22 @@ fun AssistantScreen(
             try {
                 // Started once: a retry after the message failed sends to the same new conversation, while the
                 // launcher is still the one that started it.
-                val target = if (launcher != null && startWith != null)
-                    starterTarget(launcher, starterStarted, startWith).also { starterStarted = it }.session
+                val target = when {
+                    launcher != null && startWith != null ->
+                        starterTarget(launcher, starterStarted, startWith).also { starterStarted = it }.session
+                    fresh != null -> fresh.started ?: try {
+                        startConversation().also { newChat = fresh.copy(started = it) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        newChatRefused(error)
+                        return@launch
+                    }
                     // Resolve this owner explicitly; legacy repositories retain the default main queue.
-                    else active ?: if (conversationsOf != null) {
+                    else -> active ?: if (conversationsOf != null) {
                         managerMainTarget(submittedManager, shownSnapshot, conversationsOf::mainConversationOf)
                     } else forManager?.let { error("managers unavailable") }
+                }
                 sendAssistantMessage(mainConversationSender, messageSender, target, submitted, operationId)
                 // Clear the submitted assistant's editor after commit, even while another assistant is shown.
                 composer.clearIfUnchanged(sentDraft)
@@ -520,7 +534,7 @@ fun AssistantScreen(
             // The home's composer (an embedded conversation keeps its composer inside the shared chat page); what is
             // sent there goes to the main conversation, as from any home entry.
             proactiveOpen = false; settingsOpen = false; drawerOpen = false
-            if (activeSession != null && hasChat && !demo) newConversation()
+            if ((activeSession != null || newChat != null) && hasChat && !demo) newConversation()
             // After the tab's first layout and the saved draft: the text field has to be attached (the old app waited 300 ms).
             kotlinx.coroutines.withTimeoutOrNull(3_000) { snapshotFlow { draftEditor == null || savedComposer != null }.first { it } }
             kotlinx.coroutines.delay(300)
@@ -531,6 +545,13 @@ fun AssistantScreen(
     }
     BackHandler(drawerOpen || active != null || viewingMainQueue) {
         if (drawerOpen) scope.launch { drawerOpen = false } else newConversation()
+    }
+    // Back on New chat's page undoes it: the conversation it was tapped on comes back (nothing is started until a message).
+    BackHandler(newChat != null && active == null && !viewingMainQueue && !drawerOpen) {
+        if (sending) return@BackHandler
+        val from = newChat?.from
+        newConversation()
+        from?.let(::openConversation)
     }
     val sidebar: @Composable () -> Unit = {
         AssistantDrawer(query, { query = it }, groups, active, snapshot.mainSession != null,
@@ -676,7 +697,7 @@ fun AssistantScreen(
             } else {
                 AssistantHome(enabled = !sending && draftReady && composer.ready, machines = machines,
                     phoneToolsAvailable = phoneToolsAvailable, contentPadding = padding, demo = demo,
-                    setup = blocking != null, hubSuggestions = readiness?.suggestions?.takeIf { it.isNotEmpty() },
+                    setup = blocking != null, mainNote = newChat == null, hubSuggestions = readiness?.suggestions?.takeIf { it.isNotEmpty() },
                     onLocalSuggestion = { readinessHelp = ReadinessHelp.ofSuggestion(it) },
                     onSuggestion = {
                         composer.value = androidx.compose.ui.text.input.TextFieldValue(it, androidx.compose.ui.text.TextRange(it.length))
@@ -826,6 +847,8 @@ private fun AssistantHome(
     needsYou: NeedsYou = NeedsYou(), onNeed: ((NeedsYouLine) -> Unit)? = null, onMore: () -> Unit = {},
     /** The main conversation still misses a step (docs/assistant/onboarding.md 4.4): the lead says so. */
     setup: Boolean = false,
+    /** What is sent here goes to the main conversation (not on New chat's page): the lead's note says so. */
+    mainNote: Boolean = true,
     /** The hub's example questions (readiness `suggestions`), in place of the app's own; null: the app's. */
     hubSuggestions: List<ReadinessSuggestion>? = null,
     onLocalSuggestion: (String) -> Unit = {},
@@ -842,7 +865,7 @@ private fun AssistantHome(
                 Text(stringResource(greeting(LocalTime.now().hour)), style = PersonaTheme.type.largeTitle, color = PersonaTheme.palette.ink)
                 Text(stringResource(if (setup) R.string.assistant_home_setup_lead else R.string.assistant_home_lead),
                     style = PersonaTheme.type.voice, color = PersonaTheme.palette.ink2)
-                if (!setup) Text(stringResource(R.string.assistant_home_note), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3)
+                if (!setup && mainNote) Text(stringResource(R.string.assistant_home_note), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3)
             }
         }
         // What waits on the user comes before what Persona could do: the suggestions stay under it.

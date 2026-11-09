@@ -6,7 +6,7 @@
 // The pure parts (filters, sections, labels, the "Hand to AI" message, Feishu message parts) are plain functions so the
 // tests can run them without a DOM.
 
-import { itemHeaders, otherManager, sameManager } from "./manager-choice";
+import { itemHeaders, otherManager, sameManager, stampedHeaders } from "./manager-choice";
 import { formatDate, t } from "../i18n";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, ApiError, enc, errorText, getToken } from "./api";
@@ -295,11 +295,12 @@ export function tightCJK(text: string): string {
   return text.replace(/(?<=\p{Script=Han}) (?=\p{Script=Han})/gu, "");
 }
 
-/** A connector item's `open_url` as the browser opens it; an sms: one carries the AI twin's draft as its body. */
+/** A connector item's `open_url` as the browser opens it; an sms: one carries the reply as its body (the kept edit, or
+ *  the AI twin's draft). */
 export function openURL(it: InboxItem): string | undefined {
   const raw = it.connector?.open_url;
   if (!raw) return undefined;
-  const draft = agentDraft(it);
+  const draft = unsentReplies.get(itemKey(it)) ?? agentDraft(it);
   return raw.startsWith("sms:") && draft ? `${raw}&body=${encodeURIComponent(draft)}` : raw;
 }
 
@@ -373,6 +374,16 @@ export function sourceLine(it: InboxItem): string {
 
 export function agentDraft(it: InboxItem): string | undefined {
   return it.agent?.state === "drafted" && it.agent.draft ? it.agent.draft : undefined;
+}
+
+/** A proposed status move's key: its row and field. */
+export const docChangeKey = (c: DocChange) => `${c.ref}|${c.field}`;
+
+/** The AI twin's proposed status moves the user left ticked (`dropped`: the unticked ones' docChangeKey): what goes
+ *  with the reply. */
+export function keptChanges(it: InboxItem, dropped: readonly string[]): DocChange[] {
+  const changes = agentDraft(it) ? it.agent?.changes ?? [] : [];
+  return dropped.length ? changes.filter((c) => !dropped.includes(docChangeKey(c))) : changes;
 }
 
 export function agentWorking(it: InboxItem): boolean {
@@ -867,8 +878,60 @@ interface InboxState {
 
 let state: InboxState = { items: [], triage: null, loaded: false, loading: false, error: "", sending: [], moving: [] };
 const listeners = new Set<() => void>();
-/** Unsent reply edits and accepted generations, by item (itemKey); send clears them and a failure restores its text. */
-export const unsentReplies = new Map<string, string>();
+/** A Map that tells its watchers when it changes. The unsent replies live outside InboxState: a keystroke in the draft
+ *  dialog redraws only the card of that item (useUnsentReply), not every list and badge reading the inbox. */
+class WatchedMap<V> extends Map<string, V> {
+  readonly #watchers = new Set<() => void>();
+  /** Subscribes to every change; returns the unsubscribe (useSyncExternalStore's subscribe). */
+  readonly watch = (l: () => void) => {
+    this.#watchers.add(l);
+    return () => {
+      this.#watchers.delete(l);
+    };
+  };
+  override set(key: string, value: V): this {
+    super.set(key, value);
+    this.#watchers.forEach((l) => l());
+    return this;
+  }
+  override delete(key: string): boolean {
+    const had = super.delete(key);
+    if (had) this.#watchers.forEach((l) => l());
+    return had;
+  }
+  override clear() {
+    if (!this.size) return;
+    super.clear();
+    this.#watchers.forEach((l) => l());
+  }
+}
+
+/** Unsent reply edits and accepted generations, by item (itemKey): the draft dialog keeps them when it closes without
+ *  Cancel and the item's draft card shows and sends them. Send clears them and a failure restores its text. */
+export const unsentReplies = new WatchedMap<string>();
+/** The proposed status moves the user unticked in the draft dialog, by item (itemKey), as docChangeKey; kept, cleared
+ *  and restored with the item's text. */
+export const droppedChanges = new WatchedMap<readonly string[]>();
+
+/** Keeps the item's unticked proposed changes (none: forgets them). */
+export function keepDropped(key: string, dropped: readonly string[]) {
+  if (dropped.length) droppedChanges.set(key, dropped);
+  else droppedChanges.delete(key);
+}
+
+const NONE: readonly string[] = [];
+
+/** The item's kept reply edit (undefined: none, the AI twin's draft stands); redraws when it changes. */
+export function useUnsentReply(key: string): string | undefined {
+  const read = () => unsentReplies.get(key);
+  return useSyncExternalStore(unsentReplies.watch, read, read);
+}
+
+/** The item's unticked proposed changes (docChangeKey); redraws when they change. */
+export function useDroppedChanges(key: string): readonly string[] {
+  const read = () => droppedChanges.get(key) ?? NONE;
+  return useSyncExternalStore(droppedChanges.watch, read, read);
+}
 
 // Every request about an item names its manager where it is made (itemRequest): two managers may list the same id, so
 // nothing is looked up by path.
@@ -1125,15 +1188,16 @@ export async function muteItem(item: InboxItem, o: InboxMuteOption): Promise<voi
 }
 
 /** What the user muted, in every source (GET /api/v1/inbox/mutes), newest first. `manager`: whose mutes (each manager
- *  keeps its own; stamped on each); none: the default's. */
+ *  keeps its own; named even when it is the default, which may move before an Unmute; stamped on each); none: the
+ *  default's, nothing named. */
 export async function listInboxMutes(manager?: string): Promise<InboxMute[]> {
-  const r = await api<{ mutes?: InboxMute[] }>("/inbox/mutes", { headers: itemHeaders(manager) });
+  const r = await api<{ mutes?: InboxMute[] }>("/inbox/mutes", { headers: stampedHeaders(manager) });
   return sortMutes((r.mutes ?? []).map((m) => (manager ? { ...m, manager } : m)));
 }
 
-/** "Unmute" (`mute`'s manager's): only what comes in later comes back. */
+/** "Unmute" (`mute`'s manager's, named even when it is the default now): only what comes in later comes back. */
 export function unmuteInbox(mute: Pick<InboxMute, "id" | "manager">): Promise<unknown> {
-  return api(`/inbox/mutes/${enc(mute.id)}`, { method: "DELETE", headers: itemHeaders(mute.manager) });
+  return api(`/inbox/mutes/${enc(mute.id)}`, { method: "DELETE", headers: stampedHeaders(mute.manager) });
 }
 
 /** A policy's tier (docs/assistant/inbox.md "Policies"): "" leaves the tier to triage. */
@@ -1199,9 +1263,10 @@ function policyReaches(source: string, o: InboxMuteOption, it: InboxItem, manage
   return muteCovers(source, o, it, manager) && Boolean(it.tier) && statusOf(it) !== "working";
 }
 
-/** The policies, newest first. `manager`: whose rules (stamped on each); none: the default's. */
+/** The policies, newest first. `manager`: whose rules (named even when it is the default, which may move before a
+ *  Remove; stamped on each); none: the default's, nothing named. */
 export async function listInboxPolicies(manager?: string): Promise<InboxPolicy[]> {
-  const r = await api<{ policies?: InboxPolicy[] }>("/inbox/policies", { headers: itemHeaders(manager) });
+  const r = await api<{ policies?: InboxPolicy[] }>("/inbox/policies", { headers: stampedHeaders(manager) });
   const ts = (p: InboxPolicy) => (p.created_at ? Date.parse(p.created_at) || 0 : 0);
   return [...(r.policies ?? [])].map((p) => (manager ? { ...p, manager } : p)).sort((a, b) => ts(b) - ts(a));
 }
@@ -1210,9 +1275,9 @@ export async function listInboxPolicies(manager?: string): Promise<InboxPolicy[]
  * Set the policy of what an item has under an option's tag (POST /api/v1/inbox/policies), or change it (PATCH, with
  * `id`): the open items it covers take its tier at once ("Your rule: <name>"); the hub does the same and the next
  * push confirms it; a failure puts them back. Setting neither part removes the policy. Resolves to the policy, or null
- * when the hub refused.
+ * when the hub refused. `stamped`: name `manager` even when it is the default (a rule a list read from each manager).
  */
-export async function saveInboxPolicy(target: { item?: InboxItem; option: InboxMuteOption; source: string; id?: string; manager?: string }, tier: PolicyTier, twin: PolicyTwin): Promise<InboxPolicy | null> {
+export async function saveInboxPolicy(target: { item?: InboxItem; option: InboxMuteOption; source: string; id?: string; manager?: string; stamped?: boolean }, tier: PolicyTier, twin: PolicyTwin): Promise<InboxPolicy | null> {
   const { option: o, source } = target;
   // the rule is the manager's whose item (or rule) it is: it reaches that manager's items only
   const owner = { manager: target.manager ?? target.item?.manager };
@@ -1220,7 +1285,7 @@ export async function saveInboxPolicy(target: { item?: InboxItem; option: InboxM
   const reason = t("lib-inbox.policy_reason", { name: o.name });
   const statusFor = (it: InboxItem) => (it.status && it.status !== "working" ? tier || it.status : it.status);
   set({ items: state.items.map((it) => (before.has(itemKey(it)) && it.tier !== tier ? { ...it, tier, status: statusFor(it), reason, urgent: tier === "action" ? it.urgent : false } : it)) });
-  const headers = itemHeaders(owner.manager);
+  const headers = target.stamped ? stampedHeaders(owner.manager) : itemHeaders(owner.manager);
   try {
     const r = target.id
       ? await api<{ policy: InboxPolicy }>(`/inbox/policies/${enc(target.id)}`, { method: "PATCH", json: { tier, twin }, headers })
@@ -1234,9 +1299,10 @@ export async function saveInboxPolicy(target: { item?: InboxItem; option: InboxM
   }
 }
 
-/** Remove a policy (`policy`'s manager's): items keep the tier it gave until new content is triaged again. */
+/** Remove a policy (`policy`'s manager's, named even when it is the default now): items keep the tier it gave until new
+ *  content is triaged again. */
 export function removeInboxPolicy(policy: Pick<InboxPolicy, "id" | "manager">): Promise<unknown> {
-  return api(`/inbox/policies/${enc(policy.id)}`, { method: "DELETE", headers: itemHeaders(policy.manager) });
+  return api(`/inbox/policies/${enc(policy.id)}`, { method: "DELETE", headers: stampedHeaders(policy.manager) });
 }
 
 /** What a bulk action does (POST /api/v1/inbox/bulk): `dismiss` is Clean up all (done_by=dismissed), `done` files a section
@@ -1365,7 +1431,8 @@ export async function setAllDone(items: InboxItem[], action: BulkAction | boolea
 }
 
 /** "Send": the hub replies in the chat / by mail / in the document (moving the rows' status in `changes` first) and
- * files the item as done. Filed at once; a failure puts the item back and keeps the text for the draft dialog. */
+ * files the item as done. Filed at once; a failure puts the item back and keeps the text and the unticked changes for
+ * the draft card and dialog. */
 export async function sendReply(item: InboxItem, text: string, changes: DocChange[] = []): Promise<boolean> {
   const key = itemKey(item);
   if (state.sending.includes(key)) return false;
@@ -1376,7 +1443,9 @@ export async function sendReply(item: InboxItem, text: string, changes: DocChang
   // (Also for an item the list does not have yet: a list that left before the send must not bring it in open.)
   putMark(key, mark);
   patchItem(item, (it) => ({ ...it, ...mark }));
+  const dropped = droppedChanges.get(key);
   unsentReplies.delete(key);
+  droppedChanges.delete(key);
   try {
     const r = await api<InboxItem>(`${itemPath(item.id)}/reply`, { method: "POST", json: { text, changes: changes.length ? changes : undefined }, headers: itemRequest(item) });
     const hub = r?.id === item.id ? keepStamp(r, item) : undefined;
@@ -1388,6 +1457,7 @@ export async function sendReply(item: InboxItem, text: string, changes: DocChang
     settleMark(key, mark, false);
     undoMarks(new Map([[key, before ?? item]]));
     if (text) unsentReplies.set(key, text);
+    if (dropped) droppedChanges.set(key, dropped);
     toast(t("lib-inbox.reply_failed", { error: errorText(e) }), "error");
     return false;
   } finally {
@@ -1495,6 +1565,7 @@ export function resetInboxForTests() {
   listsOut.clear();
   listSeq = 0;
   unsentReplies.clear();
+  droppedChanges.clear();
 }
 
 /** Someone a sent message @s: Feishu notifies them; the text holds their `@name` ("Everyone" is `user_id` "all"). */

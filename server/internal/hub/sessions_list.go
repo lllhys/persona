@@ -40,8 +40,7 @@ func (h *Hub) sessionListIndex() *sessionlist.Index {
 		defer h.sessionsMu.Unlock()
 		h.listCache.machines = map[string]bool{}
 		for _, m := range h.machinesNow() {
-			list := h.shown(m.cfg.ID, h.decorated(m))
-			h.indexSessionsLocked(m.cfg.ID, list, encodeSessions(list))
+			h.indexKeptLocked(m)
 		}
 	})
 	return &h.listCache.index
@@ -52,6 +51,23 @@ func (h *Hub) sessionListIndex() *sessionlist.Index {
 // A row whose encoded bytes the index already holds keeps its indexed payloads
 // (indexedRow): usually one row of a list changed since the last update.
 func (h *Hub) indexSessionsLocked(mid string, list []proto.Session, encoded []sentSession) {
+	h.indexStampedLocked(mid, list, false, "", encoded)
+}
+
+// indexKeptLocked indexes m's kept list as the apps get it (shown, stamped with its manager) from the rows a push
+// sends: those whose bytes, rev and manager are unchanged are the kept rows themselves (encodeKept), so neither a copy
+// of the list nor an encoding of every row is made. sessionsMu is held; encodeKept then takes rowsMu, in the order
+// snapshotSessions takes them.
+func (h *Hub) indexKeptLocked(m *Machine) {
+	kept := m.keptSessions()
+	owner := h.machineOwner(m.cfg.ID)
+	shown := h.shown(m.cfg.ID, kept)
+	h.indexStampedLocked(m.cfg.ID, shown, true, owner, m.encodeKept(shown, owner, m.rawsFor(kept)))
+}
+
+// indexStampedLocked is indexSessionsLocked of list as stamped with manager when stamp (stamped), without the copy
+// of the list: of what the index reads only a summary has the manager, and indexedRow puts it there.
+func (h *Hub) indexStampedLocked(mid string, list []proto.Session, stamp bool, manager string, encoded []sentSession) {
 	if h.listCache.machines == nil {
 		return // no paginated reader yet; legacy users pay no indexing overhead
 	}
@@ -91,17 +107,17 @@ func (h *Hub) indexSessionsLocked(mid string, list []proto.Session, encoded []se
 		items = make([]sessionlist.Item, len(ids))
 	}
 	for k, i := range rows {
-		items[k] = indexedRow(mid, ids[k], &list[i], full[list[i].SessionID], items[k])
+		items[k] = indexedRow(mid, ids[k], &list[i], stamp, manager, full[list[i].SessionID], items[k])
 	}
 	h.listCache.index.Replace(mid, items)
 	h.listCache.machines[mid] = true
 }
 
-// indexedRow is row's item in the paged index, raw its encoding and indexed what the index holds under id (the zero
-// Item for none). When indexed's Full is raw with the same pane_source, its Summary is what row's is too: the summary
-// is cut from the fields raw encodes. Both are then kept, and the item is unchanged for Replace, rather than
-// marshalled again. The scalars are always read from row.
-func indexedRow(mid, id string, row *proto.Session, raw json.RawMessage, indexed sessionlist.Item) sessionlist.Item {
+// indexedRow is row's item in the paged index (row stamped with manager when stamp), raw its encoding and indexed what
+// the index holds under id (the zero Item for none). When indexed's Full is raw with the same pane_source, its Summary
+// is what row's is too: the summary is cut from the fields raw encodes. Both are then kept, and the item is unchanged
+// for Replace, rather than marshalled again. The scalars are always read from row.
+func indexedRow(mid, id string, row *proto.Session, stamp bool, manager string, raw json.RawMessage, indexed sessionlist.Item) sessionlist.Item {
 	project := row.RepoRoot
 	if project == "" {
 		project = row.WorkspaceCwd
@@ -126,7 +142,11 @@ func indexedRow(mid, id string, row *proto.Session, raw json.RawMessage, indexed
 		}
 		return item
 	}
-	summary, _ := json.Marshal(runtimeSummary(*row))
+	cut := runtimeSummary(*row)
+	if stamp {
+		cut.Manager = manager // what runtimeSummary copies from a stamped row; nothing else of it reads the manager
+	}
+	summary, _ := json.Marshal(cut)
 	item.Summary = json.RawMessage(summary)
 	// Reuse the exact legacy encoding, including compatibility keys.
 	item.Full = runtimeListFields(raw, struct {
@@ -482,8 +502,7 @@ func (h *Hub) reindexSessions(m *Machine) {
 		return // no paginated reader yet, or the machine was pruned
 	}
 	before := h.listCache.index.Revision()
-	shown := h.shown(m.cfg.ID, h.decorated(m))
-	h.indexSessionsLocked(m.cfg.ID, shown, encodeSessions(shown))
+	h.indexKeptLocked(m)
 	revision := h.listCache.index.Revision()
 	if revision == before {
 		return

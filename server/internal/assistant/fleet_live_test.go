@@ -20,7 +20,7 @@ func TestBuildFleet(t *testing.T) {
 		if mod != nil {
 			mod(&s)
 		}
-		return fleetInput{Machine: "box", Session: s}
+		return fleetInput{Machine: "box", Session: &s}
 	}
 	agents := []fleetInput{
 		agent("w1", proto.StateWorking, nil),
@@ -92,11 +92,11 @@ func TestBuildFleetBackground(t *testing.T) {
 	run := proto.Workflow{TaskID: "w1", Name: "parity-audit", Running: true, Status: proto.WorkflowRunning, Phase: "Verify",
 		AgentsStarted: 185, AgentsDone: 169}
 	agents := []fleetInput{
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "wf", State: proto.StateWorking, BackgroundWorking: true,
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "wf", State: proto.StateWorking, BackgroundWorking: true,
 			Workflows: []proto.Workflow{run}}},
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "sh", State: proto.StateWorking, BackgroundWorking: true,
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "sh", State: proto.StateWorking, BackgroundWorking: true,
 			Background: []proto.BackgroundTask{{ID: "b1", Kind: "shell"}, {ID: "b2", Kind: "monitor"}}}},
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "busy", State: proto.StateWorking}},
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "busy", State: proto.StateWorking}},
 	}
 	st := buildFleetIn("zh-Hans", agents, nil)
 	got := map[string]FleetItem{}
@@ -139,7 +139,7 @@ func TestBuildFleetBackgroundProgress(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := proto.Session{MachineID: "m", SessionID: "s", State: proto.StateWorking, BackgroundWorking: tc.background, Workflows: tc.runs}
-			st := buildFleetIn("zh-Hans", []fleetInput{{Session: s}}, nil)
+			st := buildFleetIn("zh-Hans", []fleetInput{{Session: &s}}, nil)
 			if len(st.Items) != 1 {
 				t.Fatalf("items: %+v", st.Items)
 			}
@@ -171,7 +171,7 @@ func TestBuildFleetProgressAddsNoChanges(t *testing.T) {
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			step := func(runs ...proto.Workflow) fleetInput {
-				return fleetInput{Machine: "box", TurnStart: at, Session: proto.Session{MachineID: "m", SessionID: "s", State: proto.StateWorking,
+				return fleetInput{Machine: "box", TurnStart: at, Session: &proto.Session{MachineID: "m", SessionID: "s", State: proto.StateWorking,
 					BackgroundWorking: true, UpdatedAt: at, Workflows: runs}}
 			}
 			wf := func(phase bool, done, started int) proto.Workflow {
@@ -227,7 +227,7 @@ func TestBuildFleetBackgroundDetailKeepsCounts(t *testing.T) {
 	name := strings.Repeat("n", 55)
 	s := proto.Session{MachineID: "m", SessionID: "s", State: proto.StateWorking, BackgroundWorking: true,
 		Workflows: []proto.Workflow{{TaskID: "w1", Name: name, Running: true, Phase: "Verify", AgentsDone: 169, AgentsStarted: 185}}}
-	it := buildFleetIn("en", []fleetInput{{Session: s}}, nil).Items[0]
+	it := buildFleetIn("en", []fleetInput{{Session: &s}}, nil).Items[0]
 	if want := name[:50] + "… · 169/185"; it.Detail != want {
 		t.Errorf("detail = %q, want %q", it.Detail, want)
 	}
@@ -240,9 +240,9 @@ func TestBuildFleetBackgroundDetailKeepsCounts(t *testing.T) {
 func TestBuildFleetOneItemPerAgent(t *testing.T) {
 	t0 := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 	agents := []fleetInput{
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "a", State: proto.StateNeedsYou}},
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "b", State: proto.StateNeedsYou}},
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "w", State: proto.StateWorking}},
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "a", State: proto.StateNeedsYou}},
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "b", State: proto.StateNeedsYou}},
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "w", State: proto.StateWorking}},
 	}
 	ixs := []proto.Interaction{ // oldest first, as pendingInteractions gives them
 		{ID: "a1", MachineID: "m", SessionID: "a", Kind: proto.IxPermission, Summary: "first", CreatedAt: t0},
@@ -295,7 +295,7 @@ func TestBuildFleetWorkflowSince(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := proto.Session{MachineID: "m", SessionID: "s", State: proto.StateWorking, UpdatedAt: at,
 				BackgroundWorking: tc.background, Workflows: tc.runs}
-			st := buildFleetIn("zh-Hans", []fleetInput{{Session: s, TurnStart: tc.turn}}, nil)
+			st := buildFleetIn("zh-Hans", []fleetInput{{Session: &s, TurnStart: tc.turn}}, nil)
 			if len(st.Items) != 1 {
 				t.Fatalf("items: %+v", st.Items)
 			}
@@ -312,8 +312,8 @@ func TestBuildFleetWorkflowSince(t *testing.T) {
 // A card with fields (the password card, a mail account's) is filled in in the app: its row on the Live Activity names
 // no interaction, so the activity draws no Allow / Deny for it (FleetActionRow); the row itself stays.
 func TestBuildFleetOffersNoAllowForACardWithFields(t *testing.T) {
-	agents := []fleetInput{{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "p", Title: "Persona", State: proto.StateNeedsYou}},
-		{Machine: "box", Session: proto.Session{MachineID: "m", SessionID: "q", Title: "agent q", State: proto.StateNeedsYou}}}
+	agents := []fleetInput{{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "p", Title: "Persona", State: proto.StateNeedsYou}},
+		{Machine: "box", Session: &proto.Session{MachineID: "m", SessionID: "q", Title: "agent q", State: proto.StateNeedsYou}}}
 	ixs := []proto.Interaction{
 		{ID: "ix_pw", MachineID: "m", SessionID: "p", Kind: proto.IxPermission, ToolName: proto.SecretRunTool, Summary: "Run on Mac mini",
 			Fields: []proto.Field{{Key: "password", Secret: true}}},

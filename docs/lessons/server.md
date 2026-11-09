@@ -753,6 +753,7 @@ against disposable Git with an independent writer at the last read before remova
   Attachment filenames must hash the full raw ID, not sanitize or truncate it: punctuation, case and long suffixes can otherwise overwrite an earlier message's
   attachment even when receipts correctly keep both IDs. Put new files in a separate day subdirectory so hash-shaped legacy names stay intact, keep legacy
   links/files, and use separate anonymous filenames when no stable ID is supplied.
+- An archive timestamp does not bind a message reference to a line (#2814). Keep a hash of the rendered speaker and body with the ingestion receipt, and require a unique hash-and-minute match before using its reference. Keep the original absolute time so changing the archive's zone does not invalidate receipts, and prune hashes with their IDs. Identical lines or receipts remain ambiguous; legacy text uses only conservative destination/time/text matching. Count every candidate before consuming matches: removing an already matched line must not make a competing record claim another user's identical text.
 - Recording uploads need an accepted read boundary across all three files (#1488). A final metadata error can otherwise leave rejected segments and rendered text searchable under the previous revision. Save a durable undo snapshot before replacing content, keep it authoritative for readers until commit, and restore on writable reopen before exposing the store. Cover both search APIs, detail, segments, reconciliation and summarization, including failed restoration and metadata ownership edits. Exclude the undo journal at the shared search eligibility boundary: searching only natural transcript text misses plaintext UUID/schema keys around its encoded contents, including ghost hits for a rejected first upload. Test every replacement before and after writing, actual subprocess exits, first uploads, legacy files and retry; an in-memory rollback or metadata-only assertion misses the defect. Keep snapshot locks outside the metadata lock and release them before read-capable observer callbacks.
 - Enforce retention at write entry points, not only daily cleanup: initial archive reads "latest 100 messages", which in quiet sessions can reach years back;
   after cleanup, 47 expired day files reappeared 6 seconds later (production 2026-11-02). All day-file writes (`Archive`, `Ingest`, `WriteHistory`) share
@@ -1413,6 +1414,7 @@ A connector that folds several notifications into one thread (GitHub CI failures
 - A literal gate still checks every template of a catalog on a text that matches none (265 for `InboxText`): index the templates by the first byte of their first literal, and try the ones that start with a placeholder for every text (`i18n.templateIndex`).
 - Background tasks, subagents and a subagent's latest tool are written by hand too, each type under its own layout hash (`backgroundWireLayout`, `subagentWireLayout`, `workflowToolWireLayout`). A field added to one needs its line in `session_wire.go` and that hash; until then that type goes back to reflection.
 - The paged index rebuilt every row's item (a summary marshalled, the full row and search text joined) on each list update and `sessions.revs`, for one changed row: 2.65 MB for 150 rows. The index's own item is the memo: when its stored full row is the row's new encoding with the same suffix, its summary is the row's too, since the summary is cut from the fields that encoding holds (`indexedRow`, 0.10 MB). Text read from the row itself is still compared, because the encoding folds every invalid UTF-8 byte into the same escape. The keys must line up: a list with two rows under one id pairs one row's summary with the other's bytes, so after such a list, and for the list after it, compute every row. Prove it with the full computation run beside it on changing lists, step for step (`TestIndexRowReuseMatchesFullPath`), and let `Replace` keep a payload that is the stored slice itself without walking it by reflection (`sessionlist.sameItem`).
+- With the index's rows reused, a `sessions.revs` reindex still copied the whole list to stamp the manager on it and encoded every row again: 7.26 MB and 10.5 ms for 2,000 rows, one changed (#2783). Take the rows from the push's kept encodings and read the scalars from the kept list itself; stamp the manager only where the index reads it, the summary of a row marshalled again (1.05 MB, 4.0 ms). A benchmark that bumps a rev in place on a list set without its bytes measures only the path that encodes everything: keep the list as the manager's are (`setSessionListRaws`, then a push) and hand over a copy per revs, as `onEvent` does.
 
 ## Hot paths: compressing the same file on every request, a privacy scan that cannot read gzip (2026-11-09, #2219)
 
@@ -1433,6 +1435,14 @@ A connector that folds several notifications into one thread (GitHub CI failures
 - A row encoded from the same bytes, rev and manager is the same row: keep it with them and push the same slice again (`Machine.encodeKept`), so the delta and dedupe comparisons find it equal by its first byte. Tie the bytes to the exact kept list they describe (`rawsOf`, first element and length): any other writer of the list (a warm start, `markUnknownLocked`, a test's edit) then gets no memo and encodes everything. Prove it against a reference hub that decodes and encodes every list whole, byte for byte per app, and check the test fails when each key of the memo (bytes, rev, manager, an id listed twice) is dropped.
 - A message queued to many apps through a per-app transform (`compat.ProjectJSON`, which scans for legacy names) costs the transform once per app: a third of a push with two older apps. Transform once per kind of app (`queueProjected`). Delta apps in sync hold equal maps of what they have; hand a connecting app the map another holds when they are equal, and work out each push once per map (`broadcastSessions`).
 - An oracle test that compares output bytes cannot see whether a memo was used: the bytes are the same either way, so every test passed with the row memo or either hop's changed-row decoding turned off. Pin the reuse itself: the unchanged rows are pushed as the same slices, and each hop stays under an allocation ceiling far below a whole decode (`TestFleetSessionsOneChangedReusesRows`, `TestSessionsChangedOneChangedAllocations`). Bypass each memo once and check that a guard fails.
+
+## Hot paths: a fleet copied for three items, a list read token by token, every language kept for one (2026-11-10, #2699)
+
+- Live Activity's fleet copied each agent's session into its input and made an item (an id joined, a title and place clipped) for every agent, then kept three: 3.0 MB and 3,066 allocations per snapshot of 300 agents. Point at the decorated list (`fleetInput.Session`), key the maps by `[2]string` instead of a joined id, sort what would be shown and make items for the first `fleetMaxItems` only (0.50 MB, 56). Keep the old code as the oracle in the test file and compare both byte for byte on random fleets with ties, ids listed twice and cards on agents not listed (`TestFleetMatchesOracle`).
+- A transform that leaves almost every row as it is still scans the whole message each time: `compat.ProjectJSON` ran over every whole list sent to an older app. Work out once per row whether it would change anything (`compat.Projects`, kept with the row memo as `asIs`) and project the message only when a row would. That holds only because the message's own members are never projected; check it with a row for each name and text the projection rewrites, under a machine name that looks projectable too (`TestWholeListProjectedByRows`).
+- A general decoder pays for what a splitter does not need: `ScanSessionList` read the event token by token through `jsontext`, a quarter of a hop. A byte scanner with the same rules (exact unescaped `sessions` once, names given once, the same depth limit, invalid input left to `json.Unmarshal`) replaces it; keep `jsontext` as the oracle and fuzz both (`FuzzScanSessionList`, `TestScanSessionListDepth`).
+- A buffer sized from the first row grows several times for a list of 150: size a whole-list encode from the average length of the rows last sent (`Machine.rowLen`).
+- A catalog per language read as one keeps every language once any text is needed: the first `i18n.T` parsed and kept all three (1.2 MB live). Give each language its own `sync.OnceValue` (`i18n.catalogOf`): a process that speaks en keeps en, plus zh-Hans for a missing key and `Has` (0.38 to 0.76 MB). The reverse templates match every language, so they read the others without keeping them (`readCatalog`). Prove it in a process of its own, as other tests parse every language (`TestCatalogsParsedPerLanguage`).
 
 ## Transport source is not pane origin (#994)
 
@@ -1474,3 +1484,37 @@ field, so `-race` reports it, and it may end up serving the new peer too. Pass w
 records the node's lines) into the constructor, and serve the peer through a local variable. A rule test also needs
 steps that differ only in the guarded rule: revs followed by a list that differs anyway, or a `call` that waits for the
 pending count to drop, pass with the rule deleted.
+
+## Inbox rows as json: compression, HOT and the NUL guard (2026-11-10, #2779)
+
+- **Compression goes in the same `ALTER` as the rewrite.** `ALTER COLUMN … SET COMPRESSION lz4` on its own changes only
+  future writes, and `VACUUM FULL` or a same-type `ALTER … TYPE jsonb` copies each value with its old compression: 0 of
+  28,600 rows turned lz4 either way. A type change resets the column's compression to the default, so a `SET
+  COMPRESSION` run before it is lost too (`USING data::text::jsonb` after it: all pglz). Put the type change (`USING
+  data::json`) and `SET COMPRESSION` in one `ALTER TABLE`, in either order: every value is computed again and compressed
+  with lz4 (28,600 of 28,600, about 2 s). Check with `pg_column_compression`. For servers built without lz4
+  (`feature_not_supported`) or before Postgres 14 (`syntax_error`), catch the error in a `DO` block around `EXECUTE`: a
+  statement written into the block is parsed when the block is compiled, so a syntax error escapes the handler.
+- **json, not jsonb, when every reader unmarshals the bytes.** The manager's start read of 3,999 items spent 59 of its
+  67 ms sending the rows (jsonb back to text after pglz); as lz4 json it takes about 30 ms. Each half alone saves less:
+  jsonb with lz4 -20 ms, json with pglz -13 ms, both -34 ms (same rows, 11 rotated rounds). Old prepared statements see
+  a changed result type once (`cached plan must not change result type`); pgx drops the statement on that error and
+  prepares it again on the next call.
+- **A generated column, not an expression index, for a lookup into the document.** An index on `(data->>'source')`
+  makes every update of `data` touch that index, so no update is HOT (0 of 4,800); a stored generated column whose
+  value did not change leaves HOT possible (1,481 of 4,800 on the same updates; 142 to 300 of 300 per round on upserts
+  shaped like `PutInboxItem`, from 0, once `updated_at` left `inbox_items_open`). An index on a column every upsert
+  changes rules out HOT as well; `TestDoneInboxItemsIndexed` allows only `done_at`, `id` and `source` in indexes.
+- **The generated column is also the NUL guard.** json accepts `\u0000` in a string, jsonb refused it on write.
+  `data->>'source'` parses the whole document, so a write with `\u0000` anywhere still fails with 22P05, as before.
+  Without the column such a row would be stored, and the done page's `data->'connector'` would fail on it later. Keep a
+  computed column (or a check) that parses the document if `source` ever goes or becomes a column Go writes:
+  `TestInboxItemWithNULRefused` fails without one.
+- **A compatibility overload makes untyped calls ambiguous.** `jsonb_typeof(json)`, added so a pre-0471 build's done
+  page still runs, makes `jsonb_typeof('…')` or `jsonb_typeof($1)` with an unknown-typed argument fail in the whole
+  database (`function jsonb_typeof(unknown) is not unique`). Every existing call passes a typed value; new SQL casts
+  the argument (`$1::jsonb`) until a later migration drops the shim, once no pre-0471 build can run.
+
+## Optional filesystem labels must not gate inventory (2026-11-10, #2750)
+
+A regular Git HEAD can block in open despite stat succeeding. Keep project labels outside authoritative session discovery, cap concurrent metadata readers, and deduplicate pending paths across cache refreshes. Return all discovered session identities and busy states even when labels are unavailable; never replace a failed session read with an empty idle inventory. Test with a HEAD whose read cannot complete until after the inventory response, and retain a synchronous negative control.

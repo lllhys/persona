@@ -6,6 +6,7 @@
 
 import { ApiError, api, enc, getToken } from "./api";
 import type { LarkPerson } from "./lark-people";
+import { itemHeaders } from "./manager-choice";
 import { t } from "../i18n";
 
 export interface DocSegment {
@@ -113,35 +114,36 @@ export function writeErrorText(e: unknown): string {
 
 // ── the routes ──
 // The token is passed explicitly: a Lark gateway 401 (Feishu signed out) must not sign this browser out of the hub.
+// `manager`: the one the reader reads the document as (none: the default).
 
-const opts = (json?: unknown) => (json === undefined ? { token: getToken() } : { method: "POST", json, token: getToken() });
+const opts = (manager: string | undefined, json?: unknown) => ({ token: getToken(), headers: itemHeaders(manager), ...(json === undefined ? {} : { method: "POST", json }) });
 
 /** The threads; `null` when the write's answer could not read them back (the write itself went through). */
 function threadsOf(r: { threads?: unknown }): DocThread[] | null {
   return Array.isArray(r.threads) ? sortThreads(parseThreads(r)) : null;
 }
 
-export async function readComments(url: string): Promise<DocThread[]> {
-  return sortThreads(parseThreads(await api(`/lark/raw/documents/comments?url=${enc(url)}`, opts())));
+export async function readComments(url: string, manager?: string): Promise<DocThread[]> {
+  return sortThreads(parseThreads(await api(`/lark/raw/documents/comments?url=${enc(url)}`, opts(manager))));
 }
 
 /** Writes `text` where `target` says; the threads as Feishu has them afterwards (or null, see threadsOf). */
-export async function sendComment(url: string, target: CommentTarget, text: string, mentions: LarkPerson[], clientId: string): Promise<DocThread[] | null> {
+export async function sendComment(url: string, target: CommentTarget, text: string, mentions: LarkPerson[], clientId: string, manager?: string): Promise<DocThread[] | null> {
   const body: Record<string, unknown> = { url, content: text, mentions: mentions.map((m) => ({ user_id: m.user_id, name: m.name })), client_id: clientId };
-  if (target.kind === "thread") return threadsOf(await api(`/lark/documents/comments/${enc(target.id)}/replies`, opts(body)));
+  if (target.kind === "thread") return threadsOf(await api(`/lark/documents/comments/${enc(target.id)}/replies`, opts(manager, body)));
   if (target.kind === "passage") {
     body.quote = target.quote;
     if (target.blockId) body.block_id = target.blockId;
   }
-  return threadsOf(await api("/lark/documents/comments", opts(body)));
+  return threadsOf(await api("/lark/documents/comments", opts(manager, body)));
 }
 
-export async function setResolved(url: string, thread: string, resolved: boolean): Promise<DocThread[] | null> {
-  return threadsOf(await api(`/lark/documents/comments/${enc(thread)}/resolve`, opts({ url, resolved })));
+export async function setResolved(url: string, thread: string, resolved: boolean, manager?: string): Promise<DocThread[] | null> {
+  return threadsOf(await api(`/lark/documents/comments/${enc(thread)}/resolve`, opts(manager, { url, resolved })));
 }
 
 /** People to @ in a document's comment, by name (no chat to take members from). */
-export async function findDocPeople(url: string, q: string, signal?: AbortSignal): Promise<LarkPerson[]> {
-  const r = await api<{ members?: LarkPerson[] }>(`/lark/documents/people?url=${enc(url)}&q=${enc(q)}`, { token: getToken(), signal });
+export async function findDocPeople(url: string, q: string, signal?: AbortSignal, manager?: string): Promise<LarkPerson[]> {
+  const r = await api<{ members?: LarkPerson[] }>(`/lark/documents/people?url=${enc(url)}&q=${enc(q)}`, { ...opts(manager), signal });
   return (r.members ?? []).filter((m) => m && typeof m.user_id === "string" && typeof m.name === "string");
 }

@@ -41,7 +41,7 @@ func TestWithdrawTakesCardsBackInOnePush(t *testing.T) {
 		t.Fatalf("features %v", d.Features)
 	}
 	for _, id := range []string{"ix_a", "ix_b", "ix_c"} {
-		h.notifyInteraction("", card(id), "笔记本")
+		h.notifyInteraction("", card(id), "笔记本", false)
 	}
 	f.wait(t, 3)
 	h.push.withdraw("ix_a")
@@ -76,7 +76,7 @@ func TestWithdrawTakesCardsBackInOnePush(t *testing.T) {
 func TestWithdrawAtMostOnceAMinute(t *testing.T) {
 	h, f, open := withdrawHub(t, "withdraw")
 	for _, id := range []string{"ix_a", "ix_b", "ix_c"} {
-		h.notifyInteraction("", card(id), "笔记本")
+		h.notifyInteraction("", card(id), "笔记本", false)
 	}
 	f.wait(t, 3)
 	h.push.withdraw("ix_a")
@@ -139,7 +139,7 @@ func TestWithdrawSplitsLongIDsBySize(t *testing.T) {
 // An app that did not say it takes pushes back (an older one) gets no background push for it.
 func TestWithdrawOnlyToAppsThatTakeItBack(t *testing.T) {
 	h, f, _ := withdrawHub(t)
-	h.notifyInteraction("", card("ix_a"), "笔记本")
+	h.notifyInteraction("", card("ix_a"), "笔记本", false)
 	f.wait(t, 1)
 	h.push.withdraw("ix_a")
 	time.Sleep(200 * time.Millisecond)

@@ -44,11 +44,13 @@ type mgrLink struct {
 	address string          // the hub URL it went to
 	since   time.Time
 	// attention: its hello listed link.FeatureAttention. attMu keeps the summary's sends one at a time; attReady: the
-	// endpoints went out (the summary follows them); attSent: the Rev it was sent last (attention.go).
+	// endpoints went out (the summary follows them; attention.go). held: what Persona Link holds of it, the Rev it took
+	// last included (heldMu, never held for a send; presence.go).
 	attention bool
 	attMu     sync.Mutex
 	attReady  bool
-	attSent   string
+	heldMu    sync.Mutex
+	held      summaryHeld
 	// ctx ends with the link, and every stream on it with it; its cause says why.
 	ctx    context.Context
 	cancel context.CancelCauseFunc
@@ -162,6 +164,10 @@ func (d *Devices) acceptLink(conn *websocket.Conn, a devicewire.Accept) {
 			l.deliver(msg.ID, linkStream{err: fmt.Errorf("Persona Link: %s", textfmt.Clip(msg.Error, 300))})
 		case "rename":
 			go d.linkRename(l, msg)
+		case "presence":
+			m.takePresence(l, msg)
+		case "rang":
+			m.takeRang(l, msg.InteractionID)
 		}
 	}
 	cause := context.Cause(ctx)
@@ -336,6 +342,7 @@ func (m *Machine) setLink(l *mgrLink) *mgrLink {
 	m.mu.Lock()
 	old := m.link
 	m.link, m.linkDown = l, nil
+	m.presence = nil // the old link's: the new one says its own (a command-line Link never does)
 	m.mu.Unlock()
 	for _, ch := range []chan struct{}{m.linkUp, m.kick} {
 		select {
@@ -365,6 +372,7 @@ func (m *Machine) dropLink(l *mgrLink, cause error) {
 		return
 	}
 	m.link, m.linkDown = nil, cause
+	m.presence = nil // the summary cannot reach this computer now: it no longer stands in for the phone
 	if !m.online && cause != nil {
 		m.err = cause.Error()
 	}

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "../../ui/remark-gfm-parse";
 import { bytes } from "../../lib/format";
 import { clickLink, linkHref, prefetchLink } from "../../lib/links";
+import { useLinkManager } from "../../lib/manager-choice";
 import { linkify, markdownComponents, markdownUrl } from "../../ui/Markdown";
 import { Icon } from "../../ui/icons";
 import { formatDate, t } from "../../i18n";
@@ -85,6 +86,7 @@ function align(n: DocNode): React.CSSProperties | undefined {
 
 function Block({ node, number }: { node: DocNode; number?: number }) {
   const kids = node.content ?? [];
+  const manager = useLinkManager();
   switch (node.type) {
     case "paragraph":
       return kids.length ? (
@@ -213,7 +215,7 @@ function Block({ node, number }: { node: DocNode; number?: number }) {
       const size = num(node, "size");
       return (
         <LinkCard
-          href={token ? mediaURL(`/api/v1/lark/raw/documents/drive/files/${encodeURIComponent(token)}/download`) : attr(node, "sourceUrl")}
+          href={token ? mediaURL(`/api/v1/lark/raw/documents/drive/files/${encodeURIComponent(token)}/download`, manager) : attr(node, "sourceUrl")}
           title={attr(node, "name") || t("link-doccontent.file")}
           subtitle={size ? bytes(size) : t("link-doccontent.file")}
           icon="clip"
@@ -308,15 +310,16 @@ function Table({ node }: { node: DocNode }) {
 
 function Image({ node }: { node: DocNode }) {
   const src = attr(node, "src");
+  const manager = useLinkManager();
   if (!src) return <Placeholder text={t("link-doccontent.image_missing")} />;
   const w = num(node, "width") ?? num(node, "displayWidth");
   const h = num(node, "height");
   const caption = attr(node, "caption");
   return (
     <figure className="my-3">
-      <a href={mediaURL(src)} target="_blank" rel="noreferrer noopener">
+      <a href={mediaURL(src, manager)} target="_blank" rel="noreferrer noopener">
         <img
-          src={mediaURL(src)}
+          src={mediaURL(src, manager)}
           alt={attr(node, "alt") || caption || t("link-doccontent.image")}
           loading="lazy"
           width={w}
@@ -331,6 +334,7 @@ function Image({ node }: { node: DocNode }) {
 }
 
 function LinkCard({ href, title, subtitle, icon = "link", download }: { href?: string; title: string; subtitle?: string; icon?: "link" | "clip"; download?: boolean }) {
+  const manager = useLinkManager();
   const body = (
     <>
       <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-field text-ink-2">
@@ -350,8 +354,8 @@ function LinkCard({ href, title, subtitle, icon = "link", download }: { href?: s
       target="_blank"
       rel="noreferrer noopener"
       download={download || undefined}
-      onClick={(e) => (download ? undefined : clickLink(e, href, title))}
-      onPointerEnter={() => prefetchLink(href)}
+      onClick={(e) => (download ? undefined : clickLink(e, href, title, manager))}
+      onPointerEnter={() => prefetchLink(href, manager)}
       className={`${cls} transition-colors hover:bg-hover`}
     >
       {body}
@@ -386,6 +390,7 @@ function Inline({ nodes }: { nodes: DocNode[] }) {
 }
 
 function Run({ node }: { node: DocNode }) {
+  const manager = useLinkManager();
   switch (node.type) {
     case "text":
       return <Marked node={node} />;
@@ -402,7 +407,7 @@ function Run({ node }: { node: DocNode }) {
       const href = attr(node, "href");
       const text = `${kind === "doc" ? "📄 " : ""}${label}`;
       return href ? (
-        <a href={linkHref(href)} target="_blank" rel="noreferrer noopener" onClick={(e) => clickLink(e, href, label)} onPointerEnter={() => prefetchLink(href)}>
+        <a href={linkHref(href)} target="_blank" rel="noreferrer noopener" onClick={(e) => clickLink(e, href, label, manager)} onPointerEnter={() => prefetchLink(href, manager)}>
           {text}
         </a>
       ) : (
@@ -419,6 +424,7 @@ function Run({ node }: { node: DocNode }) {
 }
 
 function Marked({ node }: { node: DocNode }) {
+  const manager = useLinkManager();
   let out: React.ReactNode = node.text ?? "";
   let href: string | undefined;
   for (const m of node.marks ?? []) {
@@ -446,7 +452,7 @@ function Marked({ node }: { node: DocNode }) {
   if (!href) return <>{out}</>;
   const to = href;
   return (
-    <a href={linkHref(to)} target="_blank" rel="noreferrer noopener" onClick={(e) => clickLink(e, to, node.text)} onPointerEnter={() => prefetchLink(to)}>
+    <a href={linkHref(to)} target="_blank" rel="noreferrer noopener" onClick={(e) => clickLink(e, to, node.text, manager)} onPointerEnter={() => prefetchLink(to, manager)}>
       {out}
     </a>
   );

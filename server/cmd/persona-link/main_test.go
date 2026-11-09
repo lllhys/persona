@@ -458,7 +458,7 @@ func TestKeepLinkSavesItsStatus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
 	done := make(chan error, 1)
-	go func() { done <- keepLink(ctx, path, logPath, &out) }()
+	go func() { done <- keepLink(ctx, path, logPath, &out, nil) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if st, err := link.ReadStatus(path); err == nil && st.State == "unpaired" && st.PID == os.Getpid() {
@@ -472,7 +472,7 @@ func TestKeepLinkSavesItsStatus(t *testing.T) {
 	if !link.Running(path) {
 		t.Fatal("not running by its lock")
 	}
-	if err := keepLink(context.Background(), path, "", &bytes.Buffer{}); !errors.Is(err, link.ErrRunning) {
+	if err := keepLink(context.Background(), path, "", &bytes.Buffer{}, nil); !errors.Is(err, link.ErrRunning) {
 		t.Fatalf("a second one: %v", err)
 	}
 	cancel()

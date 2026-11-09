@@ -18,6 +18,7 @@ import { openPanel } from "./panel";
 import { navigate, parse as parseRoute } from "./router";
 import { BASE, stripBase } from "./base";
 import { contextBody } from "./context-body";
+import { otherManager } from "./manager-choice";
 import { localhostLink, PREVIEW_FEATURE } from "./preview";
 import { getSession, getState, hubHas, larkOn, onHubEvent } from "./store";
 import { mediaMatches, NARROW } from "./viewport";
@@ -209,8 +210,9 @@ export function linkHref(url: string): string {
   return r.kind === "session" ? `${BASE}/s/${encodeURIComponent(r.mid)}/${encodeURIComponent(r.sid)}` : url;
 }
 
-/** Opens a link where it belongs (see the top of this file). `title` names it in the panel until the page says. */
-export function openLink(url: string, title?: string) {
+/** Opens a link where it belongs (see the top of this file). `title` names it in the panel until the page says;
+ *  `manager`: the one whose chat it is in (useLinkManager), which reads the document or post it opens in the panel. */
+export function openLink(url: string, title?: string, manager?: string) {
   const preview = previewTarget(url);
   if (preview) {
     openPanel({ kind: "preview", ...preview });
@@ -235,7 +237,7 @@ export function openLink(url: string, title?: string) {
     case "doc":
     case "moments":
       if (opensInApp(url)) {
-        openPanel({ kind: "link", url, title: title || undefined });
+        openPanel({ kind: "link", url, title: title || undefined, manager: otherManager(manager) });
         return;
       }
       window.open(url, "_blank", "noopener,noreferrer");
@@ -255,25 +257,25 @@ export function openLink(url: string, title?: string) {
  * onClick for an <a href={linkHref(url)}>: a plain click on a link that opens in the page opens it there; ⌘ / Ctrl /
  * Shift / middle clicks and links that belong in a tab keep the browser's own behavior.
  */
-export function clickLink(e: React.MouseEvent, url: string | undefined, title?: string) {
+export function clickLink(e: React.MouseEvent, url: string | undefined, title?: string, manager?: string) {
   if (!url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   if (!opensInApp(url)) return;
   e.preventDefault();
-  openLink(url, title);
+  openLink(url, title, manager);
 }
 
 // ── preloading (CLAUDE.md: opening speed first) ──────────
 
-let prefetcher: ((url: string) => void) | null = null;
+let prefetcher: ((url: string, manager?: string) => void) | null = null;
 
 /** The reader registers how to warm a document (views/link/feishu-doc.ts). */
-export function setLinkPrefetcher(fn: (url: string) => void) {
+export function setLinkPrefetcher(fn: (url: string, manager?: string) => void) {
   prefetcher = fn;
 }
 
-/** A link the pointer rests on: start reading it so the panel opens on a finished page. */
-export function prefetchLink(url: string | undefined) {
-  if (url && opensInApp(url) && linkRoute(url).kind === "doc") prefetcher?.(url);
+/** A link the pointer rests on: start reading it (as manager, as openLink would) so the panel opens on a finished page. */
+export function prefetchLink(url: string | undefined, manager?: string) {
+  if (url && opensInApp(url) && linkRoute(url).kind === "doc") prefetcher?.(url, manager);
 }
 
 // ── <persona-context> ─────────────────────────────────────

@@ -142,6 +142,11 @@ type Devices struct {
 	reportMu  sync.Mutex
 	reportDue chan struct{}
 	lastSent  string // the last devices.state sent (stateKey), to send only changes
+	// desktopsRep is the desktops reporter (presence.go); ring is closed at the next delivery or confirmation, for
+	// LinkRang.
+	desktopsRep desktopsReporter
+	ringMu      sync.Mutex
+	ring        chan struct{}
 
 	packages nodePackages // the node builds for the machines' platforms (packages.go)
 
@@ -480,6 +485,7 @@ func (d *Devices) report(all bool) {
 	default:
 		return // the machines are not made yet; the first report follows when they are (startMachines)
 	}
+	defer d.requestDesktops(all) // a change of computers or of who may count goes with it, after it (presence.go)
 	d.reportMu.Lock()
 	defer d.reportMu.Unlock()
 	st := d.states()

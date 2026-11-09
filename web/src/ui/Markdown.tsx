@@ -6,6 +6,7 @@ import type { PluggableList } from "unified";
 import { clickLink, linkHref, linkRoute, prefetchLink } from "../lib/links";
 import { fileDownloadURL } from "../lib/api";
 import { isMachineRef, resolveRef } from "../lib/files";
+import { useLinkManager } from "../lib/manager-choice";
 import { openPanel } from "../lib/panel";
 import remarkMath from "remark-math";
 import { copyText, toast } from "./atoms";
@@ -332,12 +333,13 @@ export function markdownUrl(url: string): string {
   return linkRoute(url).kind === "session" ? url : defaultUrlTransform(url);
 }
 
-// A link opens where it belongs (lib/links.ts): Feishu documents in the side panel, conversations in place, pages in
-// a new tab. ⌘ / Ctrl / middle click is always the browser's new tab.
+// A link opens where it belongs (lib/links.ts): Feishu documents in the side panel (read as the chat's manager),
+// conversations in place, pages in a new tab. ⌘ / Ctrl / middle click is always the browser's new tab.
 // `line`: a path a message names at a line (src/a.ts:12, PathLinks.tsx) opens there.
 function Link({ href, children, mid, cwd, line, title: hover }: { href?: string; children?: React.ReactNode; mid?: string; cwd?: string; line?: number; title?: string }) {
   const title = textOf(children).trim();
   const path = mid && href && isMachineRef(href) ? resolveRef(cwd ?? "", href) : "";
+  const manager = useLinkManager();
   return (
     <a
       href={path && mid ? fileDownloadURL(mid, path, cwd, { inline: true }) : href ? linkHref(href) : undefined}
@@ -348,9 +350,9 @@ function Link({ href, children, mid, cwd, line, title: hover }: { href?: string;
         if (path && mid && !e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
           e.preventDefault();
           openPanel({ kind: "file", mid, path, cwd, line });
-        } else clickLink(e, href, title && title !== href ? title : undefined);
+        } else clickLink(e, href, title && title !== href ? title : undefined, manager);
       }}
-      onPointerEnter={() => prefetchLink(href)}
+      onPointerEnter={() => prefetchLink(href, manager)}
     >
       {children}
     </a>

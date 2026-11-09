@@ -16,6 +16,8 @@
 !spec/fixtures/injected/
 # the cases web/src/lib/attention-fixture.test.ts reads (Dockerfile)
 !spec/fixtures/attention/
+# the cases web/src/lib/recent-setups.test.ts reads (Dockerfile)
+!spec/fixtures/recents/
 # the extension schema and its examples: the web app builds them in and its tests import them (Dockerfile)
 !schema/extension/
 integrations/**/node_modules/

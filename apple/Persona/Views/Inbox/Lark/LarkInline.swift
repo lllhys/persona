@@ -133,19 +133,21 @@ struct LarkInlineText: View {
     var lineLimit: Int? = nil
     var alignment: TextAlignment = .leading
     @Environment(\.larkTextBase) private var inherited
+    @Environment(\.larkManager) private var manager
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let b = (base ?? inherited).scaled(Theme.textScale(typeSize))
         let _ = LarkMedia.shared.emojiVersion
-        Self.compose(runs, base: b)
+        Self.compose(runs, base: b, manager: manager)
             .lineSpacing(b.points * (Theme.Level.body.lineHeight - 1.19)) // the body's line height, at Feishu's size
             .lineLimit(lineLimit)
             .multilineTextAlignment(alignment)
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    @MainActor static func compose(_ runs: [LarkInline], base: LarkTextBase) -> Text {
+    /// `manager`: the chat's, whose copies of the pictures in the runs were loaded (`LarkCardRuns.preloadIcons`).
+    @MainActor static func compose(_ runs: [LarkInline], base: LarkTextBase, manager: String? = nil) -> Text {
         var out: Text?
         var pending = AttributedString()
         func append(_ t: Text) { out = out.map { Text("\($0)\(t)") } ?? t }
@@ -172,7 +174,7 @@ struct LarkInlineText: View {
                 if let color { t = t.foregroundStyle(color) }
                 append(t)
             case .image(let url):
-                if let img = LarkMedia.shared.cached(url, size: larkThumbEdge(points: emojiPoints)) {
+                if let img = LarkMedia.shared.cached(LarkMedia.url(url, manager: manager), size: larkThumbEdge(points: emojiPoints)) {
                     flush()
                     append(Text(Image(uiImage: LarkMedia.fitted(img, points: emojiPoints))).baselineOffset(-emojiPoints * 0.2))
                 }

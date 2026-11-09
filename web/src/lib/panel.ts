@@ -25,7 +25,8 @@ export type Panel =
   | { kind: "review"; mid: string; sid: string; cwd: string; scope?: "uncommitted" | "branch" | "commit"; at?: { path: string; line: number; old?: boolean } }
   /** `sid`: the session whose message box takes the comments made in it (else the one last used). */
   | { kind: "file"; mid: string; path: string; cwd?: string; line?: number; to?: number; sid?: string }
-  | { kind: "link"; url: string; title?: string }
+  /** `manager`: the chat's it was opened from, which reads it (none: the default's). */
+  | { kind: "link"; url: string; title?: string; manager?: string }
   /** A task of the assistant's conversation: its agent's chat (docs/assistant/unified-entry.md). */
   | { kind: "task"; todo: string }
   /** An agent the main conversation's dock shows that no task stands for (#1113): its chat. */

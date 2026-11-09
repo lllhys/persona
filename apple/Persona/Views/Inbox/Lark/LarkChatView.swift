@@ -26,6 +26,9 @@ nonisolated enum LarkPosition {
 extension EnvironmentValues {
     /// The Feishu account of the chat a view is in (`LarkConversation.account`): the requests it makes name it.
     @Entry var larkAccount: Int? = nil
+    /// The manager the chat a view is in is read through (an inbox item's, `AppModel.linkManager`): the requests, pictures
+    /// and files it loads name it (docs/assistant/managers.md "Grouping"). nil: the default's, nothing named.
+    @Entry var larkManager: String? = nil
 }
 
 /// One Feishu chat, opened like Feishu: at the oldest unread message under a New Messages line (or at the latest
@@ -37,6 +40,8 @@ struct LarkChatView: View {
     @Environment(\.tabIsActive) private var tabActive
     @Environment(\.scenePhase) private var scenePhase
     var conversation: LarkConversation
+    /// The manager the chat is read, sent and summarized through: its inbox item's; nil: the default's (the messages page).
+    var manager: String? = nil
     var messageComposer = false
     @State private var encryptionDraft: LarkEncryptedDraft?
     @State private var encryptionStatus: LarkNativeEncryptionStatus?
@@ -98,6 +103,9 @@ struct LarkChatView: View {
     @State private var draftLoaded = false
     @State private var confirmDraftRecovery = false
     @State private var chatLink: HubLink?
+    /// A named manager's message display settings (its own account's), kept by the page: the hub link's copy is
+    /// the default's, which its other pages show.
+    @State private var managerDisplay = LarkMessageDisplayModel()
     @State private var accountProblem: String?
     @State private var legacyDraft: LarkOutboxSnapshot?
     @State private var legacyStore: LarkOutboxStore?
@@ -123,8 +131,9 @@ struct LarkChatView: View {
     /// A topic group's newest replies, for its cards.
     @State private var topicReplies = LarkTopicReplies()
 
-    init(conversation: LarkConversation, messageComposer: Bool = false) {
+    init(conversation: LarkConversation, manager: String? = nil, messageComposer: Bool = false) {
         self.conversation = conversation
+        self.manager = manager
         self.messageComposer = messageComposer
         // Restore only after binding the composer to its Hub credential.
         _text = State(initialValue: "")
@@ -135,17 +144,28 @@ struct LarkChatView: View {
 
     private var chatAPI: APIClient? {
         guard let chatLink, model.link(chatLink.group) === chatLink else { return nil }
-        return model.api(chatLink.group)?.lark(conversation.account)
+        return Self.client(model.api(chatLink.group), manager: manager, account: conversation.account)
     }
+
+    /// The chat's client from its group's: every request the page makes, the summary's too, names the chat's manager and
+    /// account. With no manager it names none, whichever manager the Persona page shows.
+    static func client(_ api: APIClient?, manager: String?, account: Int?) -> APIClient? {
+        api?.manager(manager).lark(account)
+    }
+
+    /// What the chat's messages may show (recalls, edit history): the default's from the hub link, a named manager's
+    /// from the page's own copy.
+    private var display: LarkMessageDisplayModel? { manager == nil ? chatLink?.larkDisplay : managerDisplay }
 
     private var isTopic: Bool { conversation.isTopic == true || foundTopic }
     /// How the topic cards read a topic's newest replies (`LarkTopicReplies`), on the chat's account. `chatAPI` spelled
     /// out: through it the closure would hold this page, whose state holds the closure. A function of its own, not in
     /// `.task`: a closure in `body`'s modifier chain is type-checked with the whole chain (Xcode 26.0, docs/lessons/ios.md).
     private func bindTopicReplies() {
-        let link = chatLink ?? model.hub, app = model, account = conversation.account
+        let link = chatLink ?? model.hub, app = model, account = conversation.account, manager = self.manager
         topicReplies.fetch = { id, limit in
-            guard let link, app.link(link.group) === link, let api = app.api(link.group)?.lark(account) else { throw CancellationError() }
+            guard let link, app.link(link.group) === link,
+                  let api = Self.client(app.api(link.group), manager: manager, account: account) else { throw CancellationError() }
             return try await api.larkThread(id, limit: limit).messages
         }
     }
@@ -208,7 +228,7 @@ struct LarkChatView: View {
             // Background sync (LarkSync) keeps this cache current, so it is usually already the latest. An unread chat
             // opens at its first unread message: the cache serves when it reaches back that far.
             if pager.messages.isEmpty, conversation.focus == nil,
-               let cached = LarkMessage.loadCached(LarkMessage.cacheName(conversation)), !cached.isEmpty,
+               let cached = LarkMessage.loadCached(LarkMessage.cacheName(conversation, manager: manager)), !cached.isEmpty,
                !opensAtMessage || cached.first.map({ !LarkPosition.less(LarkPosition.next(conversation.readPosition ?? "0"), $0.position) }) == true {
                 pager.messages = cached
                 pager.hasOlder = true
@@ -269,8 +289,9 @@ struct LarkChatView: View {
         .onChange(of: anchor) { pager.seen.formUnion(book.seen) }
         .onChange(of: mention) { pager.seen.formUnion(book.seen) }
         .onChange(of: copies) { _, now in adopted = LarkChatRows.adopting(now, into: adopted) }
-        // Outermost, so the sheets above (a thread, a profile, a reaction picker) are about the same account.
+        // Outermost, so the sheets above (a thread, a profile, a reaction picker) are about the same account and manager.
         .environment(\.larkAccount, conversation.account)
+        .environment(\.larkManager, manager)
         .environment(\.larkChatOutbox, outbox)
     }
 
@@ -375,8 +396,8 @@ struct LarkChatView: View {
         .overlay { placeholder }
         .overlay(alignment: .bottomTrailing) { jumpToLatestButton }
         .overlay(alignment: .topTrailing) { mentionButton }
-        .environment(\.larkDisplay, chatLink?.larkDisplay.policy ?? .hidden)
-        .onChange(of: chatLink?.larkDisplay.policy) { _, _ in
+        .environment(\.larkDisplay, display?.policy ?? .hidden)
+        .onChange(of: display?.policy) { _, _ in
             if chatAPI?.messagingSource != nil { topicReplies.stale() } // the source sends what the settings allow (#2138)
         }
         // What the source shows changed (its settings: its policy here stays the same, it applies them itself), or the
@@ -397,7 +418,7 @@ struct LarkChatView: View {
         })
         .environment(\.larkAddPin, outbox.identity != nil && !changingPin && !pinNeedsRecheck ? { addingPin = $0 } : nil)
         .modifier(LarkPinPresentation(pins: pinsModel, show: $showPins, target: $pinTarget, thread: $pinThread,
-            adding: $addingPin, conversation: conversation, display: chatLink?.larkDisplay.policy ?? .hidden, api: chatAPI,
+            adding: $addingPin, conversation: conversation, display: display?.policy ?? .hidden, api: chatAPI,
             finish: finishPinNavigation, add: addPin))
         .modifier(LarkFileOpener(request: $fileRequest))
         .sheet(item: $person) { LarkProfileView(person: $0) }
@@ -425,7 +446,7 @@ struct LarkChatView: View {
         } message: { Text(encryptionProblem ?? "") }
         .sheet(item: $debugPick) { m in LarkReactionPicker(message: m) { react(m, $0) } }
         .sheet(isPresented: Binding(get: { debugPost != nil }, set: { if !$0 { debugPost = nil } })) {
-            if let id = debugPost { LarkMomentsPostView(postID: id) }
+            if let id = debugPost { LarkMomentsPostView(postID: id, manager: manager) }
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Theme.Space.s) {
@@ -497,12 +518,12 @@ struct LarkChatView: View {
             if messageComposer {
                 LarkEncryptionModeBar(draft: $encryptionDraft,
                     canEncrypt: attachments.isEmpty && !isTopic && !checkingEncryption
-                        && (chatAPI?.messagingSource == nil || chatLink?.larkDisplay.policy.seals == true),
+                        && (chatAPI?.messagingSource == nil || display?.policy.seals == true),
                     checking: checkingEncryption, selectEncrypted: {
                         if encryptionDraft == nil { encryptionDraft = LarkEncryptedDraft() }
                         checkEncryption(openCovers: false)
                     }, pickCover: { checkEncryption(openCovers: true) }, picksCover: chatAPI?.messagingSource == nil,
-                    seals: chatAPI?.messagingSource == nil || chatLink?.larkDisplay.policy.seals == true)
+                    seals: chatAPI?.messagingSource == nil || display?.policy.seals == true)
             }
             if !messageComposer, encryptionDraft != nil {
                 #if os(iOS) || os(visionOS)
@@ -624,7 +645,7 @@ struct LarkChatView: View {
         resetHistory()
         if r.topic == true { foundTopic = true }
         pager.replace(with: r)
-        if !r.hasNewer.map({ $0 }).isTrue { StateCache.save(LarkMessage.cacheName(conversation), Array(r.messages.suffix(80))) }
+        if !r.hasNewer.map({ $0 }).isTrue { StateCache.save(LarkMessage.cacheName(conversation, manager: manager), Array(r.messages.suffix(80))) }
     }
 
     /// Messages, or mine on their way: a problem is then one line on top rather than the page's placeholder.
@@ -719,8 +740,8 @@ struct LarkChatView: View {
     }
 
     private func refreshDisplay() async {
-        guard let link = chatLink, let api = chatAPI else { return }
-        await link.larkDisplay.refresh(using: api)
+        guard let display, let api = chatAPI else { return }
+        await display.refresh(using: api)
     }
 
     /// The newest page again as the whole window, the pages held dropped (LarkSync.displayStale).
@@ -872,7 +893,7 @@ struct LarkChatView: View {
     private func jumpToLatest() async {
         let drags = book.drags
         if pager.hasNewer, !pager.catchingUp {
-            if pager.toTail(cached: LarkMessage.loadCached(LarkMessage.cacheName(conversation)) ?? []) {
+            if pager.toTail(cached: LarkMessage.loadCached(LarkMessage.cacheName(conversation, manager: manager)) ?? []) {
                 resetHistory()
                 anchor = nil
                 following = true
@@ -1223,7 +1244,7 @@ struct LarkChatView: View {
                 model.toast = Toast(String(localized: "Send encrypted text from the Messages page."), style: .error); return
             }
             if api.messagingSource != nil {
-                guard chatLink?.larkDisplay.policy.seals == true else {
+                guard display?.policy.seals == true else {
                     model.toast = Toast(String(localized: "The message source can't send encrypted messages right now. What you typed is kept."), style: .error); return
                 }
                 // The token seals the words it was prepared for: changed words or quote are prepared again.
@@ -1372,7 +1393,7 @@ struct LarkChatView: View {
         let link = chatLink
         queue.deliver(id, client: {
             guard let link, model.link(link.group) === link else { return nil }
-            return model.api(link.group)?.lark(conversation.account)
+            return Self.client(model.api(link.group), manager: manager, account: conversation.account)
         }, feed: conversation.id) {
             guard let link, model.link(link.group) === link, outbox === queue else { return }
             await refreshLatest()
@@ -1404,7 +1425,7 @@ struct LarkChatView: View {
         let prompt = String(localized: "Read the recent messages in my Lark chat “\(conversation.name)” (Lark gateway feedId \(conversation.id)), summarize the key points, list what I need to reply to or handle, and suggest replies.")
         do {
             let s = try await AssistantStart.run(receipts: model.hubFeatures.contains(AssistantStart.feature)) { op in
-                try await api.showing(nil).startConversation(prompt: prompt, opID: op) // the default manager's, whichever page shows
+                try await api.showing(nil).startConversation(prompt: prompt, opID: op) // the chat's manager's; the default's names none, whichever page shows
             }
             model.began(s, text: prompt)
             model.openAssistantConversation(s.key)

@@ -684,6 +684,8 @@ final class AppModel {
     private func forgetDemoChats() {
         let demo = DemoHub.shared.sessionKeys
         drafts = drafts.filter { !demo.contains($0.key) }
+        heldAttachments = heldAttachments.filter { !demo.contains($0.key) }
+        starterDrafts = [:] // the demo's group is the empty one, as a hub's may be
         if let k = assistantCurrent, demo.contains(k) { assistantCurrent = nil }
         if let k = openChat, demo.contains(k) { openChat = nil }
         for key in demo { ChatCache.remove(key) }
@@ -718,6 +720,9 @@ final class AppModel {
         chats = [:]
         subscribers = [:]
         shown = []
+        // What was picked for a next message goes with the hubs it was for (#2626).
+        heldAttachments = [:]
+        starterDrafts = [:]
         saveOutbox()
     }
 
@@ -2041,6 +2046,32 @@ final class AppModel {
 
     /// Unsent composer text per chat (also where an edited queued message lands); kept across launches.
     var drafts: [SessionKey: String] = AppModel.savedDrafts() { didSet { saveDrafts(); markDrafts() } }
+    /// What each chat's composer holds besides its text (#2626): photos, videos and file uploads, in memory, as the
+    /// text is in `drafts`. A composer built again keeps them: the whole tree is built again when iOS takes the app's
+    /// snapshots in another width on its way to the background (iPhone Duo open, `RootView.usesShell`), and the photos
+    /// picked were gone on the way back.
+    @ObservationIgnored private var heldAttachments: [SessionKey: ComposerAttachments] = [:]
+
+    /// The chat's composer's photos, videos and file uploads, made the first time it asks.
+    func composerAttachments(_ key: SessionKey) -> ComposerAttachments {
+        if let held = heldAttachments[key] { return held }
+        let held = ComposerAttachments()
+        heldAttachments[key] = held
+        return held
+    }
+
+    /// The new conversation's composer per hub group and page ("" the assistant's, `Session.healthSpace` Health's): its
+    /// text, quotes and attachments, kept as a chat's are (#2626). Another hub's page starts empty: its files and
+    /// quotes would name the other hub's machines and sessions.
+    @ObservationIgnored private var starterDrafts: [String: StarterDraft] = [:]
+
+    func starterDraft(_ page: String) -> StarterDraft {
+        let key = hubGroup + "/" + page
+        if let draft = starterDrafts[key] { return draft }
+        let draft = StarterDraft()
+        starterDrafts[key] = draft
+        return draft
+    }
     @ObservationIgnored let draftWriter = Debouncer()
     /// A send the computer refused because its input box holds a draft (SendSafety.swift).
     var sendRefusal: SendRefusal?
@@ -2767,6 +2798,7 @@ final class AppModel {
         interactions = interactions.filter { !gone.contains($0.value.group) }
         for key in chats.keys where gone.contains(key.group) { dropChat(key) }
         drafts = drafts.filter { !gone.contains($0.key.group) }
+        heldAttachments = heldAttachments.filter { !gone.contains($0.key.group) }
         if let k = openChat, gone.contains(k.group) { openChat = nil }
         if let k = assistantCurrent, gone.contains(k.group) { assistantCurrent = nil }
         for g in gone {

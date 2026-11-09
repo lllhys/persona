@@ -70,7 +70,7 @@ nonisolated enum VoicePlatform: Equatable, Sendable {
 /// Whether Voice Chat is offered on a conversation, and if not, why (the 「+」 menu says the why).
 nonisolated enum VoiceAvailability: Equatable, Sendable {
     case available(extensionID: String)
-    /// Not on this platform (the Mac, visionOS).
+    /// Not on this platform (the Mac).
     case unsupported
     /// No conversation to bind (the assistant's home before there is one).
     case noConversation

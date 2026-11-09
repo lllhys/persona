@@ -15,7 +15,7 @@ when the manager stops waiting, hub stops too, leaving no queued request. Inbox 
 
 **Sources also belong to the manager** (2026-11-05, moved with connectors; `server/internal/extmgr/inbox.go`, `docs/extensions/extensions.md`, "Ownership"). Source-related mentions of "hub" below now live in the manager, in the same process as the Inbox, without bus handoff. Connectors and plugins collect through `inbox.collect` on a schedule
 (every 2 minutes, connector `changed`, Lark events, mail every 3 minutes) and deliver raw collected data to the manager (bus call `inbox.collected`, once per round: each source's items and capabilities,
-each mail account's latest page, reading at most 4 accounts concurrently and delivering in account order, skipping failed mail reads. Failed connector reads still appear in the round with empty `things` and a short `read_error` code (see "Triage status" below); the manager retains their existing items. Each round carries the hub run's `epoch` and round `seq`; delayed rounds older than one already used are discarded). Source operations requested by the manager use
+each mail account's latest page, reading at most 4 accounts concurrently and delivering in account order. Failed connector reads still appear in the round with empty `things` and a short `read_error` code (see "Triage status" below); the manager retains their existing items. A mail account that fails to read is left out of `mail.accounts` as before and named in `mail.failed: [{id, email, read_error}]` instead (#1849), so the manager keeps its mail and says it is behind. Each round carries the hub run's `epoch` and round `seq`; delayed rounds older than one already used are discarded). Source operations requested by the manager use
 `app.call inbox.*` through hub: read a mail's full body (translation needs text preserving paragraphs and links), send replies (mail, connectors, or the Lark plugin),
 `settle`, event grouping's `group.tool` / `group.fallback` / `group.append`, read hub triage rules, AI twin configuration, and plugin-provided connectors
 (`inbox.config`), and current translation model (`inbox.translate_fingerprint`). On item changes, the manager emits `inbox.changed`; outside the bus read loop, hub
@@ -46,6 +46,11 @@ or the manager restarts and retries). A previous interrupted send (hub stopped o
 - Manager items are in the database: manager or hub restarts reload `inbox_items`. Hub restarts launch the manager again, with a full round on connection.
 - Connected manager but stored items / mutes unreadable (database unresponsive): Inbox APIs return `503 inbox_unavailable`, submitted rounds are rejected (hub retains them for retry),
   and nothing is written, avoiding overwriting database state with incomplete memory. Retry reading on next use.
+- A pull to refresh whose collect call fails (the sources' side not started yet, the round not handed over): `POST /api/v1/inbox/refresh` answers `502 inbox_refresh_failed`
+  (`error` says in the request's language that the sources couldn't be read and the list wasn't updated, `detail` is the collect's error, `retryable: true`) instead of
+  `200` with the list as it was, which looked like a refresh that worked (#1849). The web shows its "Couldn't refresh" toast, Android its refresh-failed notice with Retry;
+  iOS / Mac keep the list and show the error only while the list is empty. A source that fails inside a round that ran is not this: that round answers `200` and names
+  the source in `triage.sources[].read_error`.
 - Readable store, but an item's row cannot be written during a collection round: what the round changed in that item (new items, new messages or mail, a mail's text, items filed as
   over, read elsewhere, settled, muted or superseded) is undone to what the row holds, and nothing is announced for it (`inbox_rollback.go`, #91), unless something else moved the item
   meanwhile (that move's own save writes the row). It comes back with the next round, because the sources hand in the same things again: connectors answer `inbox.collect` from their
@@ -138,9 +143,16 @@ a summary up to 40 characters, and a short reason:
 - **Triage status**: `GET /api/v1/inbox` (and refresh responses) includes `triage`: `{state, reason, waiting, sources?}`. `waiting` counts each plugin source's new items withheld in its latest triage due to failure without fallback,
   or not reaching them (hub-owned sources are never withheld and are excluded). `state` is the most important cause: `unconfigured` (no triage model) > `paused` (no quota / full concurrency) > `error` (model error) >
   `timeout` (too slow) > `behind` (unfinished batch). `reason` is human-readable; `sources: [{source, name, state, reason, waiting, read_error?, read_reason?}]` separates sources.
-  `read_error` reports a failed source read in the latest round (`timeout` / `rate_limited` / `failed`; unknown codes become `failed`), and `read_reason` is a human-readable sentence in all three languages.
+  `read_error` reports a failed source read in the latest round (`timeout` / `rate_limited` / `login_refused` / `failed`; unknown codes become `failed`), and `read_reason` is a human-readable sentence in all three languages.
   Existing items remain; previously collected data still present in a hub-held round is also used. Clear the diagnostic on the next successful read. Memory only: after hub or manager restart, it is unknown until the next round.
   Memory only, recomputed per round for read sources; unread sources retain status until removed. Nothing waiting yields `{"state": "ok", "waiting": 0}`.
+  - **Mail accounts** (#1849): each mail account that the latest mail round (every 3 minutes, or a refresh) could not read is its own entry, `source: "mail:<account id>"`
+    (the name a source that moves between managers has) with `name` its address, `state: "ok"`, `waiting: 0`. Codes: `timeout` for the round's deadline, the network's, or the mail service's own
+    20-second limit; `login_refused` when, after the failed read, mail settings show the account's error (its server refuses the login: a wrong password or authorization code,
+    a revoked OAuth grant); `failed` for anything else. `login_refused` gets its own words because it doesn't clear by itself: the line tells the owner that the account needs
+    fixing, while the server's exact answer stays in mail settings. An account deleted during the round is not named. A round without mail (a poll) keeps the entries;
+    the next mail round replaces them, and they go with mail itself. Mixed versions: a sender from before this change (an older hub or extension manager) has no
+    `mail.failed`, so the account is left out as before and nothing is named here; an Inbox from before this change ignores the field and reads the round as before.
   Apps use it for the waiting-for-triage banner below, and Android and web show sources with a `read_error` in a quiet neutral notice under it, one line per source, "name: `read_reason`" (#1849; mock `MOCK_INBOX_UNREAD`).
 - **Waiting-for-triage banner** (#1773, consistent on web, iOS / Mac, Android): if `triage.state` is not `ok` and `waiting > 0`, show a non-dismissible caution-colored (orange) banner at the top of the Inbox list, below search / filters and above the first section.
   It follows list refresh (Inbox pushes, reconnect, pull-to-refresh), disappearing on recovery to `ok`. Older hubs without `triage` show none.
@@ -452,16 +464,22 @@ To-dos do not store a separate tree. Code: `assistant/inbox_parent.go`.
 
 - Hub background collection (`server/internal/extmgr/inbox.go`, delivering data to the manager for item composition): collect Lark chats 3 seconds after real-time Lark events; this round reads chats only. Every 2 minutes, also read document notifications,
   Moments, and other connectors (their events / setting changes also trigger this full round); mail every 3 minutes. Previously every Lark event read all of them (#674). Pull-to-refresh
-  (`POST /api/v1/inbox/refresh`) collects everything immediately. Changes write `inbox_items` and push `{"type":"inbox"}`, prompting App refetch; new plugin-connector items store / push only after triage ("AI triage").
+  (`POST /api/v1/inbox/refresh`) collects everything immediately (a failed collect answers `502 inbox_refresh_failed` instead of the list, see "Ownership" above). Changes write `inbox_items` and push `{"type":"inbox"}`, prompting App refetch; new plugin-connector items store / push only after triage ("AI triage").
 - **Done** is recorded only in Persona (`done_at`, `done_by=user`; ignored items use `dismissed`, see "Clean up all"; one replaced by the new thread rule uses `superseded`). It does not change Lark or mail read state. Done items remain listed for 3 days, reopenable at the bottom,
   and the manager holds them in memory for 8 days (meanwhile preventing old still-unread Lark messages from resurfacing); it loads only open items and those done within 8 days.
 - **History** (#2200): done rows stay in `inbox_items` for 90 days (`inboxKeepHistory`); the manager deletes older ones at load and from the collection rounds at most hourly.
   `GET /api/v1/inbox/done` pages them newest done first (`inbox_history.go`, `docs/protocol/protocol.md`), keyset on `(done_at, id)`: a bulk action files many items at one instant,
-  so a `done_at`-only cursor would repeat or skip them. The existing index `inbox_items_open` (`done_at` first) serves the pages; no migration. A manager without a database pages the done items it holds.
+  so a `done_at`-only cursor would repeat or skip them. The index `inbox_items_open` (`done_at, id` since manager migration `0471`) serves the pages in their order. A manager without a database pages the done items it holds.
   Each manager pages its own: the hub stamps the items with `manager` but never merges pages (a cursor is one manager's); the apps ask each manager and merge.
   A history item memory no longer holds still opens (`GET /api/v1/inbox/{id}` reads its row, read-only) and can be reopened (`/{id}/done` with `done:false`, `/bulk` `reopen`,
   `/done` with `done:false` load its row into memory first); filing it again finds no item (404 / `missing`), as before. Without a database there is nothing to fall back to.
   Deleting a source's data (`inbox.forget`) deletes its history rows too.
+- **Storage** (#2779, manager migration `0471`): `inbox_items.data` is `json` compressed with lz4, the bytes the manager wrote; every reader unmarshals them in Go,
+  so the start read no longer turns jsonb back into text. `source` is a generated column of `data->>'source'` with its own index, which `DeleteInboxSource` reads
+  instead of every document. `inbox_items_open` is `(done_at, id)`, so an upsert of an open item changes no indexed column and can be a HOT update.
+  Writes still need valid JSON without `\u0000` in a string, as with jsonb: computing `source` refuses them (`docs/lessons/server.md`, "Inbox rows as json").
+  A server built without lz4, or a Postgres before 14, gets the same rewrite with the default compression. The migration also adds `jsonb_typeof(json)`, so the
+  done page of a build from before it still runs if a hub goes back to that build (`docs/operations/hub-restart.md`); it can be dropped once no such build can run.
 - Read elsewhere (Lark / another mail client): mark `read`; non-Needs you items become done (`done_by=read`). Needs you remains open, but unread count becomes zero and me / everyone mention flags clear (no longer unread mentions). Rule-tiered items are retiered using current rules after reading; no longer Needs you means done.
   Already-read open items with remaining unread count or stale rule tiers (read before a rule change) are reconciled next round (#798).
 - A reply by me in Lark (latest chat message is mine, newer than the item) handles it (`done_by=replied`).

@@ -121,18 +121,30 @@ func (s *Service) fleetSnapshot() FleetState {
 }
 
 // fleetInputs is every machine's agents as the fleet sees them, the pending interactions (oldest first), and which of
-// those are the user's (pendingCards).
+// those are the user's (pendingCards). Each agent points into its machine's decorated list, a copy of its own that
+// nothing else holds and the fleet only reads: liveLoop builds the fleet up to ten times a second, and a copy of every
+// session per agent (1.5 KB each) was most of what that allocated.
 func (s *Service) fleetInputs() ([]fleetInput, []proto.Interaction, map[string]bool) {
-	var agents []fleetInput
-	for _, m := range s.fleetMachines() {
-		for _, sess := range s.decorated(m.ID) {
+	machines := s.fleetMachines()
+	lists := make([][]proto.Session, len(machines))
+	n := 0
+	for i, m := range machines {
+		lists[i] = s.decorated(m.ID)
+		n += len(lists[i])
+	}
+	agents := make([]fleetInput, 0, n)
+	turns := s.turnsBook()
+	for i, m := range machines {
+		list := lists[i]
+		for j := range list {
+			sess := &list[j]
 			if sess.Quiet { // a quiet task's agent: the main conversation tells about it (#1731)
 				continue
 			}
 			agents = append(agents, fleetInput{
 				// Its own space, not muted's lookup of the node's row: that scanned the machine's list once per session.
 				Machine: m.Name, Session: sess, Muted: s.mutedAs(m.ID, sess.SessionID, sess.SpaceName),
-				TurnStart: s.turnsBook().startOf(m.ID + "/" + sess.SessionID),
+				TurnStart: turns.startOf(m.ID + "/" + sess.SessionID),
 			})
 		}
 	}
@@ -166,10 +178,11 @@ func (s *Service) fleetStats() FleetStats {
 	return st
 }
 
-// fleetInput is one agent as the fleet sees it.
+// fleetInput is one agent as the fleet sees it. Session is read, never written: it points into a list the fleet's
+// caller owns.
 type fleetInput struct {
 	Machine   string // display name
-	Session   proto.Session
+	Session   *proto.Session
 	Muted     bool
 	TurnStart time.Time // zero: unknown
 }
@@ -182,35 +195,43 @@ func buildFleet(agents []fleetInput, ixs []proto.Interaction) FleetState {
 }
 
 // needer is an agent that needs the user, and the card that stands for it: its oldest (nil: it waits in a terminal
-// dialog without one).
+// dialog without one). card points into the cards needsYou was given.
 type needer struct {
 	agent fleetInput
 	card  *proto.Interaction
 }
+
+// agentKey is an agent's machine and session, what its cards name it by.
+type agentKey = [2]string
+
+func keyOf(sess *proto.Session) agentKey { return agentKey{sess.MachineID, sess.SessionID} }
 
 // needsYou is the agents that need the user, one each, as the Agents list has them (#3571): those with a card by their
 // oldest card that stands (ixs come oldest first), then those in a terminal dialog without one, in agents' order.
 // counts says which agents count at all, stands which cards may stand for one; the assistant's own dialog never
 // counts. The Live Activity and Persona Link's summary (fleet_attention.go) differ in those, not in this.
 func needsYou(agents []fleetInput, ixs []proto.Interaction, counts func(fleetInput) bool, stands func(proto.Interaction) bool) []needer {
-	byKey := map[string]fleetInput{}
-	for _, a := range agents {
-		if counts(a) {
-			byKey[a.Session.MachineID+"/"+a.Session.SessionID] = a
-		}
-	}
 	var out []needer
-	asked := map[string]bool{}
-	for _, ix := range ixs {
-		key := ix.MachineID + "/" + ix.SessionID
-		if a, ok := byKey[key]; ok && !asked[key] && stands(ix) {
-			asked[key] = true
-			out = append(out, needer{agent: a, card: &ix})
+	var asked map[agentKey]bool
+	if len(ixs) > 0 {
+		byKey := make(map[agentKey]int, len(agents)) // the agent's place in agents: the last one listed under its key
+		for i, a := range agents {
+			if counts(a) {
+				byKey[keyOf(a.Session)] = i
+			}
+		}
+		asked = map[agentKey]bool{}
+		for i := range ixs {
+			ix := &ixs[i]
+			key := agentKey{ix.MachineID, ix.SessionID}
+			if a, ok := byKey[key]; ok && !asked[key] && stands(*ix) {
+				asked[key] = true
+				out = append(out, needer{agent: agents[a], card: ix})
+			}
 		}
 	}
 	for _, a := range agents {
-		key := a.Session.MachineID + "/" + a.Session.SessionID
-		if counts(a) && !asked[key] && a.Session.State == proto.StateNeedsYou && !a.Session.Assistant {
+		if counts(a) && a.Session.State == proto.StateNeedsYou && !a.Session.Assistant && !asked[keyOf(a.Session)] {
 			out = append(out, needer{agent: a})
 		}
 	}
@@ -224,30 +245,26 @@ func liveCounts(a fleetInput) bool { return !a.Session.IsCodexSubagent() && !a.M
 // does not: the Fleet is shared with legacy clients, whose terminal fallback stays (the agent shows as in a dialog).
 func cardStands(ix proto.Interaction) bool { return ix.Kind != proto.IxElicitation }
 
-// buildFleetIn is buildFleet with the texts for people in l (the user's language).
+// shownAgent is a working or finished agent the Live Activity may list, and the time it is ordered by.
+type shownAgent struct {
+	agent *fleetInput
+	since float64
+}
+
+// buildFleetIn is buildFleet with the texts for people in l (the user's language). Every agent is counted, but only
+// the items shown (fleetMaxItems) are written out: their titles, places and lines are most of what a fleet costs.
 func buildFleetIn(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction) FleetState {
 	var st FleetState
-	var needs, working, unread []FleetItem
-	asked := map[string]bool{}
-	for _, n := range needsYou(agents, ixs, liveCounts, cardStands) {
-		sess := n.agent.Session
-		key := sess.MachineID + "/" + sess.SessionID
-		asked[key] = true
-		item := FleetItem{ID: key, Title: agentTitle(sess, fleetTitleMax), Place: agentPlace(n.agent.Machine, sess, fleetPlaceMax),
-			Kind: proto.IxScreen, Detail: i18n.T(l, "hub-liveactivity.screen")}
-		if ix := n.card; ix != nil {
-			item.Kind, item.Detail = ix.Kind, clip(oneLine(interactionDetail(l, *ix)), fleetDetailMax)
-			item.Interaction, item.Since = ix.ID, unixSeconds(ix.CreatedAt)
-			if len(ix.Fields) > 0 {
-				item.Interaction = "" // what it asks for (a password) is filled in in the app: no Allow / Deny on the activity
-			}
-		}
-		needs = append(needs, item)
+	needs := needsYou(agents, ixs, liveCounts, cardStands)
+	asked := make(map[agentKey]bool, len(needs))
+	for _, n := range needs {
+		asked[keyOf(n.agent.Session)] = true
 	}
-	for _, a := range agents {
+	var working, unread []shownAgent
+	for i := range agents {
+		a := &agents[i]
 		sess := a.Session
-		key := sess.MachineID + "/" + sess.SessionID
-		if !liveCounts(a) || asked[key] {
+		if !liveCounts(*a) || len(asked) > 0 && asked[keyOf(sess)] {
 			continue
 		}
 		switch sess.State {
@@ -256,38 +273,16 @@ func buildFleetIn(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction) Fle
 				st.Assistant = true
 				continue
 			}
-			since := a.TurnStart
-			if sess.BackgroundWorking {
-				var started time.Time
-				for _, w := range sess.Workflows {
-					if w.Running && !w.StartedAt.IsZero() && (started.IsZero() || w.StartedAt.Before(started)) {
-						started = w.StartedAt
-					}
-				}
-				if !started.IsZero() {
-					since = started
-				}
-			}
-			if since.IsZero() {
-				since = sess.UpdatedAt
-			}
-			it := FleetItem{ID: key, Title: agentTitle(sess, fleetTitleMax), Place: agentPlace(a.Machine, sess, fleetPlaceMax), Kind: "working",
-				Since: unixSeconds(since)}
-			if sess.BackgroundWorking {
-				it.Background, it.Detail = true, backgroundDetail(l, sess)
-				it.Progress = backgroundProgress(sess)
-			}
-			working = append(working, it)
+			working = append(working, shownAgent{a, unixSeconds(workingSince(a))})
 		case proto.StateUnread:
 			if sess.Assistant || sess.Loop != nil {
 				continue
 			}
-			unread = append(unread, FleetItem{ID: key, Title: agentTitle(sess, fleetTitleMax), Place: agentPlace(a.Machine, sess, fleetPlaceMax), Kind: "unread",
-				Detail: clip(oneLine(firstLine(sess.LastText)), fleetDetailMax), Since: unixSeconds(sess.UpdatedAt)})
+			unread = append(unread, shownAgent{a, unixSeconds(sess.UpdatedAt)})
 		}
 	}
-	sort.SliceStable(working, func(i, j int) bool { return working[i].Since < working[j].Since })
-	sort.SliceStable(unread, func(i, j int) bool { return unread[i].Since > unread[j].Since })
+	sort.SliceStable(working, func(i, j int) bool { return working[i].since < working[j].since })
+	sort.SliceStable(unread, func(i, j int) bool { return unread[i].since > unread[j].since })
 	st.NeedsYou, st.Working, st.Unread = len(needs), len(working), len(unread)
 	switch {
 	case st.NeedsYou > 0:
@@ -298,17 +293,75 @@ func buildFleetIn(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction) Fle
 		st.Phase = "done"
 	}
 	if len(working) > 0 {
-		st.WorkingSince = working[0].Since
+		st.WorkingSince = working[0].since
 	}
-	st.Items = append(append(append([]FleetItem{}, needs...), working...), unread...)
-	if len(st.Items) > fleetMaxItems {
-		st.Items = st.Items[:fleetMaxItems]
+	st.Items = make([]FleetItem, 0, min(fleetMaxItems, len(needs)+len(working)+len(unread)))
+	for _, n := range needs[:min(len(needs), fleetMaxItems)] {
+		st.Items = append(st.Items, needItem(l, n))
+	}
+	for _, w := range working[:min(len(working), fleetMaxItems-len(st.Items))] {
+		st.Items = append(st.Items, workingItem(l, w))
+	}
+	for _, u := range unread[:min(len(unread), fleetMaxItems-len(st.Items))] {
+		sess := u.agent.Session
+		st.Items = append(st.Items, FleetItem{ID: sess.MachineID + "/" + sess.SessionID, Title: agentTitle(sess, fleetTitleMax),
+			Place: agentPlace(u.agent.Machine, sess, fleetPlaceMax), Kind: "unread",
+			Detail: clip(oneLine(firstLine(sess.LastText)), fleetDetailMax), Since: u.since})
 	}
 	return st
 }
 
+// workingSince is when a working agent started what it is doing: its turn, or its oldest running workflow while it
+// works in the background; its last update when neither is known.
+func workingSince(a *fleetInput) time.Time {
+	sess := a.Session
+	since := a.TurnStart
+	if sess.BackgroundWorking {
+		var started time.Time
+		for _, w := range sess.Workflows {
+			if w.Running && !w.StartedAt.IsZero() && (started.IsZero() || w.StartedAt.Before(started)) {
+				started = w.StartedAt
+			}
+		}
+		if !started.IsZero() {
+			since = started
+		}
+	}
+	if since.IsZero() {
+		since = sess.UpdatedAt
+	}
+	return since
+}
+
+// needItem is the item of an agent that needs the user, by the card that stands for it.
+func needItem(l i18n.Lang, n needer) FleetItem {
+	sess := n.agent.Session
+	item := FleetItem{ID: sess.MachineID + "/" + sess.SessionID, Title: agentTitle(sess, fleetTitleMax),
+		Place: agentPlace(n.agent.Machine, sess, fleetPlaceMax), Kind: proto.IxScreen, Detail: i18n.T(l, "hub-liveactivity.screen")}
+	if ix := n.card; ix != nil {
+		item.Kind, item.Detail = ix.Kind, clip(oneLine(interactionDetail(l, *ix)), fleetDetailMax)
+		item.Interaction, item.Since = ix.ID, unixSeconds(ix.CreatedAt)
+		if len(ix.Fields) > 0 {
+			item.Interaction = "" // what it asks for (a password) is filled in in the app: no Allow / Deny on the activity
+		}
+	}
+	return item
+}
+
+// workingItem is the item of a working agent.
+func workingItem(l i18n.Lang, w shownAgent) FleetItem {
+	sess := w.agent.Session
+	it := FleetItem{ID: sess.MachineID + "/" + sess.SessionID, Title: agentTitle(sess, fleetTitleMax),
+		Place: agentPlace(w.agent.Machine, sess, fleetPlaceMax), Kind: "working", Since: w.since}
+	if sess.BackgroundWorking {
+		it.Background, it.Detail = true, backgroundDetail(l, sess)
+		it.Progress = backgroundProgress(sess)
+	}
+	return it
+}
+
 // agentTitle is the agent's title in one line of at most n runes: its project's folder when it has none.
-func agentTitle(sess proto.Session, n int) string {
+func agentTitle(sess *proto.Session, n int) string {
 	t := transcript.Title(sess.Title)
 	if t == "" || t == "Claude Code" {
 		t = path.Base(sess.Cwd)
@@ -317,7 +370,7 @@ func agentTitle(sess proto.Session, n int) string {
 }
 
 // agentPlace is "machine · space › tab", the subtitle pushes use too, in at most n runes.
-func agentPlace(machine string, sess proto.Session, n int) string {
+func agentPlace(machine string, sess *proto.Session, n int) string {
 	place := machine
 	if sess.SpaceName != "" {
 		place += " · " + sess.SpaceName
@@ -355,7 +408,7 @@ func unixSeconds(t time.Time) float64 {
 
 // shownWorkflow is the running workflow a background-working agent's item names: the first one (Workflows are newest
 // first), as the web's workflow line picks it.
-func shownWorkflow(sess proto.Session) (proto.Workflow, bool) {
+func shownWorkflow(sess *proto.Session) (proto.Workflow, bool) {
 	for _, w := range sess.Workflows {
 		if w.Running {
 			return w, true
@@ -368,7 +421,7 @@ func shownWorkflow(sess proto.Session) (proto.Workflow, bool) {
 // 169/185"), else how many background tasks. A long name or phase is what gets clipped, never the counts at the end:
 // they are what the bar shows (backgroundProgress), so the line changes whenever the bar does and the bar costs no
 // push of its own (#3437).
-func backgroundDetail(l i18n.Lang, sess proto.Session) string {
+func backgroundDetail(l i18n.Lang, sess *proto.Session) string {
 	if w, ok := shownWorkflow(sess); ok {
 		parts := []string{cmp.Or(w.Name, w.Summary, "workflow")}
 		if w.Phase != "" {
@@ -390,7 +443,7 @@ func backgroundDetail(l i18n.Lang, sess proto.Session) string {
 // clipping never cuts), of the same workflow, so the bar and the line beside it agree and the bar never changes the
 // content by itself (the push budget, docs/live-activity.md). Nil without a running workflow, or before it started an
 // agent.
-func backgroundProgress(sess proto.Session) *FleetProgress {
+func backgroundProgress(sess *proto.Session) *FleetProgress {
 	w, ok := shownWorkflow(sess)
 	if !ok || w.AgentsStarted <= 0 {
 		return nil

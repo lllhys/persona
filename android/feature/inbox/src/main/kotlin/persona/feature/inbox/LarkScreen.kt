@@ -70,7 +70,7 @@ fun LarkScreen(repository: InboxRepository, route: LarkRoute, navigator: Navigat
             catch (_: Exception) { LarkListNavigation() }
             value = store to navigation
         }
-        LarkLinkHost(repository) {
+        LarkLinkHost(repository, itemManager(repository, route.itemId)) {
             val loaded = opening
             if (loaded == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { JLoading() }
             else key(source?.scope, route) {

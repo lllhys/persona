@@ -3,6 +3,7 @@ import { managedProvider } from "../lib/compatibility";
 // built-in claude, Persona ones kept by the hub — docs/integrations/launchers.md), this browser and the other devices, about. The same data as the app's Settings.
 import { BASE, stripBase } from "../lib/base";
 import { href } from "../lib/router";
+import { takeOverlayEntry } from "../lib/back-close";
 import { useScrollMemory } from "../lib/scroll-memory";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, enc, errorText } from "../lib/api";
@@ -50,7 +51,7 @@ import { ProviderWizard } from "./settings/ProviderWizard";
 import { ProviderImport } from "./settings/ProviderImport";
 import { builtinRows, loadLaunchers, rcFilesOf, rcGroups, syncStateText, type LauncherSync } from "../lib/launcher-list";
 import { TerminalModeRow } from "./settings/TerminalModeSetting";
-import { FROM_LIST, NAV_GROUPS, openedFromList, redirectLegacySettings, searchSettings, settingsAt, settingsHref, SENT_SUB, TAB_INFO, TABS, type SearchGroup, type SettingsSection, type Tab } from "./settings/nav";
+import { categoryState, FROM_LIST, itemIsPage, itemState, NAV_GROUPS, openedFromSub, redirectLegacySettings, searchSettings, settingsAt, settingsHref, SENT_SUB, stepsToList, TAB_INFO, TABS, type SearchGroup, type SettingsSection, type Tab } from "./settings/nav";
 import { SHEET_QUERY, useMedia } from "../ui/overlay";
 import { formatList, t } from "../i18n";
 
@@ -179,15 +180,30 @@ export function Settings({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const configurationOwner = useRef<string | null>(new URLSearchParams(location.search).get("manager"));
   const pick = (k: Tab, id: string | null = null, section?: SettingsSection) => {
     configurationOwner.current = new URLSearchParams(location.search).get("manager") ?? configurationOwner.current;
+    const state: unknown = history.state;
+    // Out of an item's page opened on its category's page: back to that page's entry, as Back does, so neither a copy of
+    // it nor the item is left to go back to. A sheet open over the item has an entry of its own on top: off with both,
+    // its marker taken first so its close does not go back once more.
+    if (k === tab && sub && !id && openedFromSub(state)) {
+      setAt({ tab: k, sub: null, section: section ?? null });
+      if (!takeOverlayEntry()) return history.back();
+      history.replaceState(null, "", location.href);
+      return history.go(-2);
+    }
     setAt({ tab: k, sub: id, section: section ?? null });
     const to = settingsHref(k, id, phone, k === "persona" || k === "models" || k === "hub" || k === "knowledge" ? configurationOwner.current : null, section);
-    // from the phone's list the category goes on top of it, so Back returns to the list
+    // from the phone's list the category goes on top of it, and an item's page on top of its category's page, so Back
+    // returns to each; another item of the category keeps the entry's way back, another category only the way to the list
     if (listed) history.pushState({ [FROM_LIST]: true }, "", BASE + to);
-    else history.replaceState(openedFromList(history.state) ? history.state : null, "", BASE + to);
+    else if (k === tab && !sub && id && itemIsPage(k)) {
+      if (takeOverlayEntry()) history.replaceState(itemState(state), "", BASE + to);
+      else history.pushState(itemState(state), "", BASE + to);
+    } else history.replaceState(k === tab && sub && id && openedFromSub(state) ? state : categoryState(state), "", BASE + to);
   };
   const toList = () => {
     configurationOwner.current = new URLSearchParams(location.search).get("manager") ?? configurationOwner.current;
-    if (openedFromList(history.state)) return history.back();
+    const steps = stepsToList(history.state);
+    if (steps) return steps === 1 ? history.back() : history.go(-steps);
     history.replaceState(null, "", href({ name: "settings" }));
     setAt({ tab: null, sub: null, section: null });
   };

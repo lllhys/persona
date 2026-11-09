@@ -234,7 +234,7 @@ internal fun InteractionForm(
                         val display = AnswerBuilder.display(option.label)
                         DecisionOption(numberedOption(option.key, display.text), { act(AnswerAction.ScreenOption, value) },
                             detail = option.detail, recommended = display.recommended, selected = draft.option == option.key, enabled = allowed,
-                            position = positionOf(option))
+                            position = positionOf(option), fullText = full)
                     }
                 }
             }
@@ -303,7 +303,7 @@ internal fun InteractionForm(
                     DecisionOption(numberedOption("${index + 1}", display.text), { act(AnswerAction.PickOption, draft.copy(optionIndex = index)) },
                         detail = option.description, recommended = display.recommended,
                         selected = option.label in draft.picks[question.question].orEmpty(), enabled = editable,
-                        multiSelect = question.multiSelect, position = index + 1 to question.options.size)
+                        multiSelect = question.multiSelect, position = index + 1 to question.options.size, fullText = full)
                 }
                 var otherOpen by rememberSaveable(interaction.id, question.question) { mutableStateOf(false) }
                 if (otherOpen || question.question in draft.other) {

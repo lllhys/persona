@@ -47,7 +47,7 @@ The relay builds the APNs `aps` itself. The hub can only provide ciphertext and 
 
 - "New message" is the fallback: it's shown when the extension fails to decrypt, times out, the device hasn't been unlocked since boot (private key unreadable), or the ciphertext has expired. **It never falls back to plaintext.**
 - The fallback always rings. Once the extension opens the push, the sealed `aps` decides the sound as well: one without `sound` (`personad notify --silent`, `"silent": true`, a push hushed by quiet hours) arrives quiet, the same as with direct APNs (`PushCrypto.apply`).
-- The hub SHA-256 hashes `collapse_id` before giving it to the relay (the original value is the interaction id).
+- The hub SHA-256 hashes `collapse_id` before giving it to the relay (for a card the original value is the interaction id, or for another manager's card `card:` and a hash of the manager and the id).
 
 ### Live Activities are plaintext
 

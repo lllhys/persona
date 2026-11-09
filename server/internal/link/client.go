@@ -95,6 +95,10 @@ type Status struct {
 	// Attention is the hub's latest "Needs you" summary (attention.go), as it sent it: active mode while this link is
 	// up, passive mode while the paired hub keeps coming in. Missing before the first one, and with older hubs.
 	Attention *Attention `json:"attention,omitempty"`
+	// Conn, active mode while connected: which link it is, a number that rises with each link and is not reused by a
+	// later run (reporter.links). The menu bar app's confirmations name the link whose summary listed the card
+	// (presence.go Confirm).
+	Conn uint64 `json:"conn,omitempty"`
 	// Passive mode: where it listens; this computer's addresses the hub may use (best first, host:port); when the hub
 	// last came in and from where; until when a pairing code from `pair --listen` is good. Connected: Address is the
 	// hub's address and Since when its stream opened.
@@ -114,6 +118,9 @@ type Options struct {
 	// Check: look at the link now (the network changed). Redial: drop it and connect again.
 	Check, Redial <-chan struct{}
 	Logf          func(string, ...any)
+	// Presence is the menu bar app's presence, Confirms the cards it rang for (presence.go); nil without the app.
+	Presence *PresenceBox
+	Confirms *Confirms
 	// PingEvery, PingTimeout replace the defaults (tests). A hub that says its own heartbeat (endpoints, PingHeader) is
 	// followed on that link or stream instead.
 	PingEvery, PingTimeout time.Duration
@@ -158,6 +165,11 @@ type reporter struct {
 	st   Status
 	out  func(Status)
 	mode string
+	// links numbers the run's links (Status.Conn) across mode switches, so no number is given twice; runActive's
+	// alone. It starts at the run's start in Unix milliseconds: a restarted persona-link does not reuse an earlier
+	// run's numbers (that run made far fewer links than milliseconds passed), so the app's late confirmations for the
+	// earlier run's links match none of the new one's.
+	links uint64
 }
 
 // switchTo starts reporting about mode.
@@ -188,7 +200,7 @@ func Run(ctx context.Context, o Options) error {
 	if o.PingEvery <= 0 || o.PingTimeout <= 0 {
 		o.PingEvery, o.PingTimeout = PingEvery, PingTimeout
 	}
-	rep := &reporter{out: o.Status}
+	rep := &reporter{out: o.Status, links: uint64(time.Now().UnixMilli())}
 	for ctx.Err() == nil {
 		mode := currentMode(o.Path)
 		mctx, cancel := context.WithCancel(ctx)
@@ -276,6 +288,8 @@ func runActive(ctx context.Context, o Options, rep *reporter) {
 			end = err
 		} else {
 			start := time.Now()
+			rep.links++
+			l.gen = rep.links
 			end = l.serve(ctx, c, o, rep)
 			if time.Since(start) > time.Minute {
 				b = backoff{}

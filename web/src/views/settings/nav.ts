@@ -1,6 +1,7 @@
 // Where Settings is (#1996): which category the URL opens, and the list of them a phone shows first. Wide, the
 // categories are in the left sidebar and /settings is "General"; phone width, /settings is the list (as on iOS), a category is
-// /settings?tab=… pushed over it, and Back goes back to the list.
+// /settings?tab=… pushed over it, and Back goes back to the list. An item's page (an extension, a channel, a connector) is
+// pushed over its category's page the same way at any width, so Back steps out of it one level (#2800).
 import { t } from "../../i18n";
 import { settingsTab } from "../../lib/channels";
 import type { IconName } from "../../ui/icons";
@@ -157,9 +158,45 @@ function sectionOfHash(hash: string, tab: Tab): SettingsSection | null {
   return null;
 }
 
-/** The history state of a category opened from the phone's list: Back from it returns to the list. */
+/** The history state of a category opened from the phone's list: Back from it returns to the list. Its value is how many
+ *  entries back the list is (true: one; an item's page over such a category: two). */
 export const FROM_LIST = "personaSettingsList";
+/** The history state of an item's page (an extension, a channel, a connector) opened from its category's page: Back from
+ *  it returns to that page. */
+export const FROM_SUB = "personaSettingsSub";
+
+const marker = (state: unknown, key: string): unknown => (state && typeof state === "object" ? (state as Record<string, unknown>)[key] : undefined);
 
 export function openedFromList(state: unknown): boolean {
-  return Boolean(state && typeof state === "object" && (state as Record<string, unknown>)[FROM_LIST]);
+  return Boolean(marker(state, FROM_LIST));
+}
+
+export function openedFromSub(state: unknown): boolean {
+  return Boolean(marker(state, FROM_SUB));
+}
+
+/** How many entries back the phone's list is from this one; 0: it is not under it. */
+export function stepsToList(state: unknown): number {
+  const n = marker(state, FROM_LIST);
+  return typeof n === "number" && n > 0 ? n : n ? 1 : 0;
+}
+
+/** The state of an item's page pushed over its category's page (`state`). */
+export function itemState(state: unknown): Record<string, unknown> {
+  const n = stepsToList(state);
+  return n ? { [FROM_SUB]: true, [FROM_LIST]: n + 1 } : { [FROM_SUB]: true };
+}
+
+/** The state an entry keeps when another category replaces it: its way back to the list, not to the item's category. */
+export function categoryState(state: unknown): Record<string, unknown> | null {
+  if (!openedFromList(state)) return null;
+  const rest = { ...(state as Record<string, unknown>) };
+  delete rest[FROM_SUB];
+  return rest;
+}
+
+/** Whether a category's item is a page one level below the category's page. A model purpose opens in a dialog, which
+ *  Back closes only where it is a sheet (ui/atoms Dialog), so it stays on the category's entry. */
+export function itemIsPage(tab: Tab): boolean {
+  return tab === "channels" || tab === "connectors" || tab === "extensions";
 }

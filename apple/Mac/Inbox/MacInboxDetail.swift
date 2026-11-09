@@ -104,6 +104,8 @@ struct MacInboxItemDetail: View {
     }
 
     private var current: InboxItem { InboxStore.shared.items.first { $0.key == item.key } ?? item }
+    /// The manager the item's chat and the links opened from the item read through: the item's; nil for the default's.
+    private var linkManager: String? { model.linkManager(item.manager) }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -117,9 +119,9 @@ struct MacInboxItemDetail: View {
         }
         .environment(\.feishuOpen) { route in
             // Documents read beside the item; people and chats replace it (back returns).
-            if case .doc(let url, _) = route, let u = URL(string: url) { link = LinkTarget(url: u) } else { path.append(route) }
+            if case .doc(let url, _, let manager) = route, let u = URL(string: url) { link = LinkTarget(url: u, manager: manager) } else { path.append(route) }
         }
-        .macOpensLinksInPanel($link)
+        .macOpensLinksInPanel($link, manager: linkManager)
         .macLinkPanel($link, wide: true)
         // Outside the link panel: the actions stay at the window's edge, the document opens between them and the item.
         // While a document is open they are a row over the item; embedded in the page the filters and the list fold
@@ -153,7 +155,7 @@ struct MacInboxItemDetail: View {
             case "handoff": handingOff = true
             default: break
             }
-            if let s = UserDefaults.standard.string(forKey: "openInboxLink"), let u = URL(string: s) { link = LinkTarget(url: u) }
+            if let s = UserDefaults.standard.string(forKey: "openInboxLink"), let u = URL(string: s) { link = LinkTarget(url: u, manager: linkManager) }
         }
         #endif
     }
@@ -171,9 +173,9 @@ struct MacInboxItemDetail: View {
             // GitHub, Telegram…: the thread as the connector draws it, as on iOS and the web (#2611).
             InboxConnectorDetailView(item: current)
         } else if let m = current.moment {
-            LarkMomentsPostView(postID: m.postID, pushed: true) // the Moments post and its comments
+            LarkMomentsPostView(postID: m.postID, pushed: true, manager: linkManager) // the Moments post and its comments
         } else if let c = item.larkConversation {
-            LarkChatView(conversation: c)
+            LarkChatView(conversation: c, manager: linkManager)
         } else if let m = item.mailSummary {
             MailDetailView(summary: m, accounts: accounts)
         } else {

@@ -7,6 +7,7 @@ import {
   type InboxItem, type InboxMuteOption, type InboxPolicy, type PolicyTier, type PolicyTwin,
 } from "../../lib/inbox";
 import { errorText } from "../../lib/api";
+import { otherManager } from "../../lib/manager-choice";
 import { managerOrder, multiManager, useRoster, type Manager } from "../../lib/managers";
 import { t } from "../../i18n";
 import { Button, Dialog, Loading, toast } from "../../ui/atoms";
@@ -59,7 +60,7 @@ export function PolicyDialog({ target, onClose }: { target: PolicyTarget; onClos
   useEffect(() => {
     if (target.policy) return;
     // the item's manager's rules: a rule of the same chat under another manager is not this one
-    listInboxPolicies(ownerOf(target)).then(
+    listInboxPolicies(otherManager(ownerOf(target))).then(
       (list) => {
         const same = list.find((p) => p.source === target.source && p.tag === target.option.tag && p.value === target.option.value);
         setPolicy(same);
@@ -72,7 +73,9 @@ export function PolicyDialog({ target, onClose }: { target: PolicyTarget; onClos
   }, [target]);
   const save = async (nextTier: PolicyTier, nextTwin: PolicyTwin) => {
     setBusy(true);
-    const ok = await saveInboxPolicy({ item: target.item, option: target.option, source: target.source, id: policy?.id, manager: ownerOf(target) }, nextTier, nextTwin);
+    // removing a rule opened from the Rules list names the manager the list read it from, even when that is the default now
+    const stamped = !target.item && !nextTier && !nextTwin;
+    const ok = await saveInboxPolicy({ item: target.item, option: target.option, source: target.source, id: policy?.id, manager: ownerOf(target), stamped }, nextTier, nextTwin);
     setBusy(false);
     if (ok !== null) onClose();
   };

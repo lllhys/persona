@@ -174,8 +174,9 @@ func TestFleetSessionsMemoMatchesWholeLists(t *testing.T) {
 
 // A manager's list with one session of 150 changed costs the hub that one session: the list is decoded by changed
 // rows (fleet_link.go) and the other sessions' rows are pushed again as the same slices (encodeKept). The oracle test
-// above sees only the bytes, which are the same either way. 43 allocations measured for the hop with five delta apps
-// and two older ones, 571 with the list decoded whole; encoding every row again is 44, told apart by the rows' identity.
+// above sees only the bytes, which are the same either way. 38 allocations measured for the hop with five delta apps
+// and two older ones (43 while jsontext's decoder split the list), 571 with the list decoded whole; encoding every row
+// again is 39, told apart by the rows' identity.
 func TestFleetSessionsOneChangedReusesRows(t *testing.T) {
 	if !isolatedSessionAllocation(t) {
 		return
@@ -194,7 +195,7 @@ func TestFleetSessionsOneChangedReusesRows(t *testing.T) {
 		}
 	}
 	n := 1
-	if allocs := testing.AllocsPerRun(20, func() { n++; send(n) }); allocs > 50 && !raceEnabled {
+	if allocs := testing.AllocsPerRun(20, func() { n++; send(n) }); allocs > 40 && !raceEnabled {
 		t.Fatalf("a list with one session changed allocates %v times", allocs)
 	}
 }
@@ -227,6 +228,14 @@ func memoRow(rng *rand.Rand, id int) string {
 	if rng.IntN(6) == 0 {
 		s.Manager = "m-other"
 	}
+	switch rng.IntN(10) { // rows an older app gets projected (compat.ProjectJSON), and one it does not
+	case 0:
+		s.Work = &proto.WorkState{Link: &proto.WorkLink{URL: "persona://pair?code=1"}}
+	case 1:
+		s.Subagents = []proto.Subagent{{ID: "persona-pixel", Type: "look"}}
+	case 2:
+		s.LastText = "persona-visor"
+	}
 	b, err := json.Marshal(s)
 	if err != nil {
 		panic(err)
@@ -257,6 +266,40 @@ func TestWholeListProjectedOncePerKind(t *testing.T) {
 		want := compat.ProjectJSON(full, c.canonical())
 		if got := <-c.out; string(got) != string(want) {
 			t.Fatalf("app %d:\n got %s\nwant %s", i, got, want)
+		}
+	}
+}
+
+// A row records once whether compat.ProjectJSON changes it, and the whole list goes to older apps unprojected when no
+// row would change: the list's own members are never projected, so that is exactly when projecting the list changes
+// nothing. One row of each kind ProjectJSON renames, and rows that only look like them.
+func TestWholeListProjectedByRows(t *testing.T) {
+	plain := `{"session_id":"s0","started_by_persona":true,"title":"persona-visor","last_text":"see persona://x"}`
+	for _, tc := range []struct {
+		name, row string
+		projects  bool
+	}{
+		{"persona- in a name it renames", `{"session_id":"s1","persona_id":"persona-blob"}`, true},
+		{"tool_name", `{"session_id":"s1","interaction":{"tool_name":"ask_persona"}}`, true},
+		{"look", `{"session_id":"s1","look":"persona-visor"}`, true},
+		{"a look's id", `{"session_id":"s1","subagents":[{"id":"persona-pixel","type":"look"}]}`, true},
+		{"persona:// link", `{"session_id":"s1","work":{"link":{"url":"persona://pair?code=1"}}}`, true},
+		{"context tag in text", `{"session_id":"s1","text":"<persona-context id=\"a\">x</persona-context>"}`, true},
+		{"target_kind", `{"session_id":"s1","target_kind":"persona"}`, true},
+		{"persona- in other text", `{"session_id":"s1","text":"persona-tool","tool_name":"Bash"}`, false},
+		{"a look's name elsewhere", `{"session_id":"s1","subagents":[{"id":"persona-pixel","type":"agent"}]}`, false},
+		{"no persona at all", `{"session_id":"s1","title":"build"}`, false},
+	} {
+		list := []sentSession{{id: "s0", raw: json.RawMessage(plain)}, {id: "s1", raw: json.RawMessage(tc.row)}}
+		for i := range list {
+			list[i].asIs = !compat.Projects(list[i].raw)
+		}
+		for _, machine := range []string{"box", "persona-box"} {
+			full := sessionsMessage(machine, list)
+			projected := compat.ProjectJSON(full, false)
+			if changed := !bytes.Equal(projected, full); changed != !allAsIs(list) || changed != tc.projects {
+				t.Errorf("%s on %s: the list projected %v, its rows %v, want %v\n%s", tc.name, machine, changed, !allAsIs(list), tc.projects, projected)
+			}
 		}
 	}
 }

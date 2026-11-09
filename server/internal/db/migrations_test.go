@@ -147,14 +147,17 @@ func freshDatabase(t *testing.T) string {
 	if _, err := EnsureDatabase(ctx, url); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		admin, err := pgx.Connect(context.Background(), base)
-		if err == nil {
-			_, _ = admin.Exec(context.Background(), `DROP DATABASE IF EXISTS "`+name+`" WITH (FORCE)`)
-			_ = admin.Close(context.Background())
-		}
-	})
+	t.Cleanup(func() { dropDatabase(base, name) })
 	return url
+}
+
+// dropDatabase drops a test's database name next to base, closing what is still connected to it.
+func dropDatabase(base, name string) {
+	admin, err := pgx.Connect(context.Background(), base)
+	if err == nil {
+		_, _ = admin.Exec(context.Background(), `DROP DATABASE IF EXISTS "`+name+`" WITH (FORCE)`)
+		_ = admin.Close(context.Background())
+	}
 }
 
 // tablesOf are the database's tables but schema_migrations, sorted.
@@ -292,6 +295,82 @@ func unifiedMigrate(t *testing.T, url string, until int) {
 		if _, err := conn.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, v, m[0]); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// Opening a database that is up to date only reads schema_migrations: no ALTER TABLE, no renumbering write. So a start
+// does not wait for a session that holds SHARE on the table, and takes no ACCESS EXCLUSIVE lock or transaction id. The
+// migrations' part of it is four statements, whatever the sets: the lock, the catalog check, one read and the unlock
+// (a check per migration took about a hundred).
+func TestOpenUpToDateOnlyReadsSchemaMigrations(t *testing.T) {
+	ctx := context.Background()
+	url := migratedDatabase(t, AllSets)
+	reader, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(ctx)
+	if _, err := reader.Exec(ctx, `ALTER DATABASE `+pgx.Identifier{DatabaseName(url)}.Sanitize()+` SET lock_timeout = '2s'`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := reader.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `LOCK TABLE schema_migrations IN SHARE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []Sets{AllSets, HubSet, ManagerSet} {
+		d, err := Open(ctx, url, s)
+		if err != nil {
+			t.Fatalf("open %d while a reader holds schema_migrations: %v", s, err)
+		}
+		d.Close()
+		traced, log := tracedDB(t, url)
+		traced.sets = s
+		if err := traced.migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := log.take(); len(got) > 4 {
+			t.Fatalf("migrating %d up to date took %d statements: %v", s, len(got), got)
+		}
+	}
+}
+
+// A record of a migration under the number it had before a merge renumbered it is moved to the new number, or only
+// dropped when that is recorded too; either way the migration that has the old number now runs.
+func TestMigrateRenumbered(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		sql  string
+	}{
+		{"the old number only", `UPDATE schema_migrations SET version = 428, name = '0428_todo_source.sql' WHERE name = '0429_todo_source.sql'`},
+		{"both numbers", `INSERT INTO schema_migrations (version, name, part) VALUES (428, '0428_todo_source.sql', 'manager')`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			url := freshDatabase(t)
+			d, err := Open(ctx, url, ManagerSet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := records(t, d)
+			// 0428_manager_moved took the old number after this database recorded 0428_todo_source under it.
+			for _, q := range []string{`DELETE FROM schema_migrations WHERE name = '0428_manager_moved.sql'`, c.sql} {
+				if _, err := d.pool.Exec(ctx, q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			d.Close()
+			if d, err = Open(ctx, url, ManagerSet); err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if got := records(t, d); !slices.Equal(got, want) {
+				t.Fatalf("records %v, want %v", got, want)
+			}
+		})
 	}
 }
 

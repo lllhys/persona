@@ -12,7 +12,9 @@ import (
 const putInboxItemSQL = `INSERT INTO inbox_items (id, data, updated_at, done_at) VALUES ($1, $2, $3, $4)
 	ON CONFLICT (id) DO UPDATE SET data = $2, updated_at = $3, done_at = $4`
 
-// PutInboxItem stores one inbox item (the manager's inbox, assistant/inbox.go, owns the JSON).
+// PutInboxItem stores one inbox item (the manager's inbox, assistant/inbox.go, owns the JSON). data is stored as json,
+// the bytes as written (0471: every reader unmarshals them). It must still be valid JSON with no \u0000 in a string, as
+// jsonb required: Postgres computes the source column from it, and that refuses the write.
 func (d *DB) PutInboxItem(ctx context.Context, id string, data []byte, updatedAt time.Time, doneAt *time.Time) error {
 	_, err := d.pool.Exec(ctx, putInboxItemSQL, id, data, updatedAt, doneAt)
 	return err
@@ -48,11 +50,15 @@ func (d *DB) PutInboxItems(ctx context.Context, rows []InboxRow) error {
 	return tx.Commit(ctx)
 }
 
+// deleteInboxSourceSQL finds a source's rows through inbox_items_source: source is the item's, kept by Postgres (0471),
+// so the delete reads no document. data->>'source' read every row's JSON (the done ones kept as history included).
+const deleteInboxSourceSQL = `DELETE FROM inbox_items WHERE id = ANY($1) OR source = $2 RETURNING id`
+
 // DeleteInboxSource removes a source's inbox items for good (the user deleted its data): ids (the items the manager
 // holds) and every other row whose item has that source, the done ones kept as history included. It returns the ids
 // of the rows it deleted.
 func (d *DB) DeleteInboxSource(ctx context.Context, source string, ids []string) ([]string, error) {
-	rows, err := d.pool.Query(ctx, `DELETE FROM inbox_items WHERE id = ANY($1) OR data->>'source' = $2 RETURNING id`, ids, source)
+	rows, err := d.pool.Query(ctx, deleteInboxSourceSQL, ids, source)
 	if err != nil {
 		return nil, err
 	}
@@ -97,14 +103,15 @@ type InboxDoneQuery struct {
 }
 
 // The done items, newest first. The order and the cursor are (done_at, id), not done_at alone: a bulk action files
-// many items at one instant, and a page ending among them would repeat or skip the rest. inbox_items_open (done_at
-// first) serves both: an index scan backwards from the cursor, the ties sorted by id as they come.
+// many items at one instant, and a page ending among them would repeat or skip the rest. inbox_items_open is
+// (done_at, id) (0471) and serves both: an index scan backwards from the cursor, in the page's order. data is json
+// (0471), hence json_typeof; a build from before 0471 still runs its jsonb_typeof through the migration's shim.
 const (
 	doneInboxItemsSQL = `SELECT id, data, updated_at, done_at FROM inbox_items
-	WHERE done_at IS NOT NULL AND ($1 OR jsonb_typeof(data->'connector') IS DISTINCT FROM 'object')
+	WHERE done_at IS NOT NULL AND ($1 OR json_typeof(data->'connector') IS DISTINCT FROM 'object')
 	ORDER BY done_at DESC, id DESC LIMIT $2`
 	doneInboxItemsBeforeSQL = `SELECT id, data, updated_at, done_at FROM inbox_items
-	WHERE (done_at, id) < ($3, $4) AND ($1 OR jsonb_typeof(data->'connector') IS DISTINCT FROM 'object')
+	WHERE (done_at, id) < ($3, $4) AND ($1 OR json_typeof(data->'connector') IS DISTINCT FROM 'object')
 	ORDER BY done_at DESC, id DESC LIMIT $2`
 )
 

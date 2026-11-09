@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"cmp"
+	"context"
 	"slices"
 	"time"
 	"unicode/utf8"
@@ -41,12 +42,11 @@ const (
 // are the user's; without Rev and WebURL: the devices fill them in for each computer. The same input in any order gives the same
 // summary: cards and items of the same time are ordered by their ids.
 func linkAttention(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction, told map[string]bool) link.Attention {
-	key := func(machine, session string) string { return machine + "/" + session }
 	handed := func(ix proto.Interaction) bool { return told[ix.ID] && !ix.Delegating } // the user's to answer
-	ready := map[string]bool{}
+	ready := map[agentKey]bool{}
 	for _, ix := range ixs {
 		if handed(ix) {
-			ready[key(ix.MachineID, ix.SessionID)] = true
+			ready[agentKey{ix.MachineID, ix.SessionID}] = true
 		}
 	}
 	cards := slices.Clone(ixs)
@@ -62,7 +62,7 @@ func linkAttention(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction, to
 	// announce has not decided on, or a question the assistant is still deciding on). Beside a handed card that does
 	// not stand (an elicitation), the agent is a screen item.
 	stands := func(ix proto.Interaction) bool {
-		return cardStands(ix) && (handed(ix) || !ready[key(ix.MachineID, ix.SessionID)])
+		return cardStands(ix) && (handed(ix) || !ready[agentKey{ix.MachineID, ix.SessionID}])
 	}
 	needs := needsYou(agents, cards, counts, stands)
 	// The newest first: past the cap the oldest go to More, so an agent that just started waiting is always listed,
@@ -80,10 +80,25 @@ func linkAttention(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction, to
 		it := linkItem(l, n)
 		// Notifies once a card of the agent is the user's, as the phone is pushed then: not before its card (a terminal
 		// dialog is pushed by the screen card made for it), nor after the last one was answered.
-		it.Notify = !n.agent.Muted && ready[key(it.MachineID, it.SessionID)]
+		it.Notify = !n.agent.Muted && ready[agentKey{it.MachineID, it.SessionID}]
 		out.Items = append(out.Items, it)
 	}
 	return out
+}
+
+// linkCovers is whether card ix, told, is what Persona Link's summary (linkAttention, as liveLoop works it out next)
+// shows for its agent and rings for: the card that stands for the agent, notifying, among the listed items, not in
+// More. Only such a card's push may a Persona Link desktop take over from the phone (hub: notifyInteraction): another
+// card of the same agent and one past the cap ring nowhere, and one whose row does not say "Needs you" yet is not
+// rung for by the next summary.
+func (s *Service) linkCovers(ix proto.Interaction) bool {
+	agents, ixs, told := s.fleetInputs()
+	for _, it := range linkAttention(s.lang(context.Background()), agents, ixs, told).Items {
+		if it.InteractionID == ix.ID && it.MachineID == ix.MachineID && it.SessionID == ix.SessionID {
+			return it.Notify
+		}
+	}
+	return false
 }
 
 // waitingSince is when the agent started waiting: its card's time, else when it went "Needs you" (zero: unknown).

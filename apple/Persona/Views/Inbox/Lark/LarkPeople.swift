@@ -21,6 +21,7 @@ struct LarkProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.feishuOpen) private var feishuOpen
     @Environment(\.larkAccount) private var account
+    @Environment(\.larkManager) private var manager
     var person: LarkPersonRef
     /// Pushed inside an existing navigation stack (a route) rather than presented as its own sheet.
     var embedded = false
@@ -66,7 +67,7 @@ struct LarkProfileView: View {
         }
         .ignoresSafeArea(edges: .top)
         .task {
-            guard let api = model.api?.lark(account) else { return }
+            guard let api = model.api?.manager(manager).lark(account) else { return }
             do { profile = try await api.larkProfile(person.id, feedID: person.feedID) } catch { self.error = error.localizedDescription }
         }
     }
@@ -123,14 +124,14 @@ struct LarkProfileView: View {
     private var messageButton: some View {
         Button {
             Task {
-                guard let api = model.api?.lark(account) else { return }
+                guard let api = model.api?.manager(manager).lark(account) else { return }
                 opening = true
                 defer { opening = false }
                 do {
                     let feed = try await api.larkDirectChat(person.id)
                     var chat = LarkConversation(id: feed, name: displayName, avatar: profile?.avatarUrl ?? person.avatar, isGroup: false)
                     chat.account = account
-                    push(.chat(chat))
+                    push(.chat(chat, manager: manager)) // a pushed page doesn't inherit this one's manager
                 } catch {
                     model.show(error)
                 }
@@ -190,7 +191,7 @@ struct LarkProfileView: View {
             Text(label).font(Theme.Font.secondary).foregroundStyle(.secondary).scaledFrame(width: Theme.Size.box76, alignment: .leading).lineLimit(2)
             Group {
                 if let leader {
-                    Button { push(.profile(LarkPersonRef(id: leader, name: value))) } label: { Text(value).foregroundStyle(LarkColor.blue) }.buttonStyle(.plain)
+                    Button { push(.profile(LarkPersonRef(id: leader, name: value), manager: manager)) } label: { Text(value).foregroundStyle(LarkColor.blue) }.buttonStyle(.plain)
                 } else if let link {
                     Link(value, destination: link).foregroundStyle(LarkColor.blue)
                 } else {

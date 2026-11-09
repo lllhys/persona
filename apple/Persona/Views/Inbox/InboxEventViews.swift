@@ -545,6 +545,7 @@ struct InboxSourceRoute: Hashable {
 struct InboxSourcePage: View {
     var route: InboxSourceRoute
     var accounts: [MailAccount]
+    @Environment(AppModel.self) private var model
     @State private var slot: InboxItemSlotModel
 
     init(route: InboxSourceRoute, accounts: [MailAccount]) {
@@ -566,9 +567,9 @@ struct InboxSourcePage: View {
         } else if item.connector != nil {
             InboxConnectorDetailView(item: item)
         } else if let m = item.moment {
-            LarkMomentsPostView(postID: m.postID, pushed: true)
+            LarkMomentsPostView(postID: m.postID, pushed: true, manager: model.linkManager(item.manager))
         } else if let c = conversation {
-            LarkChatView(conversation: c)
+            LarkChatView(conversation: c, manager: model.linkManager(item.manager))
         } else if let m = mail {
             MailDetailView(summary: m, accounts: accounts)
         } else {

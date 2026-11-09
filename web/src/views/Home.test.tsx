@@ -30,8 +30,14 @@ vi.mock("../lib/sessions", async (importOriginal) => {
 
 // the extensions' overview cards are not this test's
 vi.mock("./extensions/ExtensionSlots", () => ({ OverviewCards: () => null }));
+// a card's answer stays on its way until the test lets it end
+const op = vi.hoisted(() => ({ finish: (_: unknown) => {} }));
+vi.mock("../lib/ops", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/ops")>()), apiOp: () => new Promise((done) => { op.finish = done; }) }));
 
 const { Home, offlineLine, rowTags } = await import("./Home");
+const { answerCard } = await import("../lib/card-answer");
+const { allowBody } = await import("../lib/quick-answers");
+const { t } = await import("../i18n");
 
 const mac: Machine = { id: "mac", name: "Mac", online: true };
 let n = 0;
@@ -306,4 +312,18 @@ it("opens an explicitly sessionless request and offers its quick answers", () =>
   expect(html).toContain('href="/requests/script-request"');
   expect(buttonLabels(html)).toContain("允许");
   expect(html).not.toContain('href="/s/mac/"');
+});
+
+it("holds a row's answers while an answer to its card is on its way, given here or in its chat, and says which (#2793)", async () => {
+  const card: Interaction = { id: "held-request", machine_id: "mac", session_id: "", kind: "permission", tool_name: "Bash", tool_input: { command: "swift test" } };
+  // Allow and Deny, each as disabled or not
+  const held = (html: string) => (html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) ?? []).filter((b) => ["允许", "拒绝"].includes(b.replace(/<[^>]*>/g, ""))).map((b) => /\sdisabled=""/.test(b));
+  // Allow given in the chat (or on this row before Overview was left) while the hub is away: this row is drawn afresh
+  const sent = answerCard(card, allowBody());
+  const html = render([], [card]);
+  expect(held(html)).toEqual([true, true]);
+  expect(html).toContain(t("chat-interactions.pending_offline", { answer: t("lib-answered.allowed") }));
+  op.finish({});
+  await sent;
+  expect(held(render([], [card]))).toEqual([false, false]);
 });

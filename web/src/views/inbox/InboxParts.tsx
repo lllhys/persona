@@ -2,8 +2,8 @@
 // the AI twin's draft card, a document row's status menu, and the few glyphs the shared icon set does not have.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  agentDraft, docChangeLine, isDone, isLark, itemKey, movingKey, setDocStatus, useInbox, withToken,
-  type DocRow, type DocStatus, type InboxItem,
+  agentDraft, docChangeKey, docChangeLine, isDone, isLark, itemKey, keptChanges, movingKey, setDocStatus, useDroppedChanges, useInbox, useUnsentReply, withToken,
+  type DocChange, type DocRow, type DocStatus, type InboxItem,
 } from "../../lib/inbox";
 import { connectorBrand } from "../../lib/connectors";
 import { hubMediaURL } from "../../lib/lark-summary";
@@ -180,21 +180,33 @@ export function Count({ n, accent }: { n: number; accent?: boolean }) {
   );
 }
 
-/** The AI twin's reply under a row: "Send" sends it as it is, "Edit" opens it in the draft dialog. */
-export function DraftCard({ it, onEdit, onSend }: { it: InboxItem; onEdit: () => void; onSend: () => void }) {
+/**
+ * The AI twin's reply under a row, as "Send" sends it: the edit the draft dialog kept (closed without Cancel, or a
+ * Rewrite) in place of the AI's text, and only the proposed changes left ticked there, marked "Edited" when either
+ * differs from the AI's. "Edit" opens it in the draft dialog. `onSend` gets the text and changes shown.
+ */
+export function DraftCard({ it, onEdit, onSend }: { it: InboxItem; onEdit: () => void; onSend: (text: string, changes: DocChange[]) => void }) {
   const draft = agentDraft(it);
-  const sending = useInbox((s) => s.sending.includes(itemKey(it)));
+  const key = itemKey(it);
+  const sending = useInbox((s) => s.sending.includes(key));
+  const kept = useUnsentReply(key);
+  const dropped = useDroppedChanges(key);
   // the four lines may cut it: "Show all" shows the rest in place, so it is read before "Send" (#4742)
   const [open, setOpen] = useState(false);
   const { ref: textRef, cut: long } = useClamped<HTMLParagraphElement>(open);
   if (!draft) return null;
+  const text = kept ?? draft;
+  const changes = keptChanges(it, dropped);
+  // as sent: a failed send keeps the text trimmed, and the AI's own draft with a trailing newline is not an edit
+  const edited = (kept !== undefined && kept.trim() !== draft.trim()) || dropped.length > 0;
   return (
     <div className="rounded-[10px] bg-inset p-3 shadow-hairline">
       <p className="flex items-center text-[11.5px] font-medium text-accent-ink">
         <Spark />
         {t("inbox-inboxparts.draft_title")}
+        {edited && <span data-draft-edited className="ml-1.5 font-normal whitespace-nowrap text-ink-3">{t("inbox-inboxparts.draft_edited")}</span>}
       </p>
-      <p ref={textRef} className={cx("mt-1.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink", !open && "line-clamp-4")} data-draft-text>{draft}</p>
+      <p ref={textRef} className={cx("mt-1.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink", !open && "line-clamp-4")} data-draft-text>{text}</p>
       {long && (
         <button
           type="button"
@@ -209,15 +221,15 @@ export function DraftCard({ it, onEdit, onSend }: { it: InboxItem; onEdit: () =>
           {open ? t("inbox-inboxparts.draft_collapse") : t("inbox-inboxparts.draft_expand")}
         </button>
       )}
-      {(it.agent?.changes ?? []).map((c) => (
-        <p key={`${c.ref}|${c.field}`} className="mt-1 flex items-center gap-1.5 truncate text-[11.5px] text-ink-2">
+      {changes.map((c) => (
+        <p key={docChangeKey(c)} className="mt-1 flex items-center gap-1.5 truncate text-[11.5px] text-ink-2">
           <Icon name="chevronRight" size={11} stroke={2.4} className="shrink-0 text-ink-3" />
           <span className="truncate">{docChangeLine(c, it.doc)}</span>
         </p>
       ))}
       <div className="mt-2.5 flex justify-end gap-2">
         <Button tone="secondary" onClick={onEdit}>{t("inbox-inboxparts.edit")}</Button>
-        <Button tone="accent" icon="send" busy={sending} onClick={onSend} title={t("inbox-inboxparts.send_draft")}>{t("inbox-inboxparts.send")}</Button>
+        <Button tone="accent" icon="send" busy={sending} disabled={!text.trim() && !changes.length} onClick={() => onSend(text.trim(), changes)} title={t("inbox-inboxparts.send_draft")}>{t("inbox-inboxparts.send")}</Button>
       </div>
     </div>
   );

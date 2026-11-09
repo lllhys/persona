@@ -119,7 +119,7 @@ func mustKey(t *testing.T) []byte {
 // One transaction re-seals every listed place (both columns of a row together, the fields of the settings values),
 // leaves unset and unreadable values as they are, keeps everything else in a settings value, and records the key.
 func TestResealSecrets(t *testing.T) {
-	url := freshDatabase(t)
+	url := migratedDatabase(t, ManagerSet)
 	ctx := context.Background()
 	d, err := Open(ctx, url, ManagerSet)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestResealSecrets(t *testing.T) {
 
 // Never in a database that has the hub's tables: one the hub shares, whose rows an older build opens with the hub's key.
 func TestResealRefusesTheHubsDatabase(t *testing.T) {
-	url := freshDatabase(t)
+	url := migratedDatabase(t, AllSets)
 	ctx := context.Background()
 	d, err := Open(ctx, url, AllSets)
 	if err != nil {
@@ -275,7 +275,7 @@ func TestResealRefusesTheHubsDatabase(t *testing.T) {
 
 // The lock is one process's at a time; OtherManagers counts a manager's connections that are not this process's.
 func TestKeyRotationLock(t *testing.T) {
-	url := freshDatabase(t)
+	url := migratedDatabase(t, ManagerSet)
 	ctx := context.Background()
 	a, err := Open(ctx, url, ManagerSet)
 	if err != nil {
@@ -341,7 +341,7 @@ func TestKeyRotationLock(t *testing.T) {
 // After a commit that did not answer, SealingKeySettled waits for a re-seal still open on the server (its COMMIT on the
 // way) and reads what it left; one open for longer than it waits is an error, never a "not committed".
 func TestSealingKeySettled(t *testing.T) {
-	url := freshDatabase(t)
+	url := migratedDatabase(t, ManagerSet)
 	ctx := context.Background()
 	d, err := Open(ctx, url, ManagerSet)
 	if err != nil {

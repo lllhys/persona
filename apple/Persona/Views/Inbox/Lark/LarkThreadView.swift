@@ -8,6 +8,7 @@ struct LarkThreadView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.larkAccount) private var account
+    @Environment(\.larkManager) private var manager
     var root: LarkMessage
     var isGroup = true
     var feedID: String? = nil
@@ -15,7 +16,7 @@ struct LarkThreadView: View {
     var focusBox = false
     var pinTarget: LarkChatPinTarget? = nil
     var pinAPI: APIClient? = nil
-    private var api: APIClient? { pinAPI ?? model.api?.lark(account) }
+    private var api: APIClient? { pinAPI ?? model.api?.manager(manager).lark(account) }
     /// Opened from a topic group's card: Topic Details, From <the group> (the Lark gateway's topic page).
     var chatName: String? = nil
     @State private var person: LarkPersonRef?

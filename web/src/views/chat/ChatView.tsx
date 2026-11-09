@@ -1,5 +1,6 @@
 // One conversation: an agent in herdr on one of your computers, or a Persona assistant conversation.
 import { useManagerOffline } from "../ManagerParts";
+import { LinkManager } from "../../lib/manager-choice";
 import { alsoOpenText } from "../../lib/engines";
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorText, pastHub, sessionPath } from "../../lib/api";
@@ -22,7 +23,7 @@ import { agentsWorking, buildTaskIndex, stableSubagents, STOP_LOOP_MESSAGE, suba
 import { stabilizeLines, stableValue } from "../../lib/stable-lines";
 import { planProgress, workLineStyle } from "../../lib/work-groups";
 import { echoed, taggedSeen } from "../../lib/echo";
-import { forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox, type OutboxEntry } from "../../lib/outbox";
+import { acceptOutgoing, forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox, type OutboxEntry } from "../../lib/outbox";
 import { apiOp } from "../../lib/ops";
 import { conversationKey, pickedLauncher, pickedModel } from "../../lib/assistant-chat";
 import { unlinkAgentFromTodo } from "../../lib/todos";
@@ -132,6 +133,7 @@ interface Pending {
   id: string;
   msg: UserMessage;
   at: number;
+  acceptedAt?: number;
   /** The node held it back until an ultracode change waiting for the turn is through (#3428): it goes again then. */
   waits?: boolean;
   /** Its POST has not been answered yet (it may be behind earlier ones): the bubble does not time out. */
@@ -382,14 +384,34 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     const shown = echoed(pending, users, (p) => ({ id: p.id, text: p.msg.text, images: p.msg.images, at: p.at }), claimed.current);
     const drop = new Set([...shown].map((p) => p.id));
     const now = Date.now();
+    for (const p of pending) {
+      if (drop.has(p.id) || (!p.waits && !p.posting && state !== "working" && now - (p.acceptedAt ?? p.at) >= SENT_GRACE_MS)) {
+        forgetOutgoing(outboxKey(mid, sid), p.id);
+      }
+    }
     setPending((ps) => {
       // a sent one waits for its copy while the agent works and SENT_GRACE_MS after, as the outbox and the apps do: the
       // transcript can write it late (a long context compacted first, #1119); one held back for an ultracode change
       // waits as long as the turn does
-      return ps.filter((p) => !drop.has(p.id) && (p.waits || p.posting || state === "working" || now - p.at < SENT_GRACE_MS));
+      return ps.filter((p) => !drop.has(p.id) && (p.waits || p.posting || state === "working" || now - (p.acceptedAt ?? p.at) < SENT_GRACE_MS));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segs, tr.firstRead, refusedNoRow]);
+
+  // A quiet transcript must not leave accepted bubbles forever. Reloads use the same stored deadline; local
+  // composer bubbles retain their existing grace while the agent works. Never expire a POST still in flight.
+  useEffect(() => {
+    const expiring = state === "working" ? [] : pending.filter((p) => !p.posting && !p.waits);
+    const deadlines = [...expiring, ...outbox.filter((e) => e.state === "sent")].map((e) => (e.acceptedAt ?? e.at) + SENT_GRACE_MS);
+    if (!deadlines.length) return;
+    const timer = setTimeout(() => {
+      settleOutbox(mid, sid, []);
+      const expired = new Set(expiring.filter((p) => Date.now() - (p.acceptedAt ?? p.at) >= SENT_GRACE_MS).map((p) => p.id));
+      for (const id of expired) forgetOutgoing(outboxKey(mid, sid), id);
+      if (expired.size) setPending((ps) => ps.filter((p) => !expired.has(p.id)));
+    }, Math.max(0, Math.min(...deadlines) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [mid, sid, pending, outbox, state]);
 
   // seen: on open, when the page comes back to the front, and whenever a turn ends while it is on screen (lib/store.ts
   // viewSession); a subagent's transcript is not an agent of its own
@@ -700,8 +722,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           opId: id,
           json: { text: out.text, images: out.images.length ? out.images : undefined, client_msg_id: id, clear_draft: clearDraft, launcher, model },
         }));
-        forgetOutgoing(key, id);
-        setPending((ps) => ps.map((x) => (x.id === id ? { ...x, posting: false } : x)));
+        const acceptedAt = Date.now();
+        acceptOutgoing(key, id, acceptedAt);
+        setPending((ps) => ps.map((x) => (x.id === id ? { ...x, posting: false, acceptedAt } : x)));
         return true;
       } catch (e) {
         // An ultracode change waits for the turn (docs/protocol/protocol.md "Claude Code ultracode"): the node holds messages back
@@ -1199,7 +1222,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const commands = useMemo(() => (assistant ? [] : agentCommands(AGENT_COMMANDS, session)), [assistant, session]);
   const footer = useMemo(() => (session ? <ComposerFooter session={session} assistant={assistant} /> : null), [session, assistant]);
 
-  return (
+  const page = (
     <div className="flex h-full min-w-0 flex-col">
       {!readOnly && (
         <Header
@@ -1495,6 +1518,8 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       </Dialog>
     </div>
   );
+  // a link tapped in the chat opens what it opens as the chat's manager
+  return <LinkManager.Provider value={session?.manager}>{page}</LinkManager.Provider>;
 }
 
 /** Over the chat's top edge when the page keeps getting its items by asking for them, not by push (lib/stale-page.ts). */

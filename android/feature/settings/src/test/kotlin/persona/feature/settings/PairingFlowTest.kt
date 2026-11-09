@@ -175,6 +175,45 @@ class PairingFlowTest {
         }
     }
 
+    /** The failure page's buttons that pick how to retry, top to bottom. */
+    private fun failureButtons(): List<String> =
+        listOf(R.string.settings_pairing_edit_address_code, R.string.settings_pairing_diagnostics, R.string.settings_pairing_rescan).map(::text)
+            .flatMap { label -> rule.onAllNodes(hasText(label) and hasClickAction()).fetchSemanticsNodes().map { label to it.boundsInRoot.top } }
+            .sortedBy { it.second }.map { it.first }
+
+    /** A wrong or expired code typed on the manual form leads with editing it; the same failure from a link still leads with scanning. */
+    @Test fun aTypedCodeThatIsWrongOrExpiredOffersEditingFirstAndKeepsTheFields() {
+        var reason by mutableStateOf(PairingFailure.Expired)
+        show { key(reason) { PairingScreen(FakePairing(error = PairingException(reason)), sessions, onReady = {}, onDiagnostics = {}, skipWelcome = true) } }
+        val edit = text(R.string.settings_pairing_edit_address_code)
+        val diagnostics = text(R.string.settings_pairing_diagnostics)
+        val scan = text(R.string.settings_pairing_rescan)
+        for (each in listOf(PairingFailure.Expired, PairingFailure.InvalidCode)) {
+            reason = each
+            rule.waitForIdle()
+            fillManual("http://127.0.0.1:18760")
+            tap(R.string.settings_pairing_next)
+            tap(R.string.settings_pairing_confirm)
+            failed()
+            assertEquals("$each", listOf(edit, diagnostics, scan), failureButtons())
+            // Edit is the form with both fields kept: Next goes straight to the confirm page again.
+            tap(R.string.settings_pairing_edit_address_code)
+            fields()[0].assert(hasText("http://127.0.0.1:18760"))
+            tap(R.string.settings_pairing_next)
+            rule.onAllNodesWithText(text(R.string.settings_pairing_confirm)).onFirst().assertExists()
+        }
+        // The same failure for a pasted link: scanning again stays first, editing last.
+        back()
+        rule.runOnUiThread {
+            rule.activity.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("link", "persona://pair?url=http%3A%2F%2F127.0.0.1%3A18760&token=mock"))
+        }
+        tap(R.string.settings_pairing_paste)
+        tap(R.string.settings_pairing_confirm)
+        failed()
+        assertEquals(listOf(scan, diagnostics, edit), failureButtons())
+    }
+
     /** The checklist that follows a first pairing, with no engine step (machines = null). */
     private fun firstChecklist(onReady: () -> Unit) {
         rule.activity.getSharedPreferences("settings-readiness", Context.MODE_PRIVATE).edit().putBoolean("onboarding-pending", true).commit()
@@ -188,6 +227,27 @@ class PairingFlowTest {
         back()
         assertEquals(1, ready)
         assertFalse(rule.activity.isFinishing)
+    }
+
+    /**
+     * A first checklist left with Back stays unfinished; Settings › Pairing and Add hub still open on the connect choices,
+     * and a pairing link opened then goes to its confirm page instead of being dropped for the checklist.
+     */
+    @Test fun aPairingPageInSettingsStartsAtTheConnectChoicesWhileTheFirstChecklistIsUnfinished() {
+        rule.activity.getSharedPreferences("settings-readiness", Context.MODE_PRIVATE).edit().putBoolean("onboarding-pending", true).commit()
+        var link by mutableStateOf<String?>(null)
+        show {
+            key(link) {
+                PairingScreen(FakePairing(paired = true), sessions, onReady = {}, onDiagnostics = {}, skipWelcome = link == null, initialLink = link)
+            }
+        }
+        rule.onNodeWithText(text(R.string.settings_pairing_scan)).assertExists()
+        rule.onNodeWithText(text(R.string.settings_pairing_manual)).assertExists()
+        rule.onAllNodesWithText(text(R.string.settings_ready_title)).assertCountEquals(0)
+        link = "persona://pair?url=http%3A%2F%2F127.0.0.1%3A18760&token=mock"
+        rule.waitForIdle()
+        rule.onAllNodesWithText(text(R.string.settings_pairing_confirm)).onFirst().assertExists()
+        rule.onAllNodesWithText(text(R.string.settings_ready_title)).assertCountEquals(0)
     }
 
     @Config(qualifiers = "en-w400dp-h4000dp-xhdpi")

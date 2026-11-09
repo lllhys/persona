@@ -12,6 +12,7 @@ struct MessagingViewCard: View {
     var fallback: String
     @Environment(\.larkContext) private var context
     @Environment(\.larkAccount) private var larkAccount
+    @Environment(\.larkManager) private var larkManager
     @Environment(\.larkRefresh) private var refresh
     @Environment(\.openURL) private var openURL
     @Environment(AppModel.self) private var model
@@ -90,7 +91,7 @@ struct MessagingViewCard: View {
     /// A button: the extension does what it does; a word comes back as a toast, then the chat reads again.
     private func press(_ action: String) {
         // The chat's account: a button of another account's card goes to that account.
-        guard running == nil, let message = context.messageID, let api = model.api?.lark(larkAccount), let source = api.messagingSource else { return }
+        guard running == nil, let message = context.messageID, let api = model.api?.manager(larkManager).lark(larkAccount), let source = api.messagingSource else { return }
         running = action
         Task {
             defer { running = nil }

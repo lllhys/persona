@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { policyFor, policySummary, type InboxItem, type InboxPolicy } from "../../lib/inbox";
+import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 
 vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
 import { PolicyDialog, RulesDialog } from "./PolicyDialog";
@@ -44,6 +45,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  resetManagerChoice();
 });
 
 describe("收件箱规则", () => {
@@ -91,5 +93,29 @@ describe("收件箱规则", () => {
     await flush();
     expect(call("DELETE", "/api/v1/inbox/policies/p1")).toBeTruthy();
     expect(document.querySelector('[data-policy="p1"]')).toBeNull();
+  });
+
+  it("removes a rule opened from the Rules list on the manager it was read from, even after it became the default", async () => {
+    const managerOf = (method: string, url: string) => new Headers(call(method, url)?.[1]?.headers).get("X-Persona-Manager");
+    setRosterDefault("assistant");
+    act(() => root.render(<PolicyDialog target={{ option: chat, source: "lark", policy: policy({ tier: "fyi", manager: "m-1" }) }} onClose={() => {}} />));
+    await flush();
+    setRosterDefault("m-1");
+    act(() => button("移除")!.click());
+    await flush();
+    expect(JSON.parse(call("PATCH", "/api/v1/inbox/policies/p1")![1].body)).toEqual({ tier: "", twin: "" });
+    expect(managerOf("PATCH", "/api/v1/inbox/policies/p1")).toBe("m-1");
+  });
+
+  it("removes a rule opened from an item as before: the default's names none", async () => {
+    const managerOf = (method: string, url: string) => new Headers(call(method, url)?.[1]?.headers).get("X-Persona-Manager");
+    setRosterDefault("m-1");
+    listed = [policy({ tier: "fyi" })];
+    act(() => root.render(<PolicyDialog target={{ item: item({ manager: "m-1" }), option: chat, source: "lark" }} onClose={() => {}} />));
+    await flush();
+    expect(managerOf("GET", "/api/v1/inbox/policies")).toBeNull();
+    act(() => button("移除")!.click());
+    await flush();
+    expect(managerOf("PATCH", "/api/v1/inbox/policies/p1")).toBeNull();
   });
 });

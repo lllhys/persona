@@ -110,7 +110,8 @@ describe("the inbox of several managers", () => {
     expect(groups.map((g) => g.dataset.mutesManager)).toEqual(["assistant", "m-1"]);
     expect(groups[1].textContent).toContain("工作");
     expect(groups[1].textContent).toContain("Work group");
-    expect(calls.list.filter((c) => c.path === "/inbox/mutes").map((c) => c.header)).toEqual([undefined, "m-1"]);
+    // each read names its manager, the default's too: what it answers is stamped with the one asked
+    expect(calls.list.filter((c) => c.path === "/inbox/mutes").map((c) => c.header)).toEqual(["assistant", "m-1"]);
     const unmute = groups[1].querySelector("button")!;
     await act(async () => unmute.click());
     await flush();

@@ -243,7 +243,8 @@ const (
 
 // mergeRounds is old with the newer round n over it: what n read replaces what old had of the same thing (a thread,
 // an event, a batch, a mail), what only old has stays (it left the source's window meanwhile) within heldThingsMost
-// and heldMailMost; a source n read as off, or one this code no longer has, keeps nothing.
+// and heldMailMost; a source n read as off, or one this code no longer has, keeps nothing. The mail accounts that
+// could not be read are the newest mail round's.
 func mergeRounds(old, n assistantwire.InboxRound) assistantwire.InboxRound {
 	out := n
 	if old.Round == assistantwire.RoundFull || n.Round == assistantwire.RoundFull {
@@ -280,7 +281,7 @@ func mergeRounds(old, n assistantwire.InboxRound) assistantwire.InboxRound {
 	case n.Mail == nil:
 		out.Mail = old.Mail
 	case old.Mail != nil:
-		m := &assistantwire.InboxMailRead{Accounts: slices.Clone(n.Mail.Accounts)}
+		m := &assistantwire.InboxMailRead{Accounts: slices.Clone(n.Mail.Accounts), Failed: n.Mail.Failed}
 		got := map[string]int{}
 		for i, a := range m.Accounts {
 			got[a.ID] = i

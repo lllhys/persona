@@ -56,8 +56,8 @@ struct PersonaMacApp: App {
         .defaultSize(width: Theme.Size.macWindowHeight, height: Theme.Size.macWindowHeight)
 
         // A link dragged out of the panel, an inbox item opened on its own (Mac/Link, Mac/Inbox).
-        WindowGroup(String(localized: "Web Pages"), id: MacLinkWindow.id, for: URL.self) { $url in
-            MacLinkWindow(url: url).environment(model)
+        WindowGroup(String(localized: "Web Pages"), id: MacLinkWindow.id, for: MacLinkWindow.Value.self) { $value in
+            MacLinkWindow(value: value).environment(model)
                 .markdownInlineImageProvider(MathInlineImages()).markdownImageProvider(WebMarkdownImages()) // inline formulas (MathMarkdown)
                 .markdownCodeSyntaxHighlighter(PersonaCodeHighlighter()) // fences colored by language, as on the web (#2684)
         }

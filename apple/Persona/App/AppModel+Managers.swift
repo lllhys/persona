@@ -133,6 +133,14 @@ extension AppModel {
         guard let session else { return nil }
         return managerRosters[session.group]?.offlineManager(of: session.manager)
     }
+
+    /// The manager the links opened among things stamped `manager` (a chat's session, an inbox item) are read through
+    /// (`ManagerRoster.reading`), in group `group` (nil: the hub-level one). The native readers read through the hub-level
+    /// group's hub, so another group's name none.
+    func linkManager(_ manager: String?, group: String? = nil) -> String? {
+        guard group == nil || group == (hub?.group ?? "") else { return nil }
+        return ManagerRoster.reading(manager, roster: managerRoster)
+    }
 }
 
 extension ManagerRoster {
@@ -148,5 +156,14 @@ extension ManagerRoster {
         guard isMulti else { return nil }
         let id = owner(manager)
         return installed.first { $0.id == id && !$0.online }
+    }
+
+    /// The manager a link opened among things stamped `manager` is read through (docs/assistant/managers.md "Clients"): as
+    /// `named`, nil for the default's and for one `roster` hasn't installed; before a roster is read, any but the hub's own
+    /// assistant.
+    static func reading(_ manager: String?, roster: ManagerRoster?) -> String? {
+        if let roster { return roster.named(manager) }
+        guard let manager, !manager.isEmpty, manager != assistant else { return nil }
+        return manager
     }
 }

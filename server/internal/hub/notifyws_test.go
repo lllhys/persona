@@ -88,7 +88,7 @@ func TestWSNotifyInteractionAndAssistant(t *testing.T) {
 		if err := h.push.setPrefs(c.device, NotifyPrefs{Input: input, Done: DoneOff}); err != nil {
 			t.Fatal(err)
 		}
-		h.notifyInteraction(assistantwire.AssistantID, ix, "测试设备")
+		h.notifyInteraction(assistantwire.AssistantID, ix, "测试设备", false)
 		select {
 		case raw := <-c.out:
 			var got map[string]string
@@ -230,7 +230,7 @@ func TestWSNotifyMuteWhileDesktop(t *testing.T) {
 	}
 
 	// No desktop: everything comes.
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	if k := got(); k != "interaction" {
 		t.Fatalf("no desktop, interaction: %q", k)
 	}
@@ -239,7 +239,7 @@ func TestWSNotifyMuteWhileDesktop(t *testing.T) {
 	h.mu.Lock()
 	h.clients[mac] = struct{}{}
 	h.mu.Unlock()
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	if k := got(); k != "" {
 		t.Fatalf("muted while a desktop is online, still got %q", k)
 	}
@@ -262,7 +262,7 @@ func TestWSNotifyMuteWhileDesktop(t *testing.T) {
 	h.mu.Lock()
 	delete(h.clients, mac)
 	h.mu.Unlock()
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	if k := got(); k != "interaction" {
 		t.Fatalf("desktop gone, interaction: %q", k)
 	}
@@ -274,7 +274,7 @@ func TestWSNotifyMuteWhileDesktop(t *testing.T) {
 	if err := h.push.setPrefs(phone.device, NotifyPrefs{Input: true, Done: DoneAlways}); err != nil {
 		t.Fatal(err)
 	}
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	if k := got(); k != "interaction" {
 		t.Fatalf("not muted, interaction: %q", k)
 	}

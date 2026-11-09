@@ -200,3 +200,22 @@ Checkup reports are usually PDFs dozens of pages long. If only the chat history 
   After changing `health_claude_md.md`, update the golden and review the diff (`docs/assistant/prompts.md`). Charts: `go test ./internal/assistant -run HealthClaudeMDTeachesCharts`, `go test ./internal/feishubot -run PersonaCards`.
 - Web: `cd web && npm test && npm run build`.
 - iOS / Mac: `PersonaTests/HealthModelTests` (lists and memory carry `space`, merging pushes, sidebar does not list health chats, new chats carry `space`); build `Persona` and `PersonaMac`.
+
+## Automatic workout reports (iOS)
+
+Settings → Health → Automatic workout reports is off by default. Enabling it requests
+HealthKit workout and heart-rate read access and records a consent timestamp. Opening
+or foregrounding the app uploads completed workouts lasting at least ten minutes
+whose start is after that timestamp. This version does not provide background
+HealthKit delivery. The device must reconnect to the same paired hub.
+
+Reports appear in the Health space using existing persona-card measurement cards,
+a minute-average heart-rate chart when available, and a brief interpretation. Missing
+measurements are omitted; route coordinates are not uploaded. Pace charts require
+measured splits and are not generated from the aggregate-only payload.
+
+The device atomically stores its HealthKit cursor with a bounded upload outbox.
+Failed uploads are retried on the next foreground visit. The assistant stores a
+workout UUID receipt in PostgreSQL so retries, restarts, and deletion of an old task
+do not recreate it. Turning the switch off clears the local pending uploads; already
+accepted reports may still complete. Re-enabling starts a new consent window.

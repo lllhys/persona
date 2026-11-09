@@ -7,8 +7,11 @@ import (
 
 // DayMessage is one message of a day page.
 type DayMessage struct {
-	N    int    `json:"n"`
-	Text string `json:"text"`
+	SentBy       string     `json:"sent_by,omitempty"`
+	SentLedgerID int64      `json:"sent_ledger_id,omitempty"`
+	RecalledAt   *time.Time `json:"recalled_at,omitempty"`
+	N            int        `json:"n"`
+	Text         string     `json:"text"`
 }
 
 // Detail is everything about one entity: its metadata, compressed context, a project's timeline, a chat's latest text.

@@ -11,7 +11,7 @@ import (
 // updates go when the next item is kept.
 func TestOutbox(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, freshDatabase(t), ManagerSet)
+	d, err := Open(ctx, migratedDatabase(t, ManagerSet), ManagerSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestOutbox(t *testing.T) {
 // What managers handed the hub is recorded per manager, once, forgotten on request and after its time.
 func TestHandOver(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, freshDatabase(t), HubSet)
+	d, err := Open(ctx, migratedDatabase(t, HubSet), HubSet)
 	if err != nil {
 		t.Fatal(err)
 	}

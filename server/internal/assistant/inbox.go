@@ -315,9 +315,11 @@ type inboxBook struct {
 	batch     *inboxBatch          // while a collection runs: the items it starts, which enter once triaged
 	held      map[string]inboxHeld // by source: the new items its last collection held back (inbox_admit.go)
 	// readErrs: the sources the last round could not read, by id, as a short code (assistantwire.ReadFailed…): the
-	// apps say which one is behind (InboxTriage.Sources). Memory only.
-	readErrs map[string]string
-	grouping inboxGrouping // the batches being related to events (inbox_group.go)
+	// apps say which one is behind (InboxTriage.Sources). mailReadErrs: the same of the mail accounts the last mail
+	// round could not read, by account id. Memory only.
+	readErrs     map[string]string
+	mailReadErrs map[string]assistantwire.InboxMailFailed
+	grouping     inboxGrouping // the batches being related to events (inbox_group.go)
 
 	cfgMu sync.Mutex
 	cfg   assistantwire.InboxConfig // the hub's (InboxConfigMethod), as last read
@@ -689,13 +691,19 @@ func (s *Service) inboxRoutes() {
 			apierr.WriteJSON(w, it)
 		}
 	})
-	// A pull to refresh: the hub reads every source now and hands it over before it answers.
+	// A pull to refresh: the hub reads every source now and hands it over before it answers. When that fails nothing
+	// was read now: 502 inbox_refresh_failed, the collect's error as the detail, so the apps say the refresh did not
+	// happen instead of showing the list as it was for a fresh one (#1849).
 	s.handle("POST /api/v1/inbox/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if !s.inboxUp(w, r) {
 			return
 		}
 		if err := s.appCall(r.Context(), AppInbox, assistantwire.InboxCollect, map[string]any{"round": assistantwire.RoundFull}, nil); err != nil {
 			s.logf("inbox: refresh: %v", err)
+			l := i18n.OfWriter(w)
+			apierr.WriteBody(w, http.StatusBadGateway, map[string]any{"code": assistantwire.CodeInboxRefreshFailed,
+				"error": i18n.T(l, "assistant-inbox.refresh_failed"), "detail": i18n.Localize(err, l), "retryable": true})
+			return
 		}
 		items, asOf := s.inboxListAt(r.URL.Query().Get("sources") == "all")
 		apierr.WriteJSON(w, map[string]any{"items": items, "as_of": asOf, "triage": s.inboxTriage()})

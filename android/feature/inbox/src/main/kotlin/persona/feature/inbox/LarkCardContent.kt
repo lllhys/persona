@@ -1,18 +1,34 @@
 package persona.feature.inbox
 
+import persona.core.contracts.api.AssistantManagerChoice
 import persona.core.contracts.api.InboxAssistantTransport
+import persona.core.contracts.api.RequestManager
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import org.jsoup.Jsoup
 
-/** Requests stay bound to the pairing that supplied the message. */
-class LarkContentSource(internal val transport: InboxAssistantTransport) {
-    val scope: String get() = transport.scope
-    suspend fun document(url: String): LarkDocument = parseLarkDocument(transport.readDocument(url))
+/**
+ * Requests stay bound to the pairing that supplied the message, and to [manager] when one is set: the manager of the chat
+ * or inbox item a link was opened from (docs/assistant/managers.md "Clients"), named on each request where it is made,
+ * so a read that goes out after the page moved on keeps it. The default's names none; null leaves the requests as they are.
+ */
+class LarkContentSource(internal val transport: InboxAssistantTransport, val manager: String? = null) {
+    /** The pairing, and the manager when it is not the default: what reads through this source are cached under. */
+    val scope: String get() = named()?.let { "${transport.scope}#$it" } ?: transport.scope
+    suspend fun document(url: String): LarkDocument = parseLarkDocument(read { readDocument(url) })
     fun image(ref: String, document: Boolean = false): LarkPart.Image = LarkPart.Image(
-        AuthenticatedLarkImage("${transport.scope}:$ref") {
-            if (document && ref.startsWith("/api/v1/lark/raw/documents/")) transport.documentMedia(ref)
-            else transport.media(ref)
+        AuthenticatedLarkImage("$scope:$ref") {
+            read { if (document && ref.startsWith("/api/v1/lark/raw/documents/")) documentMedia(ref) else media(ref) }
         })
+
+    /** This pairing's reads as [manager]'s; null keeps this source. */
+    fun forManager(manager: String?): LarkContentSource =
+        if (manager == null || manager == this.manager) this else LarkContentSource(transport, manager)
+
+    internal suspend fun <T> read(block: suspend InboxAssistantTransport.() -> T): T =
+        if (manager == null) transport.block() else withContext(RequestManager(named().orEmpty())) { transport.block() }
+
+    private fun named(): String? = manager?.takeIf { it.isNotBlank() && it != AssistantManagerChoice.current.value.defaultId }
 }
 
 data class LarkCardContent(val title: String, val blocks: List<LarkCardBlock>, val summary: String)

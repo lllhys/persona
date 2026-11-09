@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { clientIdFor, ON_DOCUMENT, parseThreads, readComments, replyText, sendComment, sendKey, setResolved, sortThreads, writeErrorText, type DocThread } from "./doc-comments";
+import { clientIdFor, findDocPeople, ON_DOCUMENT, parseThreads, readComments, replyText, sendComment, sendKey, setResolved, sortThreads, writeErrorText, type DocThread } from "./doc-comments";
 
 const URL1 = "https://example.feishu.cn/docx/AbC123";
 
@@ -102,6 +102,18 @@ describe("请求", () => {
     expect(calls[0].path).toBe("/api/v1/lark/documents/comments/c1/resolve");
     expect(json(0)).toEqual({ url: URL1, resolved: true });
     expect(t?.[0].resolved).toBe(true);
+  });
+
+  it("names the manager the reader reads the document as on every request, none for the default's", async () => {
+    vi.stubGlobal("fetch", answer({ ok: true, threads: [] }));
+    await readComments(URL1, "m-2");
+    await sendComment(URL1, ON_DOCUMENT, "ok", [], "id6", "m-2");
+    await sendComment(URL1, { kind: "thread", id: "c1", name: "Sample", text: "" }, "ok", [], "id7", "m-2");
+    await setResolved(URL1, "c1", true, "m-2");
+    await findDocPeople(URL1, "a", undefined, "m-2");
+    await readComments(URL1, "assistant");
+    await readComments(URL1);
+    expect(calls.map((c) => new Headers(c.init.headers).get("X-Persona-Manager"))).toEqual(["m-2", "m-2", "m-2", "m-2", "m-2", null, null]);
   });
 
   it("写失败时抛出 hub 的话", async () => {

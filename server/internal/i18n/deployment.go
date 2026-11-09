@@ -115,7 +115,7 @@ func makeDeploymentTemplates() []deploymentTemplate {
 func makeCatalogTemplates(eligible func(string) bool) []deploymentTemplate {
 	var out []deploymentTemplate
 	for _, l := range Langs {
-		for key, text := range catalogs()[l] {
+		for key, text := range readCatalog(l) {
 			if !eligible(key) {
 				continue
 			}

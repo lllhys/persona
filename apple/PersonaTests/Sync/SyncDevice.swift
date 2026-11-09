@@ -219,7 +219,8 @@ final class SyncDevice {
         let store = model.chat(key)
         let session = model.session(key)
         var v = SyncView()
-        let lines = ChatLines(openWork: []).build(store.blocks, live: nil)
+        let liveID: String? = if session?.state == .working, case .turn(let t) = store.blocks.last { t.id } else { nil }
+        let lines = ChatLines(openWork: []).build(store.blocks, live: liveID, streaming: !store.liveText.isEmpty)
         let queued = session?.queued ?? []
         let pending = (store.arriving + store.pending).filter { p in !queued.contains { PendingMessage.same($0, p.text) } }
         let placed = ChatLines.placeFailed(lines, pending, writtenAt: store.writtenAt)

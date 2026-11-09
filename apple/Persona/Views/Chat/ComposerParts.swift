@@ -106,6 +106,36 @@ extension ComposerRow {
     }
 }
 
+/// A chat's composer's photos, videos and file uploads (#2626): kept by `AppModel.composerAttachments(_:)` per
+/// conversation, as the text is in `drafts`, not by the composer, which is built again with the whole tree when iOS
+/// snapshots the app in another width on its way to the background (iPhone Duo open).
+@MainActor @Observable
+final class ComposerAttachments {
+    var images: [(UIImage, ImagePayload)] = []
+    let uploads = FileUploads()
+    let videos = VideoAttachments()
+}
+
+/// The new conversation's composer (#2626): its text and quotes as well, there being no conversation yet whose draft
+/// could keep them; kept by `AppModel.starterDraft(_:)` per page (the assistant's, Health's).
+@MainActor @Observable
+final class StarterDraft {
+    var text = ""
+    var quotes: [ContextRef] = []
+    let held = ComposerAttachments()
+    /// One more for each message sent: a file still uploading for one that went puts its path in no later message.
+    private(set) var generation = 0
+
+    /// The message went: an empty box for the next one.
+    func sent() {
+        text = ""
+        quotes = []
+        held.images = []
+        held.videos.sent()
+        generation += 1
+    }
+}
+
 /// Photos picked for the next message, above the composer: × takes one out; with `edit`, a tap marks it up first.
 struct ComposerImages: View {
     @Binding var images: [(UIImage, ImagePayload)]

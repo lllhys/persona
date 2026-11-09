@@ -17,15 +17,15 @@ func TestFleetCountsCodexRootsOnly(t *testing.T) {
 				{SessionID: "root-only", RootSessionID: "missing"},
 				{SessionID: "flag-only", IsSubagent: true},
 			}
-			agents := []fleetInput{{Session: root}}
+			agents := []fleetInput{{Session: &root}}
 			var interactions []proto.Interaction
 			for _, child := range children {
 				child.MachineID, child.Agent, child.State = "box", "codex", state
-				agents = append(agents, fleetInput{Session: child})
+				agents = append(agents, fleetInput{Session: &child})
 				interactions = append(interactions, proto.Interaction{ID: child.SessionID, MachineID: "box", SessionID: child.SessionID, Kind: proto.IxPermission})
 			}
 			// Non-Codex ancestry keeps its existing independent-task semantics.
-			agents = append(agents, fleetInput{Session: proto.Session{MachineID: "box", SessionID: "ordinary", Agent: "claude", ParentSessionID: "root", IsSubagent: true, State: state}})
+			agents = append(agents, fleetInput{Session: &proto.Session{MachineID: "box", SessionID: "ordinary", Agent: "claude", ParentSessionID: "root", IsSubagent: true, State: state}})
 			st := buildFleet(agents, interactions)
 			if st.Working+st.NeedsYou+st.Unread != 2 || len(st.Items) != 2 {
 				t.Fatalf("children changed root counts: %+v", st)

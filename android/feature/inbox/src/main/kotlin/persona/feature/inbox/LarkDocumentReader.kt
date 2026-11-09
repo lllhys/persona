@@ -45,9 +45,12 @@ internal val LocalLarkLinkOpener = staticCompositionLocalOf<((String, LarkConten
 private data class LarkLink(val url: String, val source: LarkContentSource?)
 private enum class ReaderDetent { Full, Peek, Hidden }
 
-/** In-app links open full height; the drag handle leaves the conversation interactive at the peek detent. */
+/**
+ * In-app links open full height; the drag handle leaves the conversation interactive at the peek detent. [manager] is the
+ * inbox item's whose page this is: the documents and posts its links open are read through it (null: none named).
+ */
 @Composable
-internal fun LarkLinkHost(repository: InboxRepository, content: @Composable () -> Unit) {
+internal fun LarkLinkHost(repository: InboxRepository, manager: String? = null, content: @Composable () -> Unit) {
     var target by remember { mutableStateOf<LarkLink?>(null) }
     var momentPostId by remember { mutableStateOf<String?>(null) }
     var momentLink by remember { mutableStateOf<String?>(null) }
@@ -60,7 +63,7 @@ internal fun LarkLinkHost(repository: InboxRepository, content: @Composable () -
         // Native views only while the hub has them (the Lark extension's features, #1530); else a web page.
         when (val native = larkNativeLink(url, lark)) {
             is LarkNativeLink.MomentsPost -> { momentPostId = native.postId; momentLink = url }
-            is LarkNativeLink.Document -> larkWebUrl(url)?.let { target = LarkLink(it, source) }
+            is LarkNativeLink.Document -> larkWebUrl(url)?.let { target = LarkLink(it, source?.forManager(manager)) }
             null -> larkWebUrl(url)?.let { target = LarkLink(it, null) }
         }
     }, LocalLarkReadOccluded provides (parentOccluded || target != null || momentPostId != null)) {
@@ -108,6 +111,7 @@ internal fun LarkLinkHost(repository: InboxRepository, content: @Composable () -
                     postId = pid,
                     link = momentLink,
                     repository = repository,
+                    manager = manager,
                     onDismiss = {
                         momentPostId = null
                         momentLink = null
@@ -120,24 +124,26 @@ internal fun LarkLinkHost(repository: InboxRepository, content: @Composable () -
 
 /**
  * The shared conversation link host can use the current inbox pairing without changing the app shell. [picks] puts
- * the card's "AI edit" / "Use as context" in the selection menu and hears the title; [refresh] counts the card's "Refresh".
+ * the card's "AI edit" / "Use as context" in the selection menu and hears the title; [refresh] counts the card's "Refresh";
+ * [manager] is the conversation's, which the document is read through (null: none named).
  */
 @Composable
 fun LarkDocumentLink(url: String, modifier: Modifier = Modifier, picks: LarkLinkPicks? = null, refresh: Int = 0,
-    webpageContent: @Composable () -> Unit) {
+    manager: String? = null, webpageContent: @Composable () -> Unit) {
     val repository = injectedInboxRepository()
     val snapshot by repository.snapshot.collectAsStateWithLifecycle()
-    LarkDocumentReader(url, snapshot.contentSource, repository, modifier, webpageContent, picks = picks, refresh = refresh)
+    LarkDocumentReader(url, snapshot.contentSource?.forManager(manager), repository, modifier, webpageContent, picks = picks, refresh = refresh)
 }
 
 /**
  * Starts reading the Feishu documents among [urls] that the card would open natively, so a tap shows them at once
- * (web `setLinkPrefetcher`); they go to [LarkDocumentCache.shared], never into the card's WebView pool.
+ * (web `setLinkPrefetcher`); they go to [LarkDocumentCache.shared] as [manager]'s, as the card would read them, never
+ * into the card's WebView pool.
  */
 @Composable
-fun LarkDocumentPrefetch(urls: List<String>) {
+fun LarkDocumentPrefetch(urls: List<String>, manager: String? = null) {
     val repository = injectedInboxRepository()
-    val source = repository.snapshot.collectAsStateWithLifecycle().value.contentSource ?: return
+    val source = repository.snapshot.collectAsStateWithLifecycle().value.contentSource?.forManager(manager) ?: return
     LaunchedEffect(urls, source.scope) { urls.take(3).forEach { LarkDocumentCache.shared.prefetch(source, it) } }
 }
 
@@ -183,7 +189,7 @@ fun LarkDocumentReader(url: String, source: LarkContentSource?, repository: Inbo
     // Comments (#2964): read where the hub has Feishu, written where its plugin says `lark_doc_comments`.
     val lark = LocalLarkFeatures.current
     val unnamed = stringResource(R.string.inbox_lark_doc_comments_unnamed)
-    val comments = remember(url, source?.scope) { source?.let { LarkDocCommentsModel(url, LarkDocCommentsTransport(it.transport), unnamed = unnamed) } }
+    val comments = remember(url, source?.scope) { source?.let { LarkDocCommentsModel(url, LarkDocCommentsTransport(it), unnamed = unnamed) } }
     var commentsShown by remember(url, source?.scope) { mutableStateOf(false) }
     // "Comment on this passage" (#2964, iOS #1729): the comments open with the box on that passage (its text, the block it is in when known).
     val commentOn: ((String, String?) -> Unit)? = if (comments == null || !lark.docComments) null else { quote, block ->

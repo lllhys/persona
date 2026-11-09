@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -212,7 +214,11 @@ func (h *Hub) emitToExtensions(owner, event string, params any) {
 // extensionRoutesRelayed relays the apps' requests on the manager's routes.
 func (h *Hub) extensionRoutesRelayed(api *http.ServeMux) {
 	for _, pattern := range extwire.Routes {
-		api.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.relayToManager(w, r, false) })
+		relay := func(w http.ResponseWriter, r *http.Request) { h.relayToManager(w, r, false) }
+		if pattern == "/api/v1/agents/" { // messages to the personal Agents (terminal_controls.go)
+			relay = h.withoutTerminalControls(relay)
+		}
+		api.HandleFunc(pattern, relay)
 	}
 	// The lists: every manager's extensions and sources (ownership_lists.go).
 	for pattern, key := range mergedLists {
@@ -613,6 +619,21 @@ func answerOnly(r *http.Request) bool { return principalOf(r.Context()).Role == 
 
 // ---- what the manager asks of the hub (app.call hub.*) ----
 
+// managerCollapseID is the apns-collapse-id of a push a manager asked for with collapse id id: the same id from the same
+// manager still replaces its earlier push, but no manager's id replaces another manager's push, one the hub named (a
+// to-do's, its update notice) or a notify API caller's, and any id fits APNs' 64 bytes. An empty id stays empty: a push
+// of its own.
+func managerCollapseID(manager, id string) string {
+	if id == "" {
+		return ""
+	}
+	sum := sha256.New()
+	sum.Write(binary.AppendUvarint(nil, uint64(len(manager))))
+	sum.Write([]byte(manager))
+	sum.Write([]byte(id))
+	return "ext:" + hex.EncodeToString(sum.Sum(nil)[:16])
+}
+
 func (h *Hub) extAppCall(ctx context.Context, from string, p assistantwire.AppCall) (json.RawMessage, bool, error) {
 	if p.AppID != extwire.AppHub {
 		return nil, false, nil
@@ -650,7 +671,7 @@ func (h *Hub) extAppCall(ctx context.Context, from string, p assistantwire.AppCa
 			}
 		}
 		// the manager's extension's: not to the devices that turned that manager's pushes off
-		h.push.sendFrom(from, func(l i18n.Lang) map[string]any { return localizedPayload(a.Payloads, l) }, a.CollapseID, nil, quietNone, nil)
+		h.push.sendFrom(from, func(l i18n.Lang) map[string]any { return localizedPayload(a.Payloads, l) }, managerCollapseID(from, a.CollapseID), nil, quietNone, nil)
 		out = map[string]any{}
 	case extwire.HubPushBackground:
 		if err := h.pushPayloadAllowed(from, a.Payload); err != nil {

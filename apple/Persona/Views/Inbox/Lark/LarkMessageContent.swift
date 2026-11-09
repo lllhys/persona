@@ -372,6 +372,7 @@ struct LarkSystemText: View {
 struct LarkImagePart: View {
     var part: LarkPart
     @Environment(\.larkContext) private var context
+    @Environment(\.larkManager) private var manager
     @State private var viewing = false
     @Namespace private var zoom
 
@@ -388,7 +389,7 @@ struct LarkImagePart: View {
                 .onTapGesture { viewing = true }
                 .fullScreenCover(isPresented: $viewing) {
                     let all = context.images.isEmpty ? [url] : context.images
-                    ImageViewer(urls: all, index: all.firstIndex(of: url) ?? 0)
+                    ImageViewer(urls: all.map { LarkMedia.url($0, manager: manager) }, index: all.firstIndex(of: url) ?? 0)
                         .navigationTransition(.zoom(sourceID: url, in: zoom))
                 }
                 .accessibilityLabel("images")
@@ -409,6 +410,7 @@ struct LarkImagePart: View {
 /// A sticker at its own aspect ratio inside a 120 pt box (no blank band under wide ones).
 struct LarkSticker: View {
     var part: LarkPart
+    @Environment(\.larkManager) private var manager
     @State private var image: UIImage?
 
     var body: some View {
@@ -423,7 +425,7 @@ struct LarkSticker: View {
                 }
             }
             .accessibilityLabel(part.text ?? String(localized: "Sticker"))
-            .task(id: url) { image = await LarkMedia.shared.image(url, maxPixel: 400) }
+            .task(id: url) { image = await LarkMedia.shared.image(LarkMedia.url(url, manager: manager), maxPixel: 400) }
         }
     }
 }

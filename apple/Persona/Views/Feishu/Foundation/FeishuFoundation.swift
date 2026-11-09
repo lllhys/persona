@@ -27,12 +27,21 @@ extension APIClient {
 
 /// What a Feishu view can open from another: a chat, a document, a person, a company-feed (Moments) post. Persona is
 /// not a second Feishu: there are no browsing screens, only what a link or a message leads to. The navigation stack that owns a
-/// Feishu view resolves these with `.feishuRoutes()`.
+/// Feishu view resolves these with `.feishuRoutes()`. A chat's, a document's, a person's and a post's `manager` is the one they are
+/// read through (the chat's or inbox item's the link or profile was in, docs/assistant/managers.md "Clients"); nil: the
+/// default's.
 enum FeishuRoute: Hashable {
-    case chat(LarkConversation)
-    case doc(url: String, title: String?)
-    case profile(LarkPersonRef)
-    case momentsPost(id: String)
+    case chat(LarkConversation, manager: String? = nil)
+    case doc(url: String, title: String?, manager: String? = nil)
+    case profile(LarkPersonRef, manager: String? = nil)
+    case momentsPost(id: String, manager: String? = nil)
+
+    /// The manager it is read through; nil for the default's.
+    var manager: String? {
+        switch self {
+        case .chat(_, let m), .doc(_, _, let m), .profile(_, let m), .momentsPost(_, let m): m
+        }
+    }
 }
 
 extension EnvironmentValues {
@@ -48,21 +57,22 @@ extension View {
 
     /// Links inside Feishu views stay in the app (CLAUDE.md「链接在 App 内打开」): doc / wiki links open in the native
     /// reader and company-feed links as the post (while the hub has them, `LarkFeatures`), other web pages in the link
-    /// sheet; mailto, tel and the like go to the system.
-    func feishuHandlesLinks(_ open: ((FeishuRoute) -> Void)?) -> some View {
-        modifier(FeishuLinkHandling(open: open))
+    /// sheet; mailto, tel and the like go to the system. `manager`: the one they are read through (an inbox item's).
+    func feishuHandlesLinks(_ open: ((FeishuRoute) -> Void)?, manager: String? = nil) -> some View {
+        modifier(FeishuLinkHandling(open: open, manager: manager))
     }
 }
 
 private struct FeishuLinkHandling: ViewModifier {
     @Environment(AppModel.self) private var model
     var open: ((FeishuRoute) -> Void)?
+    var manager: String?
     @State private var link: LinkTarget?
 
     func body(content: Content) -> some View {
         #if os(macOS)
         content.environment(\.openURL, OpenURLAction { url in
-            if let open, case .route(let route) = FeishuLinks.target(url, lark: model.larkFeatures) {
+            if let open, case .route(let route) = FeishuLinks.target(url, lark: model.larkFeatures, manager: manager) {
                 open(route)
                 return .handled
             }
@@ -71,7 +81,7 @@ private struct FeishuLinkHandling: ViewModifier {
         #else
         content
             .environment(\.openURL, OpenURLAction { url in
-                switch FeishuLinks.target(url, lark: model.larkFeatures) {
+                switch FeishuLinks.target(url, lark: model.larkFeatures, manager: manager) {
                 case .route(let route) where open != nil:
                     open?(route)
                     return .handled
@@ -79,12 +89,12 @@ private struct FeishuLinkHandling: ViewModifier {
                     // The sheet's Edit with AI / Add as Context go to the assistant, whose config loads with its page: opened
                     // straight into the inbox it is not there yet. With no assistant at all, the system opens the link.
                     if assistant != nil {
-                        link = LinkTarget(url: url)
+                        link = LinkTarget(url: url, manager: manager)
                         return .handled
                     }
                     Task {
                         await model.refreshAssistant()
-                        if assistant != nil { link = LinkTarget(url: url) } else { await UIApplication.shared.open(url) }
+                        if assistant != nil { link = LinkTarget(url: url, manager: manager) } else { await UIApplication.shared.open(url) }
                     }
                     return .handled
                 case .system:
@@ -110,17 +120,17 @@ nonisolated enum FeishuLinks {
     }
 
     /// The native view a Feishu link opens in, if there is one and the hub has what it reads (`LarkFeatures`):
-    /// without it the link is an ordinary web page.
-    static func route(_ url: URL, lark: LarkFeatures) -> FeishuRoute? {
-        if lark.chats, isDoc(url) { return .doc(url: url.absoluteString, title: nil) }
-        if lark.moments, let id = LarkMoments.postID(url.absoluteString) { return .momentsPost(id: id) }
+    /// without it the link is an ordinary web page. `manager`: the one it is read through; nil: the default's.
+    static func route(_ url: URL, lark: LarkFeatures, manager: String? = nil) -> FeishuRoute? {
+        if lark.chats, isDoc(url) { return .doc(url: url.absoluteString, title: nil, manager: manager) }
+        if lark.moments, let id = LarkMoments.postID(url.absoluteString) { return .momentsPost(id: id, manager: manager) }
         return nil
     }
 
     typealias Target = FeishuLinkTarget
 
-    static func target(_ url: URL, lark: LarkFeatures) -> Target {
-        if let route = route(url, lark: lark) { return .route(route) }
+    static func target(_ url: URL, lark: LarkFeatures, manager: String? = nil) -> Target {
+        if let route = route(url, lark: lark, manager: manager) { return .route(route) }
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), !(url.host ?? "").isEmpty else { return .system }
         return .sheet
     }
@@ -140,10 +150,10 @@ struct FeishuRouteView: View {
 
     var body: some View {
         switch route {
-        case .chat(let c): LarkChatView(conversation: c)
-        case .doc(let url, let title): FeishuDocReader(url: url, title: title)
-        case .profile(let p): LarkProfileView(person: p, embedded: true)
-        case .momentsPost(let id): LarkMomentsPostView(postID: id)
+        case .chat(let c, let manager): LarkChatView(conversation: c, manager: manager)
+        case .doc(let url, let title, let manager): FeishuDocReader(url: url, title: title, manager: manager)
+        case .profile(let p, let manager): LarkProfileView(person: p, embedded: true).environment(\.larkManager, manager)
+        case .momentsPost(let id, let manager): LarkMomentsPostView(postID: id, manager: manager)
         }
     }
 }

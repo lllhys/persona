@@ -12,7 +12,6 @@ import android.content.res.Resources
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.style.TextOverflow
 import persona.core.contracts.BackgroundTask
 import persona.core.contracts.LoopInfo
 import persona.core.contracts.Machine
@@ -131,9 +130,9 @@ internal fun ChatStatusSheet(
             session?.loop?.let { loop -> item {
                 JGroupItem(GroupPosition.Single) {
                     JRow(stringResource(R.string.chat_status_loop_title), subtitle = loopSummary(res, loop, separator = stringResource(R.string.chat_status_clause_separator)), leadingIcon = PhIcons.ArrowsClockwise)
+                    // In full: this is the only place that shows what the loop does, and the sheet scrolls (#2708).
                     loop.prompt?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, Modifier.padding(Tokens.Space.m), style = PersonaTheme.type.callout,
-                            color = PersonaTheme.palette.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(it, Modifier.padding(Tokens.Space.m), style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink)
                     }
                 }
             } }

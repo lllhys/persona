@@ -47,6 +47,9 @@ struct LinkStatus: Decodable, Equatable {
     /// The hub's "Needs you" summary (Attention.swift); helpers and hubs that do not send one leave it out. Decoded
     /// apart from the rest (`decode`), so a summary that does not decode loses only itself.
     var attention: LinkAttention? = nil
+    /// While connected (active mode): which of the helper's links this is. A confirmation names the link its card's
+    /// summary came on, and the helper passes it on to that link only; older helpers say nothing.
+    var conn: UInt64?
 
     var passive: Bool { mode == "passive" }
     var systemTrust: Bool { trust == "system" }
@@ -57,7 +60,7 @@ struct LinkStatus: Decodable, Equatable {
     var renamable: Bool { !passive && state == "connected" && !(machineName ?? "").isEmpty && pending != true }
 
     enum CodingKeys: String, CodingKey {
-        case state, machine, address, kind, since, node, error, retry, endpoints, mode, listen, addrs, from, trust, pending
+        case state, machine, address, kind, since, node, error, retry, endpoints, mode, listen, addrs, from, trust, pending, conn
         case nodeError = "node_error"
         case hubName = "hub_name"
         case meshHubs = "mesh_hubs"
@@ -264,6 +267,8 @@ enum LinkText {
     @ObservationIgnored private var quitting = false
     @ObservationIgnored private let monitor = NWPathMonitor()
     @ObservationIgnored private var sawFirstPath = false
+    /// Presence for the helper's stdin (Presence.swift); started with the app, never in snapshots or tests.
+    @ObservationIgnored private let presence = PresenceMonitor()
 
     nonisolated static let helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/persona-link")
     /// The device's program the app carries (persona-node), for the resident node when this Mac has none
@@ -308,9 +313,16 @@ enum LinkText {
     func start() {
         webAddress = defaults.string(forKey: Self.webAddressKey) ?? ""
         LinkNotifier.shared.start(open: { [weak self] route, webURL in self?.open(route: route, webURL: webURL) },
-                                  allowed: { [weak self] in self?.notificationsOff = !$0 })
+                                  access: { [weak self] access in
+                                      self?.notificationsOff = !access.allowed
+                                      self?.presence.receive(.notifies(access.shows))
+                                  },
+                                  confirm: { [weak self] card, conn in
+                                      self?.writeHelper(Presence.rangLine(card, conn: conn), what: "confirmation")
+                                  })
         readConfig()
         startHelper()
+        presence.start(write: { [weak self] line in self?.writeHelper(line, what: "presence") })
         Task { await setUpNodeOnce() }
         monitor.pathUpdateHandler = { _ in
             Task { @MainActor in LinkModel.shared.networkChanged() }
@@ -340,6 +352,7 @@ enum LinkText {
         p.environment = Self.helperEnvironment
         p.arguments = ["run", "--parent"] // exits when its stdin closes: when this app goes away, however it does
         let input = Pipe(), output = Pipe()
+        Self.dontBlock(input.fileHandleForWriting)
         p.standardInput = input
         p.standardOutput = output
         p.standardError = logHandle()
@@ -358,6 +371,7 @@ enum LinkText {
             keepStdin = input
             startedAt = Date()
             helperDown = nil
+            presence.helperStarted()
         } catch {
             helperDown = "后台程序启动不了：\(error.localizedDescription)"
             scheduleRestart()
@@ -405,8 +419,20 @@ enum LinkText {
 
     /// The helper's status changed: the notifications follow its summary.
     private func setStatus(_ s: LinkStatus?) {
-        if s?.attention != status?.attention { LinkNotifier.shared.apply(s?.attention) }
+        if s?.attention != status?.attention { LinkNotifier.shared.apply(s?.attention, conn: s?.conn) }
         status = s
+    }
+
+    /// A line for the helper's stdin, presence or a confirmation (Presence.swift). None goes out while there is no
+    /// helper: the next one gets the presence as it starts, and a confirmation lost so leaves the card to the phone. The
+    /// pipe does not block (`dontBlock`); a line is far shorter than PIPE_BUF, so it goes whole or not at all.
+    private func writeHelper(_ line: Data?, what: String) {
+        guard let line, let input = keepStdin else { return }
+        do {
+            try Self.writeAll(input.fileHandleForWriting, line)
+        } catch {
+            NSLog("Persona Link: %@ not written to the helper: %@", what, error.localizedDescription)
+        }
     }
 
     private func scheduleRestart() {
@@ -710,7 +736,17 @@ enum LinkText {
         Darwin.signal(SIGPIPE, SIG_IGN)
     }()
 
-    /// Writes every byte to a pipe.
+    /// Writes to `handle` fail at once (EAGAIN) while its pipe is full, instead of waiting for the reader: a helper that
+    /// stopped reading loses presence lines but never stalls the app. `writeAll` on it may then stop part way through
+    /// anything longer than PIPE_BUF (512 bytes).
+    nonisolated static func dontBlock(_ handle: FileHandle) {
+        let fd = handle.fileDescriptor
+        if fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == -1 {
+            NSLog("Persona Link: pipe left blocking: %@", String(cString: strerror(errno)))
+        }
+    }
+
+    /// Writes every byte to a pipe (a non-blocking one, `dontBlock`: until it is full, then EAGAIN).
     ///
     /// `FileHandle.write` raises an uncatchable ObjC exception on EPIPE (with SIGPIPE ignored, the write fails
     /// with EPIPE rather than raising a signal), so go through `write(2)` and let a helper that exits before

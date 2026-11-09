@@ -1,8 +1,9 @@
-// Package proc is a connector that runs in a program of its own (connector/serve) and answers for it in the hub. It
+// Package proc is a connector that runs in a program of its own and answers for it in the hub. It
 // implements every capability and declares what the program said it has (a proxy's manifest): the hub uses only
 // those. The program is either a plugin's, run by the plugin host (Config.Link: the hub's way, docs/extensions/extensions.md), or
-// started here with the connector protocol's own opening (Config.Path). The Telegram extension is one (#1704): its
-// dependencies would double personad's size (docs/archive/extensions/plan-telegram.md).
+// started here with the connector protocol's own opening (Config.Path), which only this package's tests still do.
+// Connector extensions such as Telegram (#1704) run the first way, outside personad for their dependencies
+// (docs/archive/extensions/plan-telegram.md).
 package proc
 
 import (

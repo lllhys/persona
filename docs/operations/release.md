@@ -54,7 +54,7 @@ The build number can also be given by hand: `./scripts/release/release.sh 42`.
 
 What `release.sh` does:
 
-1. `xcodegen generate` (the source is `apple/project.yml`, generating `Persona.xcodeproj`; the old `Persona.xcodeproj` is a symlink to the project entry, and generated content isn't committed).
+1. `xcodegen generate` (the source is `apple/project.yml`, generating `Persona.xcodeproj`; generated content isn't committed).
 2. Release archive to `~/Library/Developer/Xcode/Archives/<date>/Persona <build number>.xcarchive` (dSYMs kept for Organizer symbolication),
    with the watch App embedded.
 3. `check_bundle_strings.py` checks `Persona.app` and `Persona.app/Watch/Persona.app`: `*UsageDescription` in Info.plist
@@ -294,7 +294,7 @@ python3 scripts/release/asc_testflight.py external   # create the group, enable/
 
 ## Mac version (2026-11-02)
 
-The Mac App (target `PersonaMac`, old `PersonaMac` scheme compatible) shares the iPhone's bundle id, so it is **the same app record** in App Store Connect (macOS platform added, version 1.0),
+The Mac App (target and scheme `PersonaMac`) shares the iPhone's bundle id, so it is **the same app record** in App Store Connect (macOS platform added, version 1.0),
 and uses the same TestFlight: the same Internal / Friends groups and public link. Testers install TestFlight on a Mac to see Mac builds.
 
 - **Build numbers**: a number can only be used once per platform; different platforms can reuse it. Rule: **the Mac build and iPhone build in one release use the same number**

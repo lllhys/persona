@@ -59,6 +59,11 @@ fun ChatLinkHost(
     onVisibilityChanged: (Boolean) -> Unit = {},
     /** Sends a whole message to Persona's main conversation (and shows it); the sheet closes once it went. */
     onHandToPersona: (suspend (String) -> Unit)? = null,
+    /**
+     * The conversation's manager (docs/assistant/managers.md "Clients"): the documents and posts its links open natively, and
+     * those read ahead, are read through it, as are links tapped in them; null: none named.
+     */
+    manager: String? = null,
     content: @Composable (bottomInset: Dp) -> Unit,
 ) {
     val context = LocalContext.current
@@ -149,7 +154,7 @@ fun ChatLinkHost(
     val documentsAhead = remember(preloadUrls, lark) {
         preloadUrls.mapNotNull { ChatLinks.webUrl(it) }.filter { larkNativeLink(it, lark) is LarkNativeLink.Document }.take(3)
     }
-    if (documentsAhead.isNotEmpty() && !isScrolling && lifecycleState.isAtLeast(Lifecycle.State.STARTED)) LarkDocumentPrefetch(documentsAhead)
+    if (documentsAhead.isNotEmpty() && !isScrolling && lifecycleState.isAtLeast(Lifecycle.State.STARTED)) LarkDocumentPrefetch(documentsAhead, manager)
     val picks = if (onHandToPersona != null) listOf(ChatLinkPick.HandToPersona)
         else listOfNotNull(ChatLinkPick.Edit.takeIf { onEdit != null }, ChatLinkPick.Context.takeIf { onContext != null })
     // A web page is over the page: the page's glass goes opaque and the dock makes way (LocalWebSheets).
@@ -300,9 +305,9 @@ fun ChatLinkHost(
                             }
                         }
                         if (native is LarkNativeLink.Document)
-                            LarkDocumentLink(target, Modifier.fillMaxWidth().weight(1f), nativePicks, nativeRefresh, page)
+                            LarkDocumentLink(target, Modifier.fillMaxWidth().weight(1f), nativePicks, nativeRefresh, manager, page)
                         else if (native is LarkNativeLink.MomentsPost)
-                            LarkMomentsLink(native.postId, target, Modifier.fillMaxWidth().weight(1f), nativePicks, nativeRefresh, page)
+                            LarkMomentsLink(native.postId, target, Modifier.fillMaxWidth().weight(1f), nativePicks, nativeRefresh, manager, page)
                     } else if (view != null && !view.gone) key(view) {
                         JPage(title = stringResource(R.string.chat_link_page), modifier = Modifier.fillMaxWidth().weight(1f), topBar = {}) { padding ->
                             AndroidView(factory = { view },

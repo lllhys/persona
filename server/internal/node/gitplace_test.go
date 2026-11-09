@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -95,6 +96,7 @@ func TestReadGitPlace(t *testing.T) {
 func TestFillGitPlaceKeepsHostRoot(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "app")
 	writeGitFile(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main\n")
+	awaitGitPlace(t, gitPlaces, repo)
 
 	s := proto.Session{Cwd: repo}
 	fillGitPlace(&s)
@@ -115,4 +117,23 @@ func TestFillGitPlaceKeepsHostRoot(t *testing.T) {
 	if chat.RepoRoot != "" || chat.Worktree != "" || chat.Branch != "" {
 		t.Fatalf("assistant got %q %q %q", chat.RepoRoot, chat.Worktree, chat.Branch)
 	}
+}
+
+func awaitGitPlace(t *testing.T, cache *gitPlaceCache, cwd string) gitPlace {
+	t.Helper()
+	cache.lookup(cwd)
+	cache.mu.Lock()
+	var pending <-chan struct{}
+	if e := cache.entries[cwd]; e != nil {
+		pending = e.pending
+	}
+	cache.mu.Unlock()
+	if pending != nil {
+		select {
+		case <-pending:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Git decoration did not complete")
+		}
+	}
+	return cache.lookup(cwd)
 }

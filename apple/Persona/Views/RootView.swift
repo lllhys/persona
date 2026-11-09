@@ -20,6 +20,8 @@ struct RootView: View {
     /// `-swapTreeAt <seconds>`: the width class goes compact for a moment that long after launch, as iOS may set it for
     /// its snapshots when the app goes to the background (iPhone Duo open): the tree swap that follows, on any simulator.
     @State private var flipped = false
+    /// The swaps it made (`probe.tree`, `-probes YES`): a test that needs the tree built again checks it was (#2626).
+    @State private var swaps = TreeSwaps()
     #else
     private let flipped = false
     #endif
@@ -98,7 +100,9 @@ struct RootView: View {
             flipped = true
             try? await Task.sleep(for: .seconds(1))
             flipped = false
+            swaps.count += 1
         }
+        .screenProbe("tree", swaps)
         // LookBlink drives UIWindowScene overrides, so it only exists on iOS and visionOS.
         #if os(iOS) || os(visionOS)
         .task { await LookBlink.run() }
@@ -372,5 +376,12 @@ nonisolated struct ConnectionShown: Encodable, Equatable {
             TabPage { LarkConversationsView().modifier(TabActivityScope(tab: .feishu)) }.equatable()
         }
     }
+}
+#endif
+
+#if DEBUG
+/// `probe.tree`: how many times `-swapTreeAt` built the tree again.
+struct TreeSwaps: Encodable, Equatable {
+    var count = 0
 }
 #endif

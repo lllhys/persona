@@ -5,7 +5,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "../../lib/api";
+import { ApiError, setToken } from "../../lib/api";
 import type { HubExtensionDetail } from "../../lib/extensions";
 
 const hub = vi.hoisted(() => ({ details: [] as unknown[], save: null as null | (() => Promise<unknown>) }));
@@ -23,6 +23,7 @@ import { Extensions } from "./Extensions";
 
 let host: HTMLDivElement;
 let root: Root;
+let login = 0;
 const flush = async () => {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 };
@@ -46,6 +47,7 @@ const typeInto = (input: HTMLInputElement, value: string) => {
 const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === label);
 
 beforeEach(() => {
+  setToken(`token-${++login}`); // unsaved edits outlive the page (#2800): a new credential drops the case before's
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);

@@ -5,6 +5,10 @@
 // A package with database tests calls Main from its TestMain: it creates persona_test_<time>_<random> next to the
 // configured database, points PERSONA_TEST_DATABASE_URL at it for the tests (db.Open migrates it), and drops it
 // afterwards. A role that may not create databases falls back to a lock: the runs then take turns on the shared one.
+//
+// The databases it makes commit asynchronously (synchronous_commit off): a commit is visible to other sessions at once,
+// only a crash of the server can lose the last ones, which a throwaway database does not mind. A test migrates its
+// database through a few hundred transactions, each of which would otherwise wait for a WAL flush.
 package dbtest
 
 import (
@@ -34,14 +38,14 @@ const stale = 6 * time.Hour
 
 var ownName = lazyre.New(`^persona_test_(\d{10})_[0-9a-f]{8}$`)
 
-// ownLeftover is a run's database or the second one the assistant made next to it (owndb.go, "<database>_manager"): a
-// test that starts the assistant with a state directory of its own gets one, and it outlives the run unless dropped.
-var ownLeftover = lazyre.New(`^persona_test_(\d{10})_[0-9a-f]{8}(_manager)?$`)
+// ownLeftover is a run's database or one made next to it: the second one the assistant made (owndb.go,
+// "<database>_manager"; a test that starts the assistant with a state directory of its own gets one), or a template a
+// test migrated once to copy (Template, "<database>_tpl_<random>"). Each outlives the run unless dropped.
+var ownLeftover = lazyre.New(`^persona_test_(\d{10})_[0-9a-f]{8}(_manager|_tpl_[0-9a-f]{8})?$`)
 
 // ownedBy says whether u is already a run's own database (set by a parent test binary).
 func ownedBy(u string) bool {
-	pu, err := url.Parse(u)
-	return err == nil && ownName.MatchString(strings.TrimPrefix(pu.Path, "/"))
+	return ownName.MatchString(databaseOf(u))
 }
 
 // Main runs m on a database of its own and returns the exit code (os.Exit(dbtest.Main(m))).
@@ -79,7 +83,7 @@ func Own(ctx context.Context, base string) (string, func(), error) {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	name := fmt.Sprintf("persona_test_%d_%s", time.Now().Unix(), hex.EncodeToString(b))
-	_, err = admin.Exec(ctx, `CREATE DATABASE "`+name+`"`)
+	err = create(ctx, admin, name, "")
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "42501" { // insufficient_privilege: take turns on the shared database
 		if _, err := admin.Exec(ctx, `SELECT pg_advisory_lock(hashtext('persona_test'))`); err != nil {
@@ -98,9 +102,76 @@ func Own(ctx context.Context, base string) (string, func(), error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		drop(ctx, admin, name+"_manager")
+		for _, tpl := range templatesOf(ctx, admin, name) {
+			drop(ctx, admin, tpl)
+		}
 		drop(ctx, admin, name)
 		_ = admin.Close(ctx)
 	}, nil
+}
+
+// create makes database name, a copy of template when that is not "", committing asynchronously (the package doc).
+// A database copied keeps none of its template's settings, so each gets its own.
+func create(ctx context.Context, admin *pgx.Conn, name, template string) error {
+	q := `CREATE DATABASE ` + pgx.Identifier{name}.Sanitize()
+	if template != "" {
+		// WAL_LOG copies the template's pages through the WAL; FILE_COPY would take two checkpoints of the whole server.
+		q += ` TEMPLATE ` + pgx.Identifier{template}.Sanitize() + ` STRATEGY wal_log`
+	}
+	if _, err := admin.Exec(ctx, q); err != nil {
+		return err
+	}
+	if _, err := admin.Exec(ctx, `ALTER DATABASE `+pgx.Identifier{name}.Sanitize()+` SET synchronous_commit = off`); err != nil {
+		drop(ctx, admin, name)
+		return fmt.Errorf("asynchronous commit for %s: %w", name, err)
+	}
+	return nil
+}
+
+// Template makes an empty database next to own (the URL of a run's database, Main's) for a test to migrate once and
+// copy with Clone, and returns its URL. The run's done drops it, and a later run sweeps it when the run was killed.
+func Template(ctx context.Context, own string) (string, error) {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return Clone(ctx, own, "", databaseOf(own)+"_tpl_"+hex.EncodeToString(b))
+}
+
+// Clone makes database name next to own, a copy of database template ("": an empty one), and returns its URL; the caller
+// drops it. Nothing may be connected to template: Postgres waits a few seconds for connections that are closing.
+func Clone(ctx context.Context, own, template, name string) (string, error) {
+	u, err := url.Parse(own)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", Env, err)
+	}
+	admin, err := pgx.Connect(ctx, own)
+	if err != nil {
+		return "", fmt.Errorf("connect: %w", err)
+	}
+	defer admin.Close(context.WithoutCancel(ctx))
+	if err := create(ctx, admin, name, template); err != nil {
+		return "", fmt.Errorf("create database %s: %w", name, err)
+	}
+	u.Path, u.RawPath = "/"+name, ""
+	return u.String(), nil
+}
+
+// databaseOf is the database a URL names.
+func databaseOf(u string) string {
+	pu, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(pu.Path, "/")
+}
+
+// templatesOf are the templates made next to a run's database (Template).
+func templatesOf(ctx context.Context, admin *pgx.Conn, name string) []string {
+	rows, err := admin.Query(ctx, `SELECT datname FROM pg_database WHERE starts_with(datname, $1)`, name+"_tpl_")
+	if err != nil {
+		return nil
+	}
+	out, _ := pgx.CollectRows(rows, pgx.RowTo[string])
+	return out
 }
 
 // drop removes a run's database, closing what is still connected to it (WITH FORCE, Postgres 13 and later).

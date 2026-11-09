@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/text/feature/plural"
 	"golang.org/x/text/language"
@@ -170,34 +171,67 @@ func (l Lang) Or(fallback Lang) Lang {
 	return fallback
 }
 
-// catalogs are read on first use: a short-lived process (a hook) that never needs a text does not pay for parsing
-// them (#1308: the largest part of every `personad hook`'s start).
-var catalogs = sync.OnceValue(load)
-
-func load() map[Lang]map[string]string {
-	out := map[Lang]map[string]string{}
+// Catalogs are read on first use, one language at a time: a short-lived process (a hook) that never needs a text does
+// not pay for parsing them (#1308: the largest part of every `personad hook`'s start), and one that only ever speaks
+// en (with zh-Hans for a missing key and Has) does not parse or keep the others.
+var catalogOf = func() map[Lang]*langCatalog {
+	out := make(map[Lang]*langCatalog, len(Langs))
 	for _, l := range Langs {
-		out[l] = map[string]string{}
-		entries, err := fs.ReadDir(files, "locales/"+string(l))
-		if err != nil {
-			panic(fmt.Sprintf("i18n: %s: %v", l, err))
+		c := &langCatalog{}
+		c.get = sync.OnceValue(func() map[string]string {
+			cat := loadLang(l)
+			c.parsed.Store(true)
+			return cat
+		})
+		out[l] = c
+	}
+	return out
+}()
+
+// langCatalog is one language's catalog, parsed by its first get.
+type langCatalog struct {
+	get    func() map[string]string
+	parsed atomic.Bool // get has parsed it (readCatalog)
+}
+
+// catalog is l's catalog, parsed now if nothing has read it yet; nil for a language there is no catalog for.
+func catalog(l Lang) map[string]string {
+	if c := catalogOf[l]; c != nil {
+		return c.get()
+	}
+	return nil
+}
+
+// readCatalog is l's catalog for a read that keeps none of it (the reverse templates): the kept one when it is
+// parsed already, else a fresh parse the caller drops, so building templates leaves every other language unparsed.
+func readCatalog(l Lang) map[string]string {
+	if c := catalogOf[l]; c != nil && c.parsed.Load() {
+		return c.get()
+	}
+	return loadLang(l)
+}
+
+func loadLang(l Lang) map[string]string {
+	out := map[string]string{}
+	entries, err := fs.ReadDir(files, "locales/"+string(l))
+	if err != nil {
+		panic(fmt.Sprintf("i18n: %s: %v", l, err))
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") || strings.HasPrefix(e.Name(), "_") || strings.HasPrefix(e.Name(), ".") {
+			continue
 		}
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".json") || strings.HasPrefix(e.Name(), "_") || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			raw, err := files.ReadFile(path.Join("locales", string(l), e.Name()))
-			if err != nil {
-				panic(err)
-			}
-			var m map[string]string
-			if err := json.Unmarshal(raw, &m); err != nil {
-				panic(fmt.Sprintf("i18n: %s/%s: %v", l, e.Name(), err))
-			}
-			ns := strings.TrimSuffix(e.Name(), ".json")
-			for k, v := range m {
-				out[l][ns+"."+k] = v
-			}
+		raw, err := files.ReadFile(path.Join("locales", string(l), e.Name()))
+		if err != nil {
+			panic(err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal(raw, &m); err != nil {
+			panic(fmt.Sprintf("i18n: %s/%s: %v", l, e.Name(), err))
+		}
+		ns := strings.TrimSuffix(e.Name(), ".json")
+		for k, v := range m {
+			out[ns+"."+k] = v
 		}
 	}
 	return out
@@ -207,7 +241,7 @@ func load() map[Lang]map[string]string {
 type Args map[string]any
 
 func lookup(l Lang, key string, args Args) (string, bool) {
-	cat := catalogs()[l]
+	cat := catalog(l)
 	if n, ok := count(args); ok {
 		if s, ok := cat[key+"_"+pluralForm(l, n)]; ok {
 			return s, true
@@ -334,7 +368,7 @@ func argText(v any) string {
 
 // Has: key is in the catalogs (any plural form counts).
 func Has(key string) bool {
-	cat := catalogs()[ZhHans]
+	cat := catalog(ZhHans)
 	_, a := cat[key]
 	_, b := cat[key+"_other"]
 	return a || b

@@ -116,6 +116,9 @@ const (
 	// CodeAssistantInDoubt: the hub's link to the manager dropped while a request was with it: it may have been done
 	// (a reply may have gone out). The apps get it with delivered "unknown"; sending the same reply again is safe.
 	CodeAssistantInDoubt = "assistant_in_doubt"
+	// CodeInboxRefreshFailed: a pull to refresh could not collect the sources (the inbox.collect call failed): nothing
+	// was read now and the list is as it was. POST /api/v1/inbox/refresh answers 502 with it; pulling again is safe.
+	CodeInboxRefreshFailed = "inbox_refresh_failed"
 )
 
 // Rounds of InboxRound.Round.
@@ -170,16 +173,31 @@ type InboxSource struct {
 	ReadError string `json:"read_error,omitempty"`
 }
 
-// Why a source could not be read (InboxSource.ReadError).
+// Why a source could not be read (InboxSource.ReadError, InboxMailFailed.ReadError).
 const (
 	ReadTimeout     = "timeout"
 	ReadRateLimited = "rate_limited"
 	ReadFailed      = "failed"
+	// ReadLoginRefused: a mail account whose server refuses its login (mail settings show the account's error).
+	ReadLoginRefused = "login_refused"
 )
 
 // InboxMailRead is a round's mail: each account's latest inbox page (an account that could not be read is left out).
 type InboxMailRead struct {
 	Accounts []InboxMailAccount `json:"accounts"`
+	// Failed are the accounts this round could not read, with why (#1849). They are still left out of Accounts, so a
+	// manager that does not know this field reads the round as before; one an earlier round read while the manager
+	// was away is in Accounts too, with what that round read (mergeRounds). Absent when the sender does not know it:
+	// no account is said to have failed.
+	Failed []InboxMailFailed `json:"failed,omitempty"`
+}
+
+// InboxMailFailed is a mail account a round could not read: a short code (ReadTimeout, ReadLoginRefused,
+// ReadFailed), never the error's text.
+type InboxMailFailed struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	ReadError string `json:"read_error"`
 }
 
 // InboxMailAccount is one mail account and its latest messages.

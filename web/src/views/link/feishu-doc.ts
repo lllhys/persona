@@ -5,6 +5,7 @@
 import { ApiError, api, enc, getToken } from "../../lib/api";
 import { BASE } from "../../lib/base";
 import { docKind, DOC_LABEL, setLinkPrefetcher, type DocKind } from "../../lib/links";
+import { itemHeaders, otherManager, withManager } from "../../lib/manager-choice";
 import { t } from "../../i18n";
 
 export interface DocNode {
@@ -91,16 +92,21 @@ export function docErrorFromBody(status: number, body: Record<string, unknown>):
 
 export type Get = (path: string) => Promise<Record<string, unknown>>;
 
-// Through the hub's read-only Lark gateway window. The token is passed explicitly: a Lark gateway 401 (Feishu signed out)
-// must not sign this browser out of the hub (api() does that on any 401 when it picks the token itself).
-const hubGet: Get = async (path) => {
-  try {
-    return await api<Record<string, unknown>>(`/lark/raw/${path}`, { token: getToken() });
-  } catch (e) {
-    if (e instanceof ApiError) throw docErrorFromBody(e.status, e.body);
-    throw new DocError(0, undefined, docErrorText(0));
-  }
-};
+// Through the hub's read-only Lark gateway window, as manager (the chat's the link was in; none: the default). The token
+// is passed explicitly: a Lark gateway 401 (Feishu signed out) must not sign this browser out of the hub (api() does
+// that on any 401 when it picks the token itself).
+export function hubReader(manager?: string): Get {
+  return async (path) => {
+    try {
+      return await api<Record<string, unknown>>(`/lark/raw/${path}`, { token: getToken(), headers: itemHeaders(manager) });
+    } catch (e) {
+      if (e instanceof ApiError) throw docErrorFromBody(e.status, e.body);
+      throw new DocError(0, undefined, docErrorText(0));
+    }
+  };
+}
+
+const hubGet = hubReader();
 
 function bool(v: unknown, fallback: boolean) {
   return typeof v === "boolean" ? v : fallback;
@@ -170,7 +176,7 @@ export const BR = "\u2028";
  *   an <img> cannot send as a header,
  * - turns `<br>` (table cells, mostly) into breaks; code is left alone.
  */
-export function prepareMarkdown(md: string, title?: string, token = "", base = BASE): string {
+export function prepareMarkdown(md: string, title?: string, token = "", base = BASE, manager?: string): string {
   let lines = md.replace(/https?:\/\/[A-Za-z0-9.-]+(:\d+)?\/api\/(?!v1\/)/g, "/api/v1/lark/raw/").split("\n");
   const blank = (s?: string) => s !== undefined && !s.trim();
   while (blank(lines[0])) lines.shift();
@@ -193,11 +199,12 @@ export function prepareMarkdown(md: string, title?: string, token = "", base = B
     return line.replace(/<br\s*\/?>/gi, BR);
   });
   const withToken = (u: string) => (token ? `${u}${u.includes("?") ? "&" : "?"}token=${enc(token)}` : u);
-  // under the sub-path the page is served at (lib/base.ts): images with the token, other links to the hub as they are
+  // under the sub-path the page is served at (lib/base.ts): images with the token, other links to the hub as they are;
+  // both name the manager that read the document
   return lines
     .join("\n")
-    .replace(/(!\[[^\]]*\]\(<?)(\/api\/v1\/[^)>\s]+)/g, (_, pre: string, u: string) => pre + base + withToken(u))
-    .replace(/((?<!!)\[[^\]]*\]\(<?)(\/api\/v1\/)/g, (_, pre: string, u: string) => pre + base + u);
+    .replace(/(!\[[^\]]*\]\(<?)(\/api\/v1\/[^)>\s]+)/g, (_, pre: string, u: string) => pre + base + withToken(withManager(u, manager)))
+    .replace(/((?<!!)\[[^\]]*\]\(<?)(\/api\/v1\/[^)>\s]+)/g, (_, pre: string, u: string) => pre + base + withManager(u, manager));
 }
 
 /** Removes Markdown backslash escapes (`\-`, `\.`…) for plain display. */
@@ -249,10 +256,12 @@ export function plainText(n: DocNode): string {
   return (n.content ?? []).map(plainText).join("");
 }
 
-/** Media under the hub (`/api/v1/…`) needs the token on the URL; a Lark gateway path is moved under the hub first. */
-export function mediaURL(src: string, token = getToken()): string {
-  const u = src.replace(/^https?:\/\/[A-Za-z0-9.-]+(:\d+)?\/api\/(?!v1\/)/, "/api/v1/lark/raw/");
-  if (!u.startsWith("/api/v1/")) return u;
+/** Media under the hub (`/api/v1/…`) needs the token on the URL, and the manager that read the document; a Lark gateway
+ *  path is moved under the hub first. */
+export function mediaURL(src: string, manager?: string, token = getToken()): string {
+  const moved = src.replace(/^https?:\/\/[A-Za-z0-9.-]+(:\d+)?\/api\/(?!v1\/)/, "/api/v1/lark/raw/");
+  if (!moved.startsWith("/api/v1/")) return moved;
+  const u = withManager(moved, manager);
   return `${BASE}${u}${u.includes("?") ? "&" : "?"}token=${enc(token)}`;
 }
 
@@ -261,23 +270,27 @@ export function mediaURL(src: string, token = getToken()): string {
 const MAX = 12;
 const docs = new Map<string, Promise<DocContent>>();
 
-/** The document, from memory when it was read (or started) before; `fresh` reads it again. */
-export function loadDoc(url: string, title?: string, fresh = false): Promise<DocContent> {
-  const have = docs.get(url);
+// one url read as two managers is two documents (each reads it with its own Feishu account)
+const docKey = (url: string, manager: string | undefined) => JSON.stringify([otherManager(manager) ?? "", url]);
+
+/** The document as manager reads it, from memory when it was read (or started) before; `fresh` reads it again. */
+export function loadDoc(url: string, title?: string, fresh = false, manager?: string): Promise<DocContent> {
+  const key = docKey(url, manager);
+  const have = docs.get(key);
   if (have && !fresh) {
-    docs.delete(url);
-    docs.set(url, have); // most recently used last
+    docs.delete(key);
+    docs.set(key, have); // most recently used last
     return have;
   }
-  const p = readDoc(url, title);
-  docs.set(url, p);
-  p.catch(() => docs.get(url) === p && docs.delete(url)); // a failure is not kept
+  const p = readDoc(url, title, hubReader(manager));
+  docs.set(key, p);
+  p.catch(() => docs.get(key) === p && docs.delete(key)); // a failure is not kept
   while (docs.size > MAX) docs.delete(docs.keys().next().value!);
   return p;
 }
 
-setLinkPrefetcher((url) => {
-  if (!docs.has(url)) void loadDoc(url).catch(() => {});
+setLinkPrefetcher((url, manager) => {
+  if (!docs.has(docKey(url, manager))) void loadDoc(url, undefined, false, manager).catch(() => {});
 });
 
 // ── AI summary and outline (FeishuDocReader's summaryCard and outline) ──

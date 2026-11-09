@@ -100,10 +100,37 @@ describe("mutes, rules and the Trail are each manager's", () => {
     await unmuteInbox(mutes[0]);
     expect(fetcher.mock.calls[2][0]).toBe("/api/v1/inbox/mutes/u1");
     expect(header(2)).toBe("m-1");
-    // the default's: no header
+    // the default's is named too: the device's default may be stale, and the list stamps what it read with the one it asked
     fetcher.mockResolvedValueOnce(ok({ mutes: [] }));
     await listInboxMutes("assistant");
-    expect(header(3)).toBeNull();
+    expect(header(3)).toBe("assistant");
+    fetcher.mockResolvedValueOnce(ok({ policies: [] }));
+    await listInboxPolicies("assistant");
+    expect(header(4)).toBe("assistant");
+  });
+
+  it("unmutes and removes the rule of the manager a list was read from after it became the default", async () => {
+    fetcher.mockResolvedValueOnce(ok({ mutes: [{ id: "u1", source: "lark", tag: "chat", value: "oc_1", name: "Example group" }] }));
+    const mutes = await listInboxMutes("m-1");
+    fetcher.mockResolvedValueOnce(ok({ policies: [{ id: "p1", source: "lark", tag: "chat", value: "oc_1", name: "Example group" }] }));
+    const rules = await listInboxPolicies("m-1");
+    setRosterDefault("m-1");
+    fetcher.mockResolvedValueOnce(ok({}));
+    await unmuteInbox(mutes[0]);
+    expect(header(3)).toBe("m-1");
+    fetcher.mockResolvedValueOnce(ok({}));
+    await removeInboxPolicy(rules[0]);
+    expect(header(4)).toBe("m-1");
+    // one manager: the lists are read unstamped, and nothing is named
+    fetcher.mockResolvedValueOnce(ok({ mutes: [{ id: "u2", source: "lark", tag: "chat", value: "oc_2", name: "Another group" }] }));
+    const [mine] = await listInboxMutes();
+    fetcher.mockResolvedValueOnce(ok({ policies: [{ id: "p2", source: "lark", tag: "chat", value: "oc_2", name: "Another group" }] }));
+    const [rule] = await listInboxPolicies();
+    fetcher.mockResolvedValueOnce(ok({}));
+    await unmuteInbox(mine);
+    fetcher.mockResolvedValueOnce(ok({}));
+    await removeInboxPolicy(rule);
+    expect([5, 6, 7, 8].map(header)).toEqual([null, null, null, null]);
   });
 
   it("sets, lists and removes a rule of the item's manager, which reaches only its items", async () => {

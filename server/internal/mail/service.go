@@ -30,6 +30,10 @@ const (
 	sweepInterval = 30 * time.Second
 )
 
+// ErrTimedOut is an operation on an account that ran past networkTimeout (the inbox counts it as a timeout, not a
+// failure).
+var ErrTimedOut = errors.New("imap: operation timed out")
+
 // Service is the mail module. One Service per hub process.
 type Service struct {
 	dir   string
@@ -809,7 +813,7 @@ func (s *Service) withConnAt(ctx context.Context, a *MailAccount, fn func(c *ima
 			return err
 		case <-time.After(time.Until(deadline)):
 			s.dropConn(a.ID)
-			return errors.New("imap: operation timed out")
+			return ErrTimedOut
 		case <-ctx.Done():
 			s.dropConn(a.ID)
 			return ctx.Err()

@@ -225,6 +225,9 @@ const (
 	// AuditPermissionModeRefused: {machine_id, session_id, reason}: a permission mode change it may not make (not a
 	// conversation it opened, without agents.permission_mode, or with more than the permission mode).
 	AuditPermissionModeRefused = "permission_mode_refused"
+	// AuditTerminalControlRefused: {route, path}: a request with terminal control characters, which an extension may
+	// not send (hub's terminal_controls.go).
+	AuditTerminalControlRefused = "terminal_control_refused"
 )
 
 // Audit is HubAudit's params: what extension Extension's token was refused. Detail holds ids and reasons only.

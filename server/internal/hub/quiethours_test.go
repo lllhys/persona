@@ -129,7 +129,7 @@ func TestQuietHoursPushes(t *testing.T) {
 	}
 
 	h.notifyDone(assistantwire.AssistantID, "done", "m", "box", "s", "finished", "", done)
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	c := f.calls(t, 1)
 	time.Sleep(150 * time.Millisecond)
 	f.mu.Lock()
@@ -149,7 +149,7 @@ func TestQuietHoursPushes(t *testing.T) {
 
 	clock.Store(night.Add(10 * time.Hour).UnixNano())
 	h.notifyDone(assistantwire.AssistantID, "done", "m", "box", "s", "finished", "", done)
-	h.notifyInteraction(assistantwire.AssistantID, ix, "box")
+	h.notifyInteraction(assistantwire.AssistantID, ix, "box", false)
 	for _, c := range f.calls(t, 4)[2:] {
 		if a := aps(c); a["sound"] != "default" {
 			t.Fatalf("outside the window: %v", a)
@@ -183,7 +183,7 @@ func TestQuietHoursWS(t *testing.T) {
 	if m := next(); m != nil {
 		t.Fatalf("finished inside the window: %v", m)
 	}
-	h.notifyInteraction(assistantwire.AssistantID, proto.Interaction{ID: "ix1", MachineID: "m", SessionID: "s", Kind: proto.IxQuestion, Summary: "pick"}, "box")
+	h.notifyInteraction(assistantwire.AssistantID, proto.Interaction{ID: "ix1", MachineID: "m", SessionID: "s", Kind: proto.IxQuestion, Summary: "pick"}, "box", false)
 	if m := next(); m["kind"] != "interaction" || m["quiet"] != true {
 		t.Fatalf("card inside the window: %v", m)
 	}

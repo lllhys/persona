@@ -1,6 +1,6 @@
 # iOS / watchOS App
 
-XcodeGen source is `apple/project.yml`, generating `apple/Persona.xcodeproj` (generated files are not committed); old `apple/Persona.xcodeproj` symlinks to it. Scheme compatibility is in [Compatibility migration](../operations/rename.md). iOS 26 / watchOS 10 (the watch App must install on older watches stuck on watchOS 10), Swift 6, default MainActor isolation. Depends on MarkdownUI.
+XcodeGen source is `apple/project.yml`, generating `apple/Persona.xcodeproj` (generated files are not committed). iOS 26 / watchOS 10 (the watch App must install on older watches stuck on watchOS 10), Swift 6, default MainActor isolation. Depends on MarkdownUI.
 Bundle ID comes from configuration (`app.bundle_id`, watch `<id>.watchkitapp`, `docs/operations/config.md`). The UI supports English, Simplified Chinese and Japanese (`en` / `zh-Hans` / `ja`).
 
 ## Agents recently used view

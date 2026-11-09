@@ -67,7 +67,12 @@ fun PairingScreen(
     val scope = rememberCoroutineScope()
     val paired by pairing.isPaired.collectAsState()
     val records = remember(context) { ReadinessRecords(context) }
-    var readiness by rememberSaveable { mutableStateOf(paired && needsOnboardingReadiness(context)) }
+    // The first-run checklist comes back only on the root page (no link to confirm): Settings › Pairing and Add hub
+    // (skipWelcome) are for connecting, so they start at the connect choices even while that checklist is unfinished.
+    // A pairing made on any page is still followed by it (nextStep).
+    var readiness by rememberSaveable {
+        mutableStateOf(paired && !skipWelcome && initialLink == null && needsOnboardingReadiness(context))
+    }
     // The machine whose engine must be chosen first; kept on disk so a restarted app asks again rather than skipping.
     var engineStep by rememberSaveable { mutableStateOf(if (paired && machines != null) records.enginePending() else null) }
     var welcome by rememberSaveable { mutableStateOf(initialLink == null && !skipWelcome) }
@@ -92,6 +97,9 @@ fun PairingScreen(
     var addressError by remember { mutableStateOf<Int?>(null) }
     // Connecting failures in a row for the same input, so "Try again" visibly did something.
     var tries by remember { mutableIntStateOf(0) }
+    // The details on the confirm page came from the manual form (Next), not a scanned, pasted or opened link: a wrong or
+    // expired code there is most likely a typo, so the failure page offers editing first.
+    var typed by remember { mutableStateOf(false) }
     val code = remember { FocusRequester() }
     fun recordAttempt(request: PairingRequest?, error: Throwable?) {
         attempt = pairingAttempt(request, error, progress.lastOrNull()?.stage,
@@ -99,7 +107,7 @@ fun PairingScreen(
         attempts?.record(attempt)
     }
     fun accept(link: String) {
-        welcome = false; readiness = false; credentialsSaved = false; lastRequest = null; tries = 0; addressError = null
+        welcome = false; readiness = false; credentialsSaved = false; lastRequest = null; tries = 0; addressError = null; typed = false
         try {
             val request = PairingInput.parse(link)
             metadata = request; address = request.url; token = request.token; failure = null
@@ -227,7 +235,7 @@ fun PairingScreen(
     fun next() {
         if (address.isBlank() || token.isBlank()) return
         tries = 0
-        try { confirm = PairingInput.manual(address, token, metadata); addressError = null }
+        try { confirm = PairingInput.manual(address, token, metadata); addressError = null; typed = true }
         catch (error: Exception) {
             addressError = if (pairingFailure(error) == PairingFailure.TlsRequired) R.string.settings_pairing_failure_tls_required
                 else R.string.settings_pairing_manual_invalid
@@ -269,6 +277,9 @@ fun PairingScreen(
             failure != null -> {
                 val reason = requireNotNull(failure)
                 val recovery = reason.recovery()
+                // A typed code that is wrong or expired: fix it in the form first (it keeps what was typed); scanning is
+                // the second way. Certificate and https problems, and anything from a link, still lead with scanning.
+                val retype = typed && (reason == PairingFailure.InvalidCode || reason == PairingFailure.Expired)
                 item { PairingHeading(stringResource(R.string.settings_pairing_failed_title), stringResource(R.string.settings_pairing_failed_body)) }
                 item { JNotice(stringResource(reason.explanation()), status = Status.NeedsYou) }
                 if (tries >= 2) item {
@@ -279,7 +290,11 @@ fun PairingScreen(
                     item { SettingsCaption(stringResource(R.string.settings_pairing_stopped_at, stringResource(step.labelRes())), Modifier.padding(top = Tokens.Space.s)) }
                 }
                 item {
-                    PairingActions {
+                    if (retype) PairingActions {
+                        JButton(stringResource(R.string.settings_pairing_edit_address_code), ::edit, Modifier.fillMaxWidth())
+                        JButton(stringResource(R.string.settings_pairing_diagnostics), onDiagnostics, Modifier.fillMaxWidth(), kind = JButtonKind.Secondary)
+                        JButton(stringResource(R.string.settings_pairing_rescan), ::requestScan, Modifier.fillMaxWidth(), kind = JButtonKind.Secondary, icon = PhIcons.Scan)
+                    } else PairingActions {
                         JButton(stringResource(if (credentialsSaved && recovery == PairingRecovery.Retry) R.string.settings_pairing_reload_machines else recovery.label), {
                             when (recovery) {
                                 PairingRecovery.Permission -> authorize()

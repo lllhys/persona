@@ -24,6 +24,13 @@ type messageReceipts struct {
 	Source string               `json:"source"`
 	Chat   string               `json:"chat"`
 	IDs    map[string]time.Time `json:"ids"`
+	// Lines binds a receipt to the rendered speaker and body, without keeping another copy of the text.
+	Lines map[string]messageReceiptLine `json:"lines,omitempty"`
+}
+
+type messageReceiptLine struct {
+	Hash string `json:"hash"`
+	Mine bool   `json:"mine"`
 }
 
 // An intent is installed before any day, receipt or metadata is replaced. Repeating
@@ -107,6 +114,7 @@ func (s *Store) ingestState(source string, sc SourceChat, cut time.Time) (*Chat,
 			_, err := os.Stat(s.path(KindChat, id, "messages", at.In(zone).Format("2006-01-02")+".md"))
 			if os.IsNotExist(err) {
 				delete(r.IDs, key)
+				delete(r.Lines, key)
 			}
 		}
 	}
@@ -325,6 +333,7 @@ func (s *Store) pruneReceipts(id, cut string, zone *time.Location) error {
 			_, err := os.Stat(s.path(KindChat, id, "messages", at.In(zone).Format("2006-01-02")+".md"))
 			if errors.Is(err, os.ErrNotExist) {
 				delete(r.IDs, key)
+				delete(r.Lines, key)
 				changed = true
 			}
 		}

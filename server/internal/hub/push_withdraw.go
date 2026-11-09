@@ -1,11 +1,15 @@
 package hub
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/compat"
 )
 
@@ -60,17 +64,35 @@ func newWithdrawals() withdrawals {
 	return withdrawals{pushed: map[string]cardPush{}, queue: map[string]*withdrawQueue{}, gather: withdrawGather, every: withdrawEvery}
 }
 
-// sendCard pushes a card (sendLocalizedQuiet) and notes which devices that understand withdrawals it went to. only,
-// when not nil, is the devices that can take it at all (an MCP form or link: those that registered for one).
+// sendCard pushes manager's card id (sendLocalizedQuiet) under cardCollapseID and notes which devices that understand
+// withdrawals it went to. only, when not nil, is the devices that can take it at all (an MCP form or link: those that
+// registered for one).
 func (p *Pusher) sendCard(manager string, build localized, id string, wants func(NotifyPrefs) bool, rule quietRule, only func(Device) bool) {
 	if p == nil {
 		return
 	}
-	p.sendFromTo(manager, build, id, wants, rule, only, func(d Device) {
+	p.sendFromTo(manager, build, cardCollapseID(manager, id), wants, rule, only, func(d Device) {
 		if hasFeature(d, featureWithdraw) {
 			p.cardPushedTo(id, d.DeviceID)
 		}
 	})
+}
+
+// cardCollapseID is the apns-collapse-id of manager's card id: the card id for the assistant the hub starts (and a card
+// of no manager). Another manager's card gets card: and a hash of the manager and the id, so its push replaces only
+// that manager's push of the same card, never another manager's card, a decision's (td_), a notify API alert, an
+// extension's push or the hub's own, and a long id still fits APNs' 64 bytes. The apps find a card's notification by
+// the payload's interaction_id (withdrawal, a tap), not by this id, and the withdrawal push names the card id.
+func cardCollapseID(manager, id string) string {
+	if manager == "" || manager == assistantwire.AssistantID {
+		return id
+	}
+	sum := sha256.New()
+	sum.Write([]byte("card\x00"))
+	sum.Write(binary.AppendUvarint(nil, uint64(len(manager))))
+	sum.Write([]byte(manager))
+	sum.Write([]byte(id))
+	return "card:" + hex.EncodeToString(sum.Sum(nil)[:16])
 }
 
 func (p *Pusher) cardPushedTo(id, device string) {

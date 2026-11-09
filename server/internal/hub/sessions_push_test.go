@@ -488,3 +488,34 @@ func TestEncodeSessionsMatchesMarshal(t *testing.T) {
 		t.Fatalf("encoding a %d-byte list allocates %d bytes", size, per)
 	}
 }
+
+// A list encoded whole again (encodeKept without raws: a list the manager's bytes did not give) is the same rows as
+// encodeStamped's, written into one buffer sized from the rows encoded last rather than from the first row with a
+// quarter more to spare (encodeSessions above): 1.16x the list's size measured, 1.33x sized from its first row.
+func TestEncodeKeptSizedFromLastRows(t *testing.T) {
+	if !isolatedSessionAllocation(t) {
+		return
+	}
+	m := new(Machine)
+	many := busyList()
+	want := encodeStamped(many, "assistant")
+	for range 2 { // sized from its first row, then from the rows before
+		got := m.encodeKept(many, "assistant", nil)
+		if !sameSessions(got, want) || slices.ContainsFunc(got, func(s sentSession) bool { return cap(s.raw) != len(s.raw) }) {
+			t.Fatal("encoded whole again, the rows differ from encodeStamped's")
+		}
+	}
+	// Rows longer than the last ones still come out whole.
+	longer := slices.Clone(many)
+	for i := range longer {
+		longer[i].LastText += strings.Repeat("y", 2<<10)
+	}
+	if got := m.encodeKept(longer, "assistant", nil); !sameSessions(got, encodeStamped(longer, "assistant")) {
+		t.Fatal("rows longer than the last ones differ from encodeStamped's")
+	}
+	m.encodeKept(many, "assistant", nil)
+	size := len(sessionsMessage("box", want))
+	if per := allocated(func() { m.encodeKept(many, "assistant", nil) }); per > size*119/100 {
+		t.Fatalf("encoding a %d-byte list whole again allocates %d bytes", size, per)
+	}
+}

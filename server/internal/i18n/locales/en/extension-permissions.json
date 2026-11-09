@@ -58,6 +58,7 @@
   "shortcuts_title": "Actions in Shortcuts and Siri: ",
   "scope_kb_read": "Read the knowledge base",
   "scope_kb_write": "Edit knowledge base entries",
+  "scope_sent_read": "See which archived messages Persona sent as you",
   "scope_inbox_read": "Read the inbox",
   "scope_inbox_write": "Handle inbox items (mark done, draft and send replies, mute)",
   "scope_agents_read": "View agents and chats on your computers",

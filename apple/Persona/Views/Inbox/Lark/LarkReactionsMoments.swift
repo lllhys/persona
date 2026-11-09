@@ -108,6 +108,7 @@ struct LarkMomentsCard: View {
     var part: LarkPart
     @Environment(\.larkContext) private var context
     @Environment(\.larkAccount) private var larkAccount
+    @Environment(\.larkManager) private var larkManager
     @State private var preview: LarkURLPreview?
     @State private var reading = false
 
@@ -143,10 +144,10 @@ struct LarkMomentsCard: View {
         }
         .buttonStyle(.plain)
         .task(id: part.url) {
-            guard let mid = context.messageID, let url = part.url, let api = AppModel.shared.api?.lark(larkAccount) else { return }
+            guard let mid = context.messageID, let url = part.url, let api = AppModel.shared.api?.manager(larkManager).lark(larkAccount) else { return }
             preview = try? await api.larkURLPreview(message: mid, url: url)
         }
-        .sheet(isPresented: $reading) { if let id = LarkMoments.postID(part.url) { LarkMomentsPostView(postID: id, link: part.url) } }
+        .sheet(isPresented: $reading) { if let id = LarkMoments.postID(part.url) { LarkMomentsPostView(postID: id, link: part.url, manager: larkManager) } }
     }
 }
 
@@ -160,6 +161,8 @@ struct LarkMomentsPostView: View {
     var link: String?
     /// Pushed as a page (the inbox's Moments item) instead of presented as a sheet: no stack of its own, no Done.
     var pushed = false
+    /// The manager the post, its comments and pictures are read through (a chat's or inbox item's); nil: the default's.
+    var manager: String? = nil
     @State private var post: LarkMomentsPost?
     @State private var comments: [LarkMomentsComment] = []
     @State private var error: String?
@@ -222,24 +225,26 @@ struct LarkMomentsPostView: View {
                 }
             }
             .task {
-                guard let api = model.api?.lark(larkAccount) else { return }
+                guard let api = model.api?.manager(manager).lark(larkAccount) else { return }
                 LarkMedia.shared.loadEmojiCatalog()
                 async let c = api.larkMomentsComments(postID)
                 do { post = try await api.larkMomentsPost(postID) } catch { self.error = error.localizedDescription }
                 comments = (try? await c) ?? []
             }
             .fullScreenCover(item: Binding(get: { gallery.map { GalleryIndex(index: $0) } }, set: { gallery = $0?.index })) { g in
-                ImageViewer(urls: (post?.images ?? []).compactMap(\.url), index: g.index)
+                ImageViewer(urls: (post?.images ?? []).compactMap(\.url).map(media), index: g.index)
             }
             .sheet(item: $person) { LarkProfileView(person: $0) }
     }
 
     private struct GalleryIndex: Identifiable { var index: Int; var id: Int { index } }
 
+    private func media(_ url: String) -> String { LarkMedia.url(url, manager: manager) }
+
     private func author(name: String, avatar: String?, id: String?, time: Double?, small: Bool = false) -> some View {
         Button { if let id { person = LarkPersonRef(id: id, name: name, avatar: avatar) } } label: {
             HStack(spacing: Theme.Space.m) {
-                LarkAvatarImage(name: name, url: avatar, size: small ? 30 : 40)
+                LarkAvatarImage(name: name, url: avatar.map(media), size: small ? 30 : 40)
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     Text(name).font(small ? Theme.Font.captionStrong : Theme.Font.secondaryStrong).lineLimit(1)
                     if let time { Text(Date(timeIntervalSince1970: time / 1000).formatted(date: .abbreviated, time: .shortened)).font(Theme.Font.label).foregroundStyle(.secondary) }
@@ -253,13 +258,13 @@ struct LarkMomentsPostView: View {
         let urls = imgs.compactMap(\.url)
         if urls.count == 1, let img = imgs.first, let u = img.url {
             let size = LarkImagePart.displaySize(width: img.width ?? 0, height: img.height ?? 0, maxW: 300, maxH: 360)
-            LarkRemoteImage(url: u, maxPixel: 1200).frame(width: size.width, height: size.height)
+            LarkRemoteImage(url: media(u), maxPixel: 1200).frame(width: size.width, height: size.height)
                 .clipShape(.rect(cornerRadius: Theme.Radius.control, style: .continuous)).onTapGesture { gallery = 0 }
         } else if !urls.isEmpty {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
                 ForEach(Array(urls.enumerated()), id: \.offset) { i, u in
                     Color.clear.aspectRatio(1, contentMode: .fit)
-                        .overlay { LarkRemoteImage(url: u, maxPixel: 600) }
+                        .overlay { LarkRemoteImage(url: media(u), maxPixel: 600) }
                         .clipShape(.rect(cornerRadius: Theme.Radius.badge, style: .continuous))
                         .onTapGesture { gallery = i }
                 }

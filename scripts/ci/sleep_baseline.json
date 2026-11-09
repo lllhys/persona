@@ -59,7 +59,6 @@
   "server/internal/assistant/machine_trust_test.go": 1,
   "server/internal/assistant/outbox_test.go": 8,
   "server/internal/assistant/owned_question_test.go": 1,
-  "server/internal/assistant/profile_test.go": 1,
   "server/internal/assistant/question_cancel_race_test.go": 1,
   "server/internal/assistant/question_cancel_test.go": 1,
   "server/internal/assistant/quiet_test.go": 9,

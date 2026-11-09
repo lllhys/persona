@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -15,29 +13,13 @@ import (
 // list machine → project (root) → worktree (labelled branch) → sessions with it (#1805).
 type gitPlace struct{ root, worktree, branch string }
 
-const (
-	// A list goes out every second or so while agents work; a branch switch shows within this.
-	gitPlaceTTL   = 10 * time.Second
-	gitPlaceLimit = 1024
-)
-
-type gitPlaceEntry struct {
-	place gitPlace
-	at    time.Time
-}
-
-var gitPlaces = struct {
-	sync.Mutex
-	entries map[string]gitPlaceEntry
-}{entries: map[string]gitPlaceEntry{}}
-
 // fillGitPlace sets s's RepoRoot (unless its host already named it: Paseo, a Codex project), Worktree and Branch from
 // its working directory. The assistant's own conversations are not in a project.
 func fillGitPlace(s *proto.Session) {
 	if s.Cwd == "" || s.Assistant {
 		return
 	}
-	p := cachedGitPlace(s.Cwd)
+	p := gitPlaces.lookup(s.Cwd)
 	if p.worktree == "" {
 		return
 	}
@@ -50,24 +32,6 @@ func fillGitPlace(s *proto.Session) {
 	if s.Branch == "" {
 		s.Branch = p.branch
 	}
-}
-
-func cachedGitPlace(cwd string) gitPlace {
-	gitPlaces.Lock()
-	e, ok := gitPlaces.entries[cwd]
-	gitPlaces.Unlock()
-	if ok && time.Since(e.at) < gitPlaceTTL {
-		return e.place
-	}
-	p := readGitPlace(cwd)
-	// Misses are cached the same short time: a later git init or a restored folder shows without a restart.
-	gitPlaces.Lock()
-	if len(gitPlaces.entries) >= gitPlaceLimit {
-		clear(gitPlaces.entries)
-	}
-	gitPlaces.entries[cwd] = gitPlaceEntry{place: p, at: time.Now()}
-	gitPlaces.Unlock()
-	return p
 }
 
 // readGitPlace finds the .git nearest above cwd and reads it the way git does, without running git (this runs for every

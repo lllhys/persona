@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,12 +37,120 @@ func open(t testing.TB) *DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	// Union of the integration branch's list and master's TruncateForTest: TruncateForTest alone
-	// does not clear lock_tests, client_ops, pair_tokens or device_sessions.
-	if _, err := d.pool.Exec(context.Background(), `TRUNCATE push_device_retirements, lock_tests, client_ops, devices, device_tokens, pair_tokens, device_sessions, live_activities, phone_tools, node_sessions, mail_accounts, interactions, settings, inbox_items, kb_entities, connector_secrets, machine_systems, machine_metrics, machine_usage, sent_messages, todos, todo_agents, assistant_always, sent_as_user CASCADE`); err != nil {
+	openCascade.once.Do(func() { openCascade.tables, openCascade.err = cascadeOfOpenTables(d) })
+	if openCascade.err != nil {
+		t.Fatal(openCascade.err)
+	}
+	if err := d.truncateNonEmpty(context.Background(), openCascade.tables); err != nil {
 		t.Fatal(err)
 	}
 	return d
+}
+
+// openTables are what open clears (with what refers to them): the union of the integration branch's list and master's
+// TruncateForTest. TruncateForTest alone does not clear lock_tests, client_ops, pair_tokens or device_sessions.
+var openTables = []string{"push_device_retirements", "lock_tests", "client_ops", "devices", "device_tokens", "pair_tokens",
+	"device_sessions", "live_activities", "phone_tools", "node_sessions", "mail_accounts", "interactions", "settings",
+	"inbox_items", "kb_entities", "connector_secrets", "machine_systems", "machine_metrics", "machine_usage",
+	"sent_messages", "todos", "todo_agents", "assistant_always", "sent_as_user"}
+
+// open empties what TRUNCATE openTables CASCADE did, a table only the cascade reaches included, and leaves a table
+// that had no row in that cascade its files: it truncates only what has a row.
+func TestOpenTruncatesOnlyTablesWithRows(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	if !slices.Contains(openCascade.tables, "todo_decisions") || slices.Contains(openTables, "todo_decisions") {
+		t.Fatalf("todo_decisions is not a table only the cascade reaches: %v", openCascade.tables)
+	}
+	if _, err := d.pool.Exec(ctx, `INSERT INTO todos (id, title) VALUES ('t1', 'x');
+		INSERT INTO todo_decisions (id, todo_id, question, choice, created_at) VALUES ('d1', 't1', 'q', 'c', now())`); err != nil {
+		t.Fatal(err)
+	}
+	file := func(table string) uint32 {
+		t.Helper()
+		var n uint32
+		if err := d.pool.QueryRow(ctx, `SELECT relfilenode FROM pg_class WHERE oid = to_regclass($1)`, table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	devices := file("devices")
+	d = open(t)
+	var rows int
+	if err := d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM todos) + (SELECT count(*) FROM todo_decisions)`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("%d rows left, %v", rows, err)
+	}
+	if file("devices") != devices {
+		t.Fatal("an empty table was truncated")
+	}
+}
+
+// openCascade is what TRUNCATE openTables CASCADE empties, worked out by the first open: each open migrates the same
+// database to the same tables.
+var openCascade struct {
+	once   sync.Once
+	tables []string
+	err    error
+}
+
+// cascadeOfOpenTables is openCascade's tables. Each of openTables must be there: TRUNCATE naming a table the database
+// lacks fails, and truncateCascade alone would leave a renamed or dropped one out without a word.
+func cascadeOfOpenTables(d *DB) ([]string, error) {
+	tables, err := d.truncateCascade(context.Background(), openTables)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range openTables {
+		if !slices.Contains(tables, name) {
+			return nil, fmt.Errorf("open clears %s, which the migrated database does not have", name)
+		}
+	}
+	return tables, nil
+}
+
+// templates are the databases migratedDatabase copies: one per sets, migrated once per test binary.
+var templates = struct {
+	sync.Mutex
+	dbs map[Sets]string
+}{dbs: map[Sets]string{}}
+
+// migratedDatabase is a new database next to the test one with sets' migrations applied, dropped afterwards: a copy
+// of a template this binary migrated once (dbtest.Template), equal to a fresh migration but for the applied_at of its
+// schema_migrations rows. A test of a database at an older state starts from freshDatabase instead.
+func migratedDatabase(t *testing.T, sets Sets) string {
+	t.Helper()
+	base := os.Getenv(dbtest.Env)
+	if base == "" {
+		t.Skip(dbtest.Env + " not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	templates.Lock()
+	tpl, ok := templates.dbs[sets]
+	if !ok {
+		url, err := dbtest.Template(ctx, base)
+		if err != nil {
+			templates.Unlock()
+			t.Fatal(err)
+		}
+		d, err := Open(ctx, url, sets)
+		if err != nil {
+			templates.Unlock()
+			t.Fatal(err)
+		}
+		d.Close()
+		tpl = DatabaseName(url)
+		templates.dbs[sets] = tpl
+	}
+	templates.Unlock()
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	name := "persona_split_t_" + hex.EncodeToString(b)
+	url, err := dbtest.Clone(ctx, base, tpl, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropDatabase(base, name) })
+	return url
 }
 
 func TestLiveActivityStartBudget(t *testing.T) {

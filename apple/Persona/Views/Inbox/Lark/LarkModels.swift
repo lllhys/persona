@@ -66,8 +66,11 @@ nonisolated struct LarkConversation: Codable, Identifiable, Hashable, Sendable {
 }
 
 extension LarkMessage {
-    /// The StateCache name of a chat's latest page (the chat paints from it before the network answers).
-    nonisolated static func cacheName(_ c: LarkConversation) -> String { "lark-chat-" + c.key }
+    /// The StateCache name of a chat's latest page (the chat paints from it before the network answers). A named
+    /// manager's page keeps its own under the same prefix, which `LarkSync.displayChanged` clears.
+    nonisolated static func cacheName(_ c: LarkConversation, manager: String? = nil) -> String {
+        "lark-chat-" + c.key + (manager.map { "@" + $0 } ?? "")
+    }
 }
 
 /// One Feishu account signed in on the hub's Lark gateway (`GET /api/v1/lark/accounts`).

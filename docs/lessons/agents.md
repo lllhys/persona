@@ -608,6 +608,23 @@ Closing is not durable merely because the card vanished: persist the interaction
 - Probing herdr from Python with `subprocess.run` in another thread of the same process shows a ~110 ms stall on many
   of the spawns. That is the probe, not herdr: the same spawns from a separate process show none.
 
+## Text an agent is sent can press keys in its terminal
+
+- Much of what a caller sends an agent ends up typed into the agent's terminal: a message, a start's prompt, a rename,
+  a card's answer; a to-do, its decisions and a knowledge-base entry are kept and typed later, in a prompt. Control
+  characters in that text are keys to the terminal, and the program in it acts on them as on the user's own, which can
+  change what the agent may do.
+- So the hub refuses terminal control characters (Unicode `Cc` but newline, carriage return and tab) from callers whose
+  grant is narrower than the user's, extension tokens, on the routes that type a caller's text into a terminal or keep
+  it for a prompt (`server/internal/hub/terminal_controls.go`). Check kept text as it comes in, while the caller is
+  still known. A new route that types or keeps a caller's text needs the same wrapper.
+- Newline, carriage return and tab pass because those routes deliver text as text, where a line break stays a line
+  break. A path that types text as raw keys would make them Enter and Tab, and needs a stricter rule.
+- Check every string of the body as JSON decodes it, keys included, not one named field: Go's `encoding/json` matches
+  a struct's field names without regard to case, so a check of `p["text"]` misses a body that spells it `"Text"`, and
+  a handler that decodes only the first value of a body leaves the rest to whatever reads it next. Check the decoded
+  path and query too: a route can keep text from them (a knowledge-base entry is named from its id).
+
 ## Profile acceptance must include launcher defaults
 
 A purpose-level model override does not change the managed launcher's default. Launcher health checks invoke the launcher without that override, and small-model and subagent paths read their own environment aliases. When testing a model profile, read back the launcher's main, small, subagent and alias fields, then exercise a real health check. Preserve sealed credentials and unrelated fields; capture the before-image in the same transaction as the switch. A purpose-only readback is not evidence that every execution path changed.

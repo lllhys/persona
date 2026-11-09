@@ -120,6 +120,7 @@ struct InboxDocIcon: View {
 /// document itself one tap away.
 struct InboxDocDetailView: View {
     var item: InboxItem
+    @Environment(AppModel.self) private var model
     @Environment(\.feishuOpen) private var feishuOpen
 
     var body: some View {
@@ -137,7 +138,7 @@ struct InboxDocDetailView: View {
                 .padding(.vertical, Theme.Space.xs)
                 if let doc, let url = URL(string: doc.url) {
                     Button {
-                        feishuOpen?(.doc(url: url.absoluteString, title: item.title))
+                        feishuOpen?(.doc(url: url.absoluteString, title: item.title, manager: model.linkManager(item.manager)))
                     } label: {
                         Label("Open \(doc.typeName) [Inbox Doc Views 4f91d8]", systemImage: Theme.Icon.openDocument).lineLimit(1)
                     }

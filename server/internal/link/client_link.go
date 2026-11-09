@@ -29,6 +29,8 @@ type link struct {
 	token   string
 	// named: the hub said what it calls this computer (endpoints), so it renames computers (rename.go).
 	named atomic.Bool
+	// gen counts this run's links, this one included (Status.Conn): the app's confirmations say which link's they are.
+	gen uint64
 }
 
 func dial(ctx context.Context, c *Config) (*link, error) {
@@ -67,10 +69,12 @@ func (l *link) serve(ctx context.Context, c *Config, o Options, rep *reporter) e
 	}
 	since := time.Now()
 	rep.set(func(s *Status) {
-		*s = Status{State: "connected", Machine: c.Machine, HubName: c.HubName, MachineName: c.MachineName, Address: l.ep.URL,
+		*s = Status{State: "connected", Conn: l.gen, Machine: c.Machine, HubName: c.HubName, MachineName: c.MachineName, Address: l.ep.URL,
 			Kind: l.ep.Kind, Since: &since, Node: "unknown", Trust: trustOf(c), Endpoints: ranked(c.Endpoints)}
 	})
 	go l.renames(ctx, o, rep)
+	go l.presence(ctx, o)
+	go l.confirms(ctx, o)
 	o.Logf("link: connected to %s (%s)", l.ep.URL, l.ep.Kind)
 	drop := func(err error) {
 		cancel(err)
@@ -289,6 +293,49 @@ func clipName(s string) string {
 		s = string(r[:80])
 	}
 	return s
+}
+
+// presence tells the hub the app's presence (presence.go): the latest as the link comes up, then again for every line
+// the app writes. It never repeats one by itself: the app's own repeats keep it alive, so an app that went quiet lapses.
+func (l *link) presence(ctx context.Context, o Options) {
+	if o.Presence == nil {
+		return
+	}
+	for {
+		if p, ok := o.Presence.Latest(time.Now()); ok {
+			m := Message{Type: "presence", Active: p.Active, Notifies: p.Notifies, TTLMS: p.TTLMS}
+			if err := l.send(ctx, m); err != nil && ctx.Err() == nil {
+				o.Logf("link: presence: %v", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-o.Presence.Poked():
+		}
+	}
+}
+
+// confirms passes on the app's confirmations for this link (presence.go). Another link's go: an earlier one's still in
+// the pipe; a later one's cannot come before this link is gone (the app learns its number from the status of a link
+// that replaced this one).
+func (l *link) confirms(ctx context.Context, o Options) {
+	if o.Confirms == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case c := <-o.Confirms.C():
+			if c.Conn != l.gen {
+				continue
+			}
+			if err := l.send(ctx, Message{Type: "rang", InteractionID: c.Card}); err != nil && ctx.Err() == nil {
+				o.Logf("link: rang: %v", err)
+			}
+		}
+	}
 }
 
 func (l *link) send(ctx context.Context, m Message) error {

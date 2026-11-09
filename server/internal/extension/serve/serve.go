@@ -1,6 +1,7 @@
-// Package serve is the hub's built-in programs' side of the process protocol (docs/extensions/extensions.md "Process extension protocol"),
-// on the official Go SDK (sdk/go/ext): the same code a third party's extension uses, with the hub's own types for
-// initialize and its rpc errors, so the connector and channel programs built into personad keep their shape.
+// Package serve runs a program on the process protocol (docs/extensions/extensions.md "Process extension protocol")
+// for the conformance kit (extension/conformance) and the hub's tests. It wraps the official Go SDK (sdk/go/ext), the
+// same code a third party's extension uses, in the hub's own types for initialize and its rpc errors. The built-in
+// WeChat program uses the SDK directly (server/plugins/wechat).
 package serve
 
 import (

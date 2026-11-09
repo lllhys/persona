@@ -61,6 +61,16 @@ it("uses the hub's main reference even while the other startup reads are pending
   expect(host.querySelector('[data-chat]')).toBeNull();
 });
 
+it("loads an explicit conversation over HTTP before the socket reconnects", async () => {
+  const fetcher = vi.fn((_input: RequestInfo | URL) => Promise.resolve(Response.json({ machine_id: "hub", conversations: [] })));
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => render({ sid: "restored-chat" }));
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(String(fetcher.mock.calls[0][0])).toBe("/api/v1/assistant");
+  expect(host.querySelector('[data-chat="hub/restored-chat"]')).not.toBeNull();
+  expect(getState().conn).not.toBe("online");
+});
+
 it("does not reuse the cache for another conversation, a new chat, or a different manager", () => {
   render({ sid: "other" });
   expect(host.querySelector('[data-chat]')).toBeNull();

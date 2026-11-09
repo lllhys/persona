@@ -443,12 +443,17 @@ func TestOnlyAnAttachedPackageGetsATokenOfEveryScope(t *testing.T) {
 	}
 }
 
-// The hub hands the manager a permission mode change it refused an extension's token for its audit, and nothing else.
+// The hub hands the manager a permission mode change and a request with terminal control characters it refused an
+// extension's token for its audit, and nothing else.
 func TestHubAuditTakesRefusedPermissionModes(t *testing.T) {
 	h, store := extensionTestHub(t)
 	ctx := t.Context()
 	if _, err := h.hubCall(ctx, extwire.HubAudit, json.RawMessage(`{"extension":"scoped","action":"permission_mode_refused",
 		"detail":{"machine_id":"m","session_id":"s","reason":"not_opened"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.hubCall(ctx, extwire.HubAudit, json.RawMessage(`{"extension":"scoped","action":"terminal_control_refused",
+		"detail":{"route":"POST /api/v1/sessions/{mid}/{sid}/messages","path":"/api/v1/sessions/m/s/messages"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	for _, params := range []string{`{"extension":"scoped","action":"uninstall"}`, `{"action":"permission_mode_refused"}`, `[]`} {
@@ -458,7 +463,7 @@ func TestHubAuditTakesRefusedPermissionModes(t *testing.T) {
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if !slices.Equal(store.audit, []string{"scoped permission_mode_refused extension:scoped"}) {
+	if !slices.Equal(store.audit, []string{"scoped permission_mode_refused extension:scoped", "scoped terminal_control_refused extension:scoped"}) {
 		t.Fatalf("audit: %q", store.audit)
 	}
 }

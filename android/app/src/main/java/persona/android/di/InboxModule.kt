@@ -195,8 +195,8 @@ class InboxDataOwner @Inject constructor(
         override suspend fun personaContext(itemId: String) = use { it.inbox.personaContext(itemId) }
         override suspend fun draftReply(itemId: String, instruction: String) = use { it.inbox.draftReply(itemId, instruction) }
         override suspend fun handOff(request: InboxHandOffRequest): persona.core.contracts.SessionKey? = use { it.inbox.handOff(request) }
-        override suspend fun momentsPost(postId: String) = use { it.inbox.momentsPost(postId) }
-        override suspend fun momentsComments(postId: String) = use { it.inbox.momentsComments(postId) }
+        override suspend fun momentsPost(postId: String, manager: String?) = use { it.inbox.momentsPost(postId, manager) }
+        override suspend fun momentsComments(postId: String, manager: String?) = use { it.inbox.momentsComments(postId, manager) }
         override suspend fun urlPreview(messageId: String, url: String) = use { it.inbox.urlPreview(messageId, url) }
         override suspend fun react(messageId: String, key: String, remove: Boolean) = use { it.inbox.react(messageId, key, remove) }
         override suspend fun cardAction(messageId: String, actionId: String) = use { it.inbox.cardAction(messageId, actionId) }

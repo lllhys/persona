@@ -113,10 +113,10 @@ class InboxI18nShotsTest {
         override suspend fun saveDraft(target: ReplyTarget, draft: ReplyDraft) = Unit
         override suspend fun reply(target: ReplyTarget, request: ReplyRequest) = Unit
         override suspend fun downloadFile(file: LarkPart.File): String = error("not used")
-        override suspend fun momentsPost(postId: String) = LarkMomentsPost(postId, userName = "Kim Example",
+        override suspend fun momentsPost(postId: String, manager: String?) = LarkMomentsPost(postId, userName = "Kim Example",
             content = LarkMomentsContent("Our team offsite photos are up. Thanks everyone for a great two days."), commentCount = 2,
             createTime = 1_762_190_000_000.0)
-        override suspend fun momentsComments(postId: String) = listOf(
+        override suspend fun momentsComments(postId: String, manager: String?) = listOf(
             LarkMomentsComment("c1", userName = "Alex Example", content = LarkMomentsContent("Great photos"), createTime = 1_762_191_000_000.0),
             LarkMomentsComment("c2", userName = "Sam Example", content = LarkMomentsContent("Agreed"), createTime = 1_762_192_000_000.0,
                 replyUserName = "Alex Example"),

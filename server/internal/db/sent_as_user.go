@@ -90,6 +90,20 @@ func (d *DB) SentAsUsers(ctx context.Context, before int64, limit int, connector
 	return rows, next, nil
 }
 
+const sentAsUsersForArchiveSQL = `SELECT ` + sentAsUserColumns + ` FROM sent_as_user
+	WHERE connector = $1 AND at >= $2 AND at < $3 ORDER BY at, id`
+
+// SentAsUsersForArchive reads one connector's ledger in [since, until), oldest first.
+// Archive matching needs every candidate, including recalled messages still present in the archive;
+// the settings page's pagination limit does not apply here.
+func (d *DB) SentAsUsersForArchive(ctx context.Context, connector string, since, until time.Time) ([]SentAsUser, error) {
+	rows, err := d.pool.Query(ctx, sentAsUsersForArchiveSQL, connector, since, until)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (SentAsUser, error) { return scanSentAsUser(r) })
+}
+
 // PruneSentAsUser deletes every row written before before and says how many there were.
 func (d *DB) PruneSentAsUser(ctx context.Context, before time.Time) (int64, error) {
 	tag, err := d.pool.Exec(ctx, `DELETE FROM sent_as_user WHERE at < $1`, before)

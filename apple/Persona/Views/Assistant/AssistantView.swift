@@ -840,17 +840,43 @@ struct StarterComposer: View {
     }
 
     @State private var launchers: [Launcher] = []
-    @State private var text = ""
     @State private var picks: [PhotosPickerItem] = []
-    @State private var images: [(UIImage, ImagePayload)] = []
     @State private var showPhotos = false
     @State private var showFiles = false
-    @State private var uploads = FileUploads()
-    @State private var videos = VideoAttachments()
     @State private var selection: TextSelection?
-    /// Sessions picked in the @ list (#2319), quoted at the top of the shell's composer.
-    @State private var quotes: [ContextRef] = []
     @FocusState private var focused: Bool
+    /// What it holds for the next message, kept by the app for the new conversation as a chat's draft is (#2626): the
+    /// composer is built again with the whole tree when iOS snapshots the app in another width on its way to the
+    /// background (iPhone Duo open), and its text and photos were gone on the way back.
+    private var draft: StarterDraft { model.starterDraft(uploadDest ?? "") }
+    private var text: String {
+        get { draft.text }
+        nonmutating set { draft.text = newValue }
+    }
+    private var images: [(UIImage, ImagePayload)] {
+        get { draft.held.images }
+        nonmutating set { draft.held.images = newValue }
+    }
+    /// Sessions picked in the @ list (#2319), quoted at the top of the shell's composer.
+    private var quotes: [ContextRef] {
+        get { draft.quotes }
+        nonmutating set { draft.quotes = newValue }
+    }
+    private var textBinding: Binding<String> { Binding(get: { text }, set: { text = $0 }) }
+    private var imagesBinding: Binding<[(UIImage, ImagePayload)]> { Binding(get: { images }, set: { images = $0 }) }
+    private var quotesBinding: Binding<[ContextRef]> { Binding(get: { quotes }, set: { quotes = $0 }) }
+    private var uploads: FileUploads { draft.held.uploads }
+    private var videos: VideoAttachments { draft.held.videos }
+
+    /// Files to the assistant's machine, each path into the box once it is there; not into the next message's box
+    /// when this one went first (the draft outlives the page, #2626).
+    private func upload(_ urls: [URL]) {
+        let generation = draft.generation
+        uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
+            guard draft.generation == generation else { return }
+            text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
+        }
+    }
 
     private var canSend: Bool {
         !disabled && !videos.busy
@@ -869,10 +895,7 @@ struct StarterComposer: View {
         focused = false
         // Quoted sessions ride along as <persona-context> tags before what was typed, as in a chat.
         send(quotes.isEmpty ? body : quotes.map(\.xml).joined(separator: "\n") + "\n\n" + body, images.map(\.1))
-        text = ""
-        images = []
-        videos.sent()
-        quotes = []
+        draft.sent()
     }
 
     /// The `@word` before the caret, for the @ list (#2319): the shell's composer only, while it has the keyboard.
@@ -925,25 +948,25 @@ struct StarterComposer: View {
                 }
             }
             #endif
-            if !images.isEmpty { ComposerImages(images: $images) }
+            if !images.isEmpty { ComposerImages(images: imagesBinding) }
             if let token = mentionToken {
-                ComposerMentionMenu(token: token, text: $text, selection: $selection, source: mentionSource) { ref in
+                ComposerMentionMenu(token: token, text: textBinding, selection: $selection, source: mentionSource) { ref in
                     if !quotes.contains(where: { $0.url == ref.url }) { quotes.append(ref) }
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             if let shell {
-                ShellComposerBar(placeholder: String(localized: "Ask \(model.persona.name)"), text: $text, selection: $selection, focused: $focused,
+                ShellComposerBar(placeholder: String(localized: "Ask \(model.persona.name)"), text: textBinding, selection: $selection, focused: $focused,
                                  canSend: canSend, hasAttachments: !images.isEmpty || !videos.items.isEmpty || !quotes.isEmpty,
                                  modesTitle: StarterModesMenu.title(modes: shell, launchers: launchers, model: model),
-                                 quotes: $quotes, history: "assistant.new", gate: gate, send: submit) {
+                                 quotes: quotesBinding, history: "assistant.new", gate: gate, send: submit) {
                     attachments
                 } modes: {
                     StarterModesMenu(modes: shell, launchers: launchers)
                 }
                 .task(id: machine) { launchers = (try? await model.launchers(machine))?.filter(\.runsAssistant) ?? [] }
             } else {
-                ComposerRow(placeholder: placeholder ?? String(localized: "Ask \(model.persona.name)…"), text: $text, selection: $selection, focused: $focused, canSend: canSend,
+                ComposerRow(placeholder: placeholder ?? String(localized: "Ask \(model.persona.name)…"), text: textBinding, selection: $selection, focused: $focused, canSend: canSend,
                             send: submit, history: "assistant.new", gate: gate) {
                     attachments
                 }
@@ -952,17 +975,11 @@ struct StarterComposer: View {
         .mediaPicker(isPresented: $showPhotos, selection: $picks)
         .fileUploadPicker(isPresented: $showFiles) { urls in
             // The assistant runs on its machine (the hub's unless set otherwise): files go to that one's temp directory.
-            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
-                text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
-            }
+            upload(urls)
         }
         #if os(macOS)
         // Finder drags and ⌘V of pictures / copied files, as in an Agent's composer (docs/apple/mac.md「细节」).
-        .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in
-            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
-                text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
-            }
-        })
+        .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in upload(urls) })
         #endif
         .onChange(of: picks) { _, items in
             Task {
@@ -1009,17 +1026,43 @@ struct BeautifulStarterComposer: View {
     /// The main conversation cannot answer yet: send goes to what is missing, the draft stays (the card says what).
     var gate: SendGate? = nil
     var send: (String, [ImagePayload]) -> Void
-    @State private var text = ""
     @State private var picks: [PhotosPickerItem] = []
-    @State private var images: [(UIImage, ImagePayload)] = []
-    @State private var quotes: [ContextRef] = []
     @State private var launchers: [Launcher] = []
     @State private var showPhotos = false
     @State private var showFiles = false
-    @State private var uploads = FileUploads()
-    @State private var videos = VideoAttachments()
     @State private var selection: TextSelection?
     @FocusState private var focused: Bool
+    /// What it holds for the next message, kept by the app for the new conversation as a chat's draft is (#2626): the
+    /// composer is built again with the whole tree when iOS snapshots the app in another width on its way to the
+    /// background (iPhone Duo open), and its text and photos were gone on the way back.
+    private var draft: StarterDraft { model.starterDraft(uploadDest ?? "") }
+    private var text: String {
+        get { draft.text }
+        nonmutating set { draft.text = newValue }
+    }
+    private var images: [(UIImage, ImagePayload)] {
+        get { draft.held.images }
+        nonmutating set { draft.held.images = newValue }
+    }
+    private var quotes: [ContextRef] {
+        get { draft.quotes }
+        nonmutating set { draft.quotes = newValue }
+    }
+    private var textBinding: Binding<String> { Binding(get: { text }, set: { text = $0 }) }
+    private var imagesBinding: Binding<[(UIImage, ImagePayload)]> { Binding(get: { images }, set: { images = $0 }) }
+    private var quotesBinding: Binding<[ContextRef]> { Binding(get: { quotes }, set: { quotes = $0 }) }
+    private var uploads: FileUploads { draft.held.uploads }
+    private var videos: VideoAttachments { draft.held.videos }
+
+    /// Files to the assistant's machine, each path into the box once it is there; not into the next message's box
+    /// when this one went first (the draft outlives the page, #2626).
+    private func upload(_ urls: [URL]) {
+        let generation = draft.generation
+        uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
+            guard draft.generation == generation else { return }
+            text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
+        }
+    }
 
     private var launcherMachine: String { uploadDest == Session.healthSpace ? model.healthMachineID : model.assistantConfig?.machineID ?? model.hubMachineID }
     /// The launcher a new conversation starts with (the user's pick, else the one in Persona settings), or nil while
@@ -1050,8 +1093,8 @@ struct BeautifulStarterComposer: View {
                 }
             }
             #endif
-            if !images.isEmpty { ComposerImages(images: $images) }
-            PromptComposer(placeholder: placeholder ?? String(localized: "Ask \(model.persona.name)…"), text: $text, selection: $selection, focused: $focused,
+            if !images.isEmpty { ComposerImages(images: imagesBinding) }
+            PromptComposer(placeholder: placeholder ?? String(localized: "Ask \(model.persona.name)…"), text: textBinding, selection: $selection, focused: $focused,
                            hasAttachments: !images.isEmpty || !videos.items.isEmpty || !quotes.isEmpty, disabled: disabled,
                            attach: PromptItems.attachments(camera: false),
                            mentions: { PromptItems.sessions(model.sessionsNow, except: nil) },
@@ -1072,7 +1115,7 @@ struct BeautifulStarterComposer: View {
                                quotes.append(ref)
                                return true
                            },
-                           quotes: $quotes,
+                           quotes: quotesBinding,
                            send: {
                                let typed = text
                                let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1091,10 +1134,7 @@ struct BeautifulStarterComposer: View {
                                                                files: files)
                                // Quoted sessions ride along as <persona-context> tags before what was typed, as in a chat.
                                send(quotes.isEmpty ? body : quotes.map(\.xml).joined(separator: "\n") + "\n\n" + body, images.map(\.1))
-                               text = ""
-                               images = []
-                               videos.sent()
-                               quotes = []
+                               draft.sent()
                            })
         }
         // Again once the hub is paired: on a fresh launch the first try runs before there is one.
@@ -1102,17 +1142,11 @@ struct BeautifulStarterComposer: View {
         .mediaPicker(isPresented: $showPhotos, selection: $picks)
         .fileUploadPicker(isPresented: $showFiles) { urls in
             // The assistant runs on its machine (the hub's unless set otherwise): files go to that one's temp directory.
-            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
-                text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
-            }
+            upload(urls)
         }
         #if os(macOS)
         // Finder drags and ⌘V of pictures / copied files, as in an Agent's composer (docs/apple/mac.md「细节」).
-        .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in
-            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
-                text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
-            }
-        })
+        .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in upload(urls) })
         #endif
         .onChange(of: picks) { _, items in
             Task {

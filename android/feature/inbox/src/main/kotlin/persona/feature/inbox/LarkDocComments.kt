@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.*
-import persona.core.contracts.api.InboxAssistantTransport
 import persona.core.hub.HubFailure
 import java.time.Instant
 import java.util.UUID
@@ -93,11 +92,12 @@ interface LarkDocCommentsApi {
     suspend fun people(url: String, query: String): List<LarkDocPerson>
 }
 
-class LarkDocCommentsTransport(private val transport: InboxAssistantTransport) : LarkDocCommentsApi {
-    override suspend fun threads(url: String) = transport.documentComments(url)
-    override suspend fun write(thread: String?, body: JsonObject) = transport.writeDocumentComment(thread, body)
-    override suspend fun resolve(thread: String, url: String, resolved: Boolean) = transport.resolveDocumentComment(thread, url, resolved)
-    override suspend fun people(url: String, query: String) = (transport.documentPeople(url, query)["members"] as? JsonArray).orEmpty()
+/** Through [source]: its pairing, and its manager when it has one. */
+class LarkDocCommentsTransport(private val source: LarkContentSource) : LarkDocCommentsApi {
+    override suspend fun threads(url: String) = source.read { documentComments(url) }
+    override suspend fun write(thread: String?, body: JsonObject) = source.read { writeDocumentComment(thread, body) }
+    override suspend fun resolve(thread: String, url: String, resolved: Boolean) = source.read { resolveDocumentComment(thread, url, resolved) }
+    override suspend fun people(url: String, query: String) = (source.read { documentPeople(url, query) }["members"] as? JsonArray).orEmpty()
         .mapNotNull { it as? JsonObject }.mapNotNull { m ->
             val id = m.string("user_id") ?: return@mapNotNull null
             m.string("name")?.let { LarkDocPerson(id, it) }

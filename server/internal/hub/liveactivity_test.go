@@ -418,7 +418,7 @@ func TestFleetStartPersistenceFailsClosedWithoutLimitingAlertsOrUrgentUpdates(t 
 				if got := sink.count("phone", "liveactivity", "start"); got != 0 {
 					t.Fatalf("failed persistence authorized %d starts", got)
 				}
-				h.notifyInteraction("", proto.Interaction{ID: "ordinary", Kind: proto.IxPermission, Summary: "Approve the operation"}, "computer")
+				h.notifyInteraction("", proto.Interaction{ID: "ordinary", Kind: proto.IxPermission, Summary: "Approve the operation"}, "computer", false)
 				synctest.Wait()
 				if got := sink.count("", "alert", ""); got != 2 {
 					t.Fatalf("start claim failure swallowed ordinary alerts: %d", got)
@@ -765,7 +765,7 @@ func TestFleetPushStartWaitsForLastPhoneToLeave(t *testing.T) {
 					t.Errorf("same round started more than once: %d", n)
 				}
 				// Foreground suppression is only for the activity, never the ordinary alert.
-				h.notifyInteraction("", proto.Interaction{ID: "ordinary", Kind: proto.IxPermission, Summary: "Approve the operation"}, "computer")
+				h.notifyInteraction("", proto.Interaction{ID: "ordinary", Kind: proto.IxPermission, Summary: "Approve the operation"}, "computer", false)
 				synctest.Wait()
 				if n := sink.count("", "alert", ""); n != 2 {
 					t.Errorf("ordinary alert fanout=%d, want 2", n)

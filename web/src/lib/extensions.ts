@@ -515,6 +515,39 @@ export function numberProblems(typed: Record<string, { text: string; integer: bo
 /** Whether the draft differs from what the hub has (both read as sent: compacted). */
 export const isDirty = (draft: JsonObject, config: JsonObject | undefined) => !same(compact(draft), compact(config ?? {}));
 
+const isGroup = (v: Json | undefined): v is JsonObject => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** What a draft changes of the configuration it was made on (both read as sent): each changed field's path and its value
+ *  in the draft (undefined: cleared). Groups are gone into, so a change is one field's, not its whole group's. */
+function draftEdits(draft: JsonObject, base: JsonObject): { path: string[]; value: Json | undefined }[] {
+  const out: { path: string[]; value: Json | undefined }[] = [];
+  const walk = (a: JsonObject, b: JsonObject, at: string[]) => {
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const [x, y] = [a[k], b[k]];
+      if ((isGroup(x) || x === undefined) && (isGroup(y) || y === undefined)) walk(x ?? {}, y ?? {}, [...at, k]);
+      else if (!same(x, y)) out.push({ path: [...at, k], value: x });
+    }
+  };
+  walk(compact(draft), compact(base), []);
+  return out;
+}
+
+/** Unsaved edits made on `base` (number fields as typed, by dotted path), put on what the hub has now (`fresh`): the fields
+ *  they change keep the change, every other field takes the fresh value, so a change made elsewhere meanwhile shows and
+ *  is not saved back over. A number still being typed stays where it does not read as one yet, or is its field's change. */
+export function rebaseDraft<T extends { text: string; integer: boolean }>(
+  kept: { base: JsonObject; draft: JsonObject; typed: Record<string, T> },
+  fresh: JsonObject,
+): { draft: JsonObject; typed: Record<string, T> } {
+  const edits = draftEdits(kept.draft, kept.base);
+  const edited = new Set(edits.map((e) => e.path.join(".")));
+  const problems = numberProblems(kept.typed);
+  return {
+    draft: edits.reduce((out, e) => setAt(out, e.path, e.value), fresh),
+    typed: Object.fromEntries(Object.entries(kept.typed).filter(([k]) => k in problems || edited.has(k))),
+  };
+}
+
 /** The items of a list field: the draft's, else the default. */
 export function listItems(draft: JsonObject, path: string[], f: ExtensionField): string[] {
   const v = valueAt(draft, path) ?? f.default;

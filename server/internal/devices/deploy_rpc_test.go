@@ -34,6 +34,7 @@ type updatingNode struct {
 	badOffset   bool
 	busyCommit  bool
 	busySession bool
+	sessionErr  error
 	background  bool
 	installErr  error
 	stayOld     bool
@@ -46,6 +47,9 @@ func (n *updatingNode) handle(_ context.Context, method string, params json.RawM
 	defer n.mu.Unlock()
 	switch method {
 	case "sessions.list":
+		if n.sessionErr != nil {
+			return nil, n.sessionErr
+		}
 		if n.background {
 			return map[string]any{"sessions": []proto.Session{{SessionID: "background", Status: proto.StatusIdle, Background: []proto.BackgroundTask{{ID: "task", Kind: "shell"}}}}}, nil
 		}
@@ -316,6 +320,22 @@ func TestLinkedDeployDoesNotTransferWhileBusy(t *testing.T) {
 	defer n.mu.Unlock()
 	if n.begin != 0 || n.commits != 0 {
 		t.Fatal("updated a busy node")
+	}
+}
+
+func TestLinkedDeployDoesNotTreatFailedInventoryAsIdle(t *testing.T) {
+	_, m, n, bin := linkedDeployFixture(t, kindLink)
+	n.sessionErr = errors.New("inventory unavailable")
+	record := nodeDeployRecord{Target: "new-build", State: "queued"}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := m.performRPCDeployment(ctx, bin, &record); err == nil {
+		t.Fatal("failed inventory allowed deployment")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.begin != 0 || n.commits != 0 {
+		t.Fatal("updated a node without authoritative inventory")
 	}
 }
 

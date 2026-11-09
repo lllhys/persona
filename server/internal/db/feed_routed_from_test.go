@@ -12,7 +12,7 @@ import (
 // already marked. Applied again on top of a migrated database, as it would meet stored history.
 func TestRoutedFromBackfill(t *testing.T) {
 	ctx := context.Background()
-	d, err := Open(ctx, freshDatabase(t), ManagerSet)
+	d, err := Open(ctx, migratedDatabase(t, ManagerSet), ManagerSet)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4657,12 +4657,24 @@ export interface KBDayResult {
   messages: KBDayMessage[];
   prev: string;
   next: string;
+  /**
+   * available means ledger matching ran, not that unmarked messages are human-authored. missing_scope requires
+   * sent.read; unavailable means the service cannot provide provenance. Older hosts omit this field: treat absence as
+   * unavailable.
+   */
+  sent_origin: string;
 }
 
 export interface KBDayMessage {
   /** The message's first line in the day's file, from 1. */
   n: number;
   text: string;
+  /** Present only for a unique match in the sent-as-user ledger, with sent.read. */
+  sent_by?: string;
+  /** The matching ledger row. */
+  sent_ledger_id?: number;
+  /** When this matched send was recalled; the archive may still contain its text. */
+  recalled_at?: string;
 }
 
 /**

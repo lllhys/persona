@@ -39,7 +39,7 @@ nonisolated enum MessagingSources {
         return "\(url.scheme ?? "")://\(url.host ?? ""):\(url.port ?? 0)\(path)"
     }
 
-    /// `GET me`'s user, by hub and account: what the screens call the account id (outbox, pins, history checks).
+    /// `GET me`'s user, by hub, account and manager: what the screens call the account id (outbox, pins, history checks).
     /// Nil when not read yet, or read longer than `maxAge` ago.
     static func user(_ key: String, maxAge: TimeInterval = .infinity) -> String? {
         lock.lock(); defer { lock.unlock() }
@@ -67,7 +67,8 @@ extension APIClient {
         return q
     }
 
-    private var userKey: String { config.url.absoluteString + "#" + (larkAccount.map(String.init) ?? "") }
+    /// By hub, account and manager: two managers may be signed in as two users. The default's names none.
+    private var userKey: String { config.url.absoluteString + "#" + (larkAccount.map(String.init) ?? "") + (managerID.map { "@" + $0 } ?? "") }
 
     /// The account's user (`GET me`), kept for the run (or read again once older than `maxAge`): the old screens'
     /// `account_id`.

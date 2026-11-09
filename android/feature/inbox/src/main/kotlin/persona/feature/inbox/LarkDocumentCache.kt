@@ -10,12 +10,13 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * The documents read lately, so one opened again (or read ahead while its link waited in a reply) shows at once, as
- * on the web (`feishu-doc.ts` loadDoc): the last [limit] for each pairing, the most recently used kept. Only the text
+ * on the web (`feishu-doc.ts` loadDoc): the last [limit] for each pairing and manager ([LarkContentSource.scope]: the same
+ * link read by two managers is two documents), the most recently used kept. Only the text
  * is kept: what is shown around it (counts, summary) is read on every open, as on the web and iOS. A failed read is
  * not kept; `fresh` reads again.
  */
 class LarkDocumentCache(private val limit: Int = 12, private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)) {
-    /** Per pairing, its reads by URL, oldest use first. */
+    /** Per pairing and manager, its reads by URL, oldest use first. */
     private val pairings = HashMap<String, LinkedHashMap<String, Deferred<LarkDocument>>>()
 
     fun load(source: LarkContentSource, url: String, fresh: Boolean = false): Deferred<LarkDocument> = synchronized(this) {
@@ -41,10 +42,10 @@ class LarkDocumentCache(private val limit: Int = 12, private val scope: Coroutin
 
 /** The three extras at once; each one that fails is left out. */
 internal suspend fun LarkContentSource.details(url: String): LarkDocumentDetails = coroutineScope {
-    suspend fun read(path: String): JsonObject? = try { transport.documentExtra(path, url) }
+    suspend fun extra(path: String): JsonObject? = try { read { documentExtra(path, url) } }
         catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
-    val info = async { read("reader/info") }
-    val header = async { read("header") }
-    val summary = async { read("ai-summary") }
+    val info = async { extra("reader/info") }
+    val header = async { extra("header") }
+    val summary = async { extra("ai-summary") }
     parseLarkDocumentDetails(info.await(), header.await(), summary.await())
 }

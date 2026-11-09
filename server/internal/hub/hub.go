@@ -82,6 +82,10 @@ type Hub struct {
 	mu      sync.Mutex
 	clients map[*client]struct{}
 	events  *eventLog // what was broadcast lately, numbered (eventlog.go); guarded by mu
+
+	// linkDesktops: the computers whose Persona Link says the user is at them (desktops.go); guarded by mu.
+	linkDesktops linkDesktops
+
 	// stopping: a planned stop has begun (beginStop, docs/operations/hub-restart.md): what the stop itself causes (machines going
 	// offline, their questions ending) is not news for the apps, which reconnect to the next hub in a moment.
 	stopping atomic.Bool

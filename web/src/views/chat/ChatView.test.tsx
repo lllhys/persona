@@ -15,15 +15,21 @@ const captured = vi.hoisted(() => ({
   loading: false,
   /** Set: the hub could not say what this chat is (useRuntimeSession's notice, no row). */
   noDetails: "",
+  /** The manager a link tapped in the chat opens what it opens as (useLinkManager under ChatView). */
+  linkManager: undefined as string | undefined,
 }));
 
-vi.mock("./Composer", async (importOriginal) => ({
-  ...await importOriginal<typeof import("./Composer")>(),
-  Composer: ({ onSend }: { onSend: (out: Outgoing) => Promise<boolean> }) => {
-    captured.onSend = onSend;
-    return null;
-  },
-}));
+vi.mock("./Composer", async (importOriginal) => {
+  const { useLinkManager } = await import("../../lib/manager-choice");
+  return {
+    ...await importOriginal<typeof import("./Composer")>(),
+    Composer: ({ onSend }: { onSend: (out: Outgoing) => Promise<boolean> }) => {
+      captured.onSend = onSend;
+      captured.linkManager = useLinkManager();
+      return null;
+    },
+  };
+});
 vi.mock("./useTranscript", () => ({
   useTranscript: () => ({ items: captured.items, loading: captured.loading, error: captured.error, hasMore: false, streaming: "" }),
 }));
@@ -143,6 +149,22 @@ describe("ChatView message context availability", () => {
     const html = renderToStaticMarkup(<ChatView mid="hub" sid="c1" assistant={assistant} readOnly={readOnly} />);
     expect(html.includes('aria-label="交给 Persona"')).toBe(handoff);
     expect(html.includes('aria-label="作为上下文"')).toBe(context);
+  });
+});
+
+describe("links in the chat", () => {
+  it("open what they open as the chat's manager (docs/assistant/managers.md \"Grouping\")", () => {
+    const was = captured.session;
+    try {
+      captured.session = { ...was, manager: "m-2" };
+      renderToStaticMarkup(<ChatView mid="hub" sid="c1" />);
+      expect(captured.linkManager).toBe("m-2");
+      captured.session = { ...was, manager: undefined };
+      renderToStaticMarkup(<ChatView mid="hub" sid="c1" assistant />);
+      expect(captured.linkManager).toBeUndefined();
+    } finally {
+      captured.session = was;
+    }
   });
 });
 

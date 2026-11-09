@@ -2,5 +2,6 @@
   "behind": "这一轮没分完",
   "read_timeout": "这一轮没读到：超时了",
   "read_rate_limited": "这一轮没读到：被限流了",
+  "read_login_refused": "这一轮没读到：邮箱服务器拒绝了登录",
   "read_failed": "这一轮没读到，列表可能不全"
 }

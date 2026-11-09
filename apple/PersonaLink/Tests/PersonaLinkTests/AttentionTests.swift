@@ -23,12 +23,13 @@ final class AttentionTests: XCTestCase {
 
     func testDecodesTheContractsStatusField() throws {
         let s = try status(#"""
-        {"state":"connected","machine":"laptop","attention":{"rev":"9f2c41d0","needs_you":3,"more":2,
+        {"state":"connected","conn":4,"machine":"laptop","attention":{"rev":"9f2c41d0","needs_you":3,"more":2,
          "web_url":"https://hub.example.com/persona","items":[
           {"machine_id":"laptop","session_id":"s1","title":"Fix the login redirect","place":"Laptop · web › 2",
            "kind":"permission","detail":"Bash: npm test","muted":true,"notify":false,"interaction_id":"ix-9",
            "since":"2026-11-09T07:00:00.123456789Z","route":"/s/laptop/s1"}]}}
         """#)
+        XCTAssertEqual(s.conn, 4, "the helper's link the summary came on")
         let a = try XCTUnwrap(s.attention)
         XCTAssertEqual(a.needsYou, 3)
         XCTAssertEqual(a.more, 2)

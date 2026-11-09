@@ -182,3 +182,41 @@ func TestPushBackgroundWithoutPayloadSendsNothing(t *testing.T) {
 	}
 	sentPushes(t, f, attempts, 0)
 }
+
+// A manager's collapse id replaces only that manager's earlier push: the same id from another manager, or one that is
+// a notify API caller's (notify:), gets an apns-collapse-id of its own; a long one still fits APNs' 64 bytes; none at all
+// is a push of its own each time.
+func TestPushLocalizedCollapseIDIsTheManagers(t *testing.T) {
+	h, f, attempts := localizedHub(t)
+	sent := 0
+	push := func(from, collapse string) string {
+		t.Helper()
+		params, _ := json.Marshal(map[string]any{"payloads": map[string]any{"en": map[string]any{"aps": map[string]any{"alert": "x"}}}, "collapse_id": collapse})
+		if _, _, err := h.extAppCall(context.Background(), from, assistantwire.AppCall{AppID: extwire.AppHub, Method: extwire.HubPushLocalized, Params: params}); err != nil {
+			t.Fatalf("%s push.localized %q: %v", from, collapse, err)
+		}
+		sent++
+		got := sentPushes(t, f, attempts, sent)
+		return got[sent-1].Collapse
+	}
+	mine, again := push(assistantwire.AssistantID, "upgrade"), push(assistantwire.AssistantID, "upgrade")
+	if !strings.HasPrefix(mine, "ext:") || len(mine) != len("ext:")+32 || again != mine {
+		t.Fatalf("the same id from the same manager: %q then %q, want one ext: id", mine, again)
+	}
+	if other := push("m-other", "upgrade"); other == mine || !strings.HasPrefix(other, "ext:") {
+		t.Fatalf("another manager's same id: %q, want an ext: id other than %q", other, mine)
+	}
+	if caller := push(assistantwire.AssistantID, notifyCollapse+"x"); !strings.HasPrefix(caller, "ext:") {
+		t.Fatalf("an id that is the notify API's: sent as %q", caller)
+	}
+	if long := push(assistantwire.AssistantID, strings.Repeat("u", 200)); len(long) > 64 {
+		t.Fatalf("a 200-byte id: apns-collapse-id of %d bytes", len(long))
+	}
+	first, second := push(assistantwire.AssistantID, ""), push(assistantwire.AssistantID, "")
+	if !strings.HasPrefix(first, "p_") || !strings.HasPrefix(second, "p_") || first == second {
+		t.Fatalf("no id: %q then %q, want two random p_ ids", first, second)
+	}
+	if managerCollapseID("ab", "c") == managerCollapseID("a", "bc") {
+		t.Fatal("managers ab and a share an id: the manager's end is not kept apart from the id")
+	}
+}

@@ -281,7 +281,7 @@ func shortenAlert(v any, n int) any {
 	return out
 }
 
-// relayCollapseID: the relay sees a hash of the collapse id (an interaction id), not the id.
+// relayCollapseID: the relay sees a hash of the collapse id (a card's, cardCollapseID, or another push's), not the id.
 func relayCollapseID(id string) string {
 	if id == "" {
 		return ""
