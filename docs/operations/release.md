@@ -479,6 +479,14 @@ When moving to rewritten history, pause the existing publisher, retain its evide
 repository. Keep the existing package, signing certificate and signing entry. Never post an old commit's status to the new repository
 or treat an old verified APK as a build of the new source. Compare migrated file content when commit IDs have changed.
 
+The release APK is shrunk by R8 without obfuscation (docs/android/android.md "Release shrinking"). After `:app:assembleRelease` and
+before the APK is copied for signing, the worker runs `scripts/release/check_android_shrink.py` on it and on R8's
+output in `app/build/outputs/mapping/release`; any class, constructor or method that Android or the app reaches only by name and
+that R8 removed fails the build, so nothing is signed or published. Before the first shrunk release, install it on a phone and
+open pairing, a chat with a formula, the Inbox, Settings, a notification action, the home-screen widget and the Quick Settings
+tile; a crash there is fixed with a keep rule in `android/app/proguard-rules.pro` (or rolled back with `isMinifyEnabled = false`
+and the test line that pins it, docs/android/android.md "Release shrinking").
+
 Versions are `version_base + first-parent commit count`; `version_base` defaults to 100000. Before enabling the new lane, choose a
 fixed nonnegative base so its first version exceeds the currently published APK. Keep that base stable thereafter. The worker rejects
 history rewrites and version regressions within the lane; the atomic Hub publisher also rejects stale versions across lanes.

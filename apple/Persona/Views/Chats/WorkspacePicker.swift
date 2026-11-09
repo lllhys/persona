@@ -62,6 +62,6 @@ struct WorkspacePicker: View {
         }
         .themedGroupedPage()
         .navigationTitle(String(localized: "workspace.choose", defaultValue: "Choose Worktree"))
-        .pageSearchable(text: $query)
+        .pageSearchable(text: $query, prompt: String(localized: "Search"))
     }
 }

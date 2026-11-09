@@ -1,3 +1,4 @@
+import PersonaKit
 import SwiftUI
 
 // The unified entry's pieces in the assistant's conversation (docs/assistant/unified-entry.md): the plan card, the task card,
@@ -844,16 +845,40 @@ struct ReceiptCard: View {
     @Environment(\.openURL) private var openURL
     private var store: TasksStore { .shared }
 
+    /// What a receipt says (#2362; the web's `receiptState` and `OutcomeReceipt`, #975). A receipt ends a stretch of work,
+    /// not the task: a done one reads "done" only once its to-do is, and says the task stopped unfinished while the to-do
+    /// is open. One whose to-do is gone from the list stands on its receipt. A turn the model service cut off is its own
+    /// state: `interrupted`, or a `done` from an older hub whose summary is the API error.
+    nonisolated enum Outcome: Equatable {
+        case done, stopped, failed
+        case interrupted(reason: String?)
+    }
+
+    nonisolated static func outcome(_ item: FeedItem, todo: TodoItem?) -> Outcome {
+        if item.failed { return .failed }
+        if item.turnInterrupted { return .interrupted(reason: APIErrorInfo.parse(item.receiptError ?? item.summary)?.reason) }
+        if let apiError = APIErrorInfo.parse(item.summary) { return .interrupted(reason: apiError.reason) }
+        if let todo, todo.doneAt == nil { return .stopped }
+        return .done
+    }
+
     var body: some View {
-        let tint = item.failed ? Theme.danger : Theme.positive
+        let todo = item.ref.flatMap { store.todos[$0] }
+        let outcome = Self.outcome(item, todo: todo)
+        let title = item.title ?? String(localized: "Tasks")
+        let tint: Color = switch outcome {
+        case .failed, .interrupted: Theme.danger
+        case .stopped: .secondary
+        case .done: Theme.positive
+        }
         HStack(alignment: .top, spacing: Theme.Space.m) {
-            ThemedIcon(item.failed ? Theme.Icon.errorFilled : Theme.Icon.successFilled)
+            ThemedIcon(Self.icon(outcome))
                 .font(Theme.Font.heading)
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Text(item.failed ? String(localized: "\(item.title ?? String(localized: "Tasks")) didn't start") : String(localized: "\(item.title ?? String(localized: "Tasks")) is done [Task Views cd37f3]"))
+                Text(Self.heading(outcome, title: title))
                     .font(Theme.Font.bodyStrong)
-                if let s = item.summary, !s.isEmpty {
+                if let s = Self.detail(outcome, summary: item.summary) {
                     Text(s).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(4)
                 }
                 HStack(spacing: Theme.Space.s) {
@@ -861,7 +886,7 @@ struct ReceiptCard: View {
                         Button { openURL(url) } label: { Label(label, systemImage: Theme.Icon.pullRequest).lineLimit(1) }
                             .themedButton()
                     }
-                    if let id = item.ref, store.todos[id] != nil, !item.failed {
+                    if let id = item.ref, todo != nil, outcome != .failed {
                         Button { store.detailTask = id } label: { Text("View [Task Views d87059]").lineLimit(1) }
                             .themedButton()
                     }
@@ -872,7 +897,46 @@ struct ReceiptCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(Theme.Space.l)
-        .background(tint.opacity(0.12), in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
+        .background(outcome == .stopped ? Theme.Fill.well : tint.opacity(0.12),
+                    in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
+        .accessibilityIdentifier("receipt.\(Self.outcomeKey(outcome))")
+    }
+
+    nonisolated static func icon(_ outcome: Outcome) -> String {
+        switch outcome {
+        case .failed, .interrupted: Theme.Icon.errorFilled
+        case .stopped: Theme.Icon.time
+        case .done: Theme.Icon.successFilled
+        }
+    }
+
+    nonisolated static func heading(_ outcome: Outcome, title: String) -> String {
+        switch outcome {
+        case .failed: String(localized: "\(title) didn't start")
+        case .interrupted: String(localized: "Task “\(title)” was interrupted")
+        case .stopped: String(localized: "\(title) stopped, not done yet")
+        case .done: String(localized: "\(title) is done [Task Views cd37f3]")
+        }
+    }
+
+    /// The line under the heading: the agent's last words, or for an interrupted turn the reason in words rather than
+    /// the raw API error.
+    nonisolated static func detail(_ outcome: Outcome, summary: String?) -> String? {
+        if case .interrupted(let reason) = outcome {
+            if let reason, !reason.isEmpty { return String(localized: "Interrupted by a model service error: \(reason)") }
+            return String(localized: "Interrupted by a model service error")
+        }
+        guard let s = summary, !s.isEmpty else { return nil }
+        return s
+    }
+
+    nonisolated static func outcomeKey(_ outcome: Outcome) -> String {
+        switch outcome {
+        case .done: "done"
+        case .stopped: "stopped"
+        case .failed: "failed"
+        case .interrupted: "interrupted"
+        }
     }
 }
 

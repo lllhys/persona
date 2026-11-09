@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- English is the fallback (docs/protocol/i18n.md); values-zh and values-ja hold the same keys. -->
-<resources>
-    <string name="chatlist_return_to_latest">Jump to latest</string>
-</resources>

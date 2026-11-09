@@ -15447,6 +15447,18 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/v1/translate":  # marks the texts, enough to see where they show
             body = json.loads(self.last_body or b"{}")
             return self.send_json({"texts": ["【译】" + t for t in body.get("texts", [])]})
+        if p.startswith("/api/v1/inbox/") and p.endswith("/done") and self.command == "POST":
+            iid, body = unquote(p[len("/api/v1/inbox/"):-len("/done")]), json.loads(self.last_body or b"{}")
+            x = next((x for x in INBOX if x["id"] == iid), None)
+            if x is None: return self.send_json({"error": "no such inbox item"}, 404)
+            if body.get("done"):
+                x["done_at"], x["done_by"] = ago(minutes=0), "dismissed" if body.get("dismiss") else "user"
+            else:
+                x.pop("done_at", None), x.pop("done_by", None)
+            for send, _ in list(LIVE):
+                try: send({"type": "inbox"})
+                except Exception: pass
+            return self.send_json(dict({k: v for k, v in x.items() if k != "context"}, version=inbox_version(x)))
         if p.startswith("/api/v1/inbox/") and p.endswith("/doc/status"):
             iid, ch = p[len("/api/v1/inbox/"):-len("/doc/status")], json.loads(self.last_body or b"{}")
             for x in INBOX:

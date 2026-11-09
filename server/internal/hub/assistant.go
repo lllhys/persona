@@ -63,5 +63,6 @@ func assistantSpace(cwd string) string { return identity.SpaceOf(cwd) }
 
 // inHealth: an assistant conversation working in cwd is in the health space. What it says leaves the space only with
 // the user knowing (docs/assistant/health.md "Outbound"): its pushes say there is news, not the news, and its writes are confirmed
-// on the phone each time, whatever the gate rules allow.
-func inHealth(cwd string) bool { return cwd != "" && assistantSpace(cwd) == identity.SpaceHealth }
+// on the phone each time, whatever the gate rules allow. A directory inside the space counts too (a card's cwd can be
+// where a `cd` left the model's shell, #2368): this only hides, it never classifies (assistantSpace stays exact).
+func inHealth(cwd string) bool { return cwd != "" && identity.InHealthSpace(cwd) }

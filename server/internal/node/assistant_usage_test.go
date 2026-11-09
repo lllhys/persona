@@ -1,10 +1,13 @@
 package node
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,12 +130,148 @@ func TestRepairUsageGoesOnFromTheLastCheck(t *testing.T) {
 func TestPlausibleUsageIsKept(t *testing.T) {
 	big := strings.Repeat("字", 300_000) // 900 KB of text
 	data := usageLine(t, "a1", 950_000, false, big) + usageLine(t, "a2", 180_000, false, "short")
-	if fx := implausibleUsage([]byte(data), 0, int64(len(data))); len(fx) != 0 {
+	if fx, _, _ := implausibleUsage(strings.NewReader(data), 0, int64(len(data))); len(fx) != 0 {
 		t.Errorf("flagged %d plausible replies", len(fx))
 	}
 	small := usageLine(t, "a1", 600_000, false, "short") // 600k tokens from a 400-byte transcript
-	if fx := implausibleUsage([]byte(small), 0, int64(len(small))); len(fx) != 1 {
+	if fx, _, _ := implausibleUsage(strings.NewReader(small), 0, int64(len(small))); len(fx) != 1 {
 		t.Errorf("a context larger than its transcript was kept")
+	}
+}
+
+// replyLine is an assistant reply whose usage has one count, input tokens, so a long text puts it where a test wants.
+func replyLine(t *testing.T, id string, input int, text string) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"type": "assistant", "uuid": id, "message": map[string]any{"role": "assistant",
+		"content": []map[string]any{{"type": "text", "text": text}}, "usage": map[string]any{"input_tokens": input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b) + "\n"
+}
+
+// A line longer than the read buffer is read in pieces: a usage split between two of them is found and fixed in
+// place, a long line without one is passed over, and a long line still being written is left for the next check.
+func TestRepairUsageReadsLinesLongerThanTheBuffer(t *testing.T) {
+	head := usageLine(t, "a0", 0, false, "short")
+	split := replyLine(t, "a1", 1_706_464, "")
+	at := usageHintRe.FindIndex([]byte(split))[0]
+	split = replyLine(t, "a1", 1_706_464, strings.Repeat("x", usageReadSize-10-at)) // the first read ends inside the usage
+	if i := usageHintRe.FindIndex([]byte(split)); i[0] != usageReadSize-10 || i[1] <= usageReadSize {
+		t.Fatalf("usage at %v, want across %d", i, usageReadSize)
+	}
+	plain := replyLine(t, "a2", 120, strings.Repeat("y", 3*usageReadSize))
+	tail := replyLine(t, "a3", 2_000_000, "z")
+	partial := replyLine(t, "a4", 3_000_000, strings.Repeat("w", usageReadSize))[:usageReadSize+100]
+	orig := head + split + plain + tail + partial
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := repairUsage(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(orig) - len(partial)); r.lines != 2 || r.largest != 2_000_000 || r.end != want {
+		t.Fatalf("repair = %+v, want 2 lines up to 2000000 and end %d", r, want)
+	}
+	got, _ := os.ReadFile(path)
+	if len(got) != len(orig) {
+		t.Fatalf("size changed: %d -> %d", len(orig), len(got))
+	}
+	lines := strings.SplitAfter(string(got), "\n")
+	if lines[0] != head || lines[2] != plain || lines[4] != partial {
+		t.Error("a line without an impossible usage changed")
+	}
+	for _, i := range []int{1, 3} {
+		var e struct {
+			Message struct {
+				Usage struct {
+					Input int `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(lines[i]), &e); err != nil || e.Message.Usage.Input != 0 {
+			t.Errorf("line %d: usage %d, %v", i+1, e.Message.Usage.Input, err)
+		}
+	}
+}
+
+// A copy that fails is removed: it is no backup, and on a full disk it holds the space.
+func TestBackupCopyRemovesAFailedCopy(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.OpenFile(filepath.Join(dir, "s.jsonl"), os.O_CREATE|os.O_WRONLY, 0o600) // write-only: reads fail
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if _, err := src.WriteString(usageLine(t, "a1", 1_706_464, false, "x")); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "s.jsonl.usage-backup-1")
+	if err := backupCopy(src, dst, 100); err == nil {
+		t.Fatal("copied from a file that cannot be read")
+	}
+	if _, err := os.Stat(dst); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the failed copy is left: %v", err)
+	}
+}
+
+// longTranscript is a long conversation's transcript of about size bytes: tool results, and replies whose usage has six
+// digits but is plausible, so each of them is decoded and none is fixed.
+func longTranscript(tb testing.TB, size int) string {
+	tb.Helper()
+	result := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` +
+		strings.Repeat("x", 4000) + `"}]}}` + "\n"
+	reply := `{"type":"assistant","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use",` +
+		`"id":"toolu_1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":3,"cache_creation_input_tokens":120,` +
+		`"cache_read_input_tokens":150000,"output_tokens":25}}}` + "\n"
+	path := filepath.Join(tb.TempDir(), "s.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	for n := 0; n < size; n += len(result) + len(reply) {
+		_, _ = w.WriteString(result)
+		_, _ = w.WriteString(reply)
+	}
+	if err := w.Flush(); err != nil {
+		tb.Fatal(err)
+	}
+	return path
+}
+
+// usageRaceEnabled: built with -race, whose sync.Pool drops a quarter of what is put back, so a line's regexp match
+// can allocate a matcher of its own (assistant_usage_race_test.go).
+var usageRaceEnabled bool
+
+// A process's first check reads the whole transcript a buffer at a time: a long conversation's 32 MB costs about the
+// buffer, where it held all of it before (as much heap as the file is large, on each conversation's restart).
+func TestRepairUsageStreamsTheTranscript(t *testing.T) {
+	if usageRaceEnabled {
+		t.Skip("-race allocates a regexp matcher per line on its own")
+	}
+	path := longTranscript(t, 32<<20)
+	per := bytesPerRun(1, func() {
+		if r, err := repairUsage(path, 0); err != nil || r.lines != 0 {
+			t.Errorf("repair = %+v, %v", r, err)
+		}
+	})
+	if per > 1<<20 {
+		t.Errorf("checking a 32 MB transcript allocates %.0f bytes, want under %d", per, 1<<20)
+	}
+}
+
+// BenchmarkRepairUsage is a process's first check of a long conversation's transcript, 64 MB.
+func BenchmarkRepairUsage(b *testing.B) {
+	path := longTranscript(b, 64<<20)
+	b.ReportAllocs()
+	for b.Loop() {
+		if r, err := repairUsage(path, 0); err != nil || r.lines != 0 {
+			b.Fatalf("repair = %+v, %v", r, err)
+		}
 	}
 }
 

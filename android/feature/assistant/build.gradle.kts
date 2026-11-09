@@ -17,7 +17,6 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":core:navigation"))
     implementation(project(":feature:chat"))
-    implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.lifecycle.compose)

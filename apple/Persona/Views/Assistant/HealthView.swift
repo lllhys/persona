@@ -59,8 +59,8 @@ struct HealthView: View {
     @State private var showReports = false
     @State private var reports = FileUploads()
 
-    /// The assistant's machine (the hub's unless set otherwise), where the health space's directory is.
-    private var machine: MachineRef { model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID) }
+    /// The default manager's assistant machine (the hub's unless set otherwise), where the health space's directory is.
+    private var machine: MachineRef { model.hubRef(model.healthMachineID) }
 
     private func uploadReports(_ urls: [URL]) {
         let send = send

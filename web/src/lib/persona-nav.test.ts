@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { firstAndCurrent, NAV_PAGES, otherConversations, extensionNavKey, sidebarActiveKey } from "./persona-nav";
+import { firstAndCurrent, NAV_PAGES, extensionNavKey, sidebarActiveKey } from "./persona-nav";
 import { href, parse, routePath } from "./router";
-import type { Session } from "./types";
-
-const conv = (id: string, updated: string) => ({ machine_id: "hub", session_id: id, updated_at: updated }) as Session;
 
 describe("Persona is the front door (#1239)", () => {
   it("opens the main conversation at / and at the old /persona and /persona links", () => {
@@ -47,22 +44,6 @@ describe("Persona is the front door (#1239)", () => {
     expect(sidebarActiveKey({ name: "home" }, "main")).toBe("home");
     expect(sidebarActiveKey({ name: "machine", mid: "mac" }, "main")).toBe("machines");
     expect(sidebarActiveKey({ name: "session", mid: "mac", sid: "s" }, "main")).toBe("s:mac/s");
-  });
-
-  it("lists the other conversations newest first without the main one", () => {
-    const list = [conv("main", "2026-11-04T10:00:00Z"), conv("a", "2026-11-03T10:00:00Z"), conv("b", "2026-11-04T09:00:00Z")];
-    expect(otherConversations(list, "main").map((c) => c.session_id)).toEqual(["b", "a"]);
-    expect(otherConversations(list, undefined).map((c) => c.session_id)).toEqual(["main", "b", "a"]);
-    expect(otherConversations(list, "main", 1).map((c) => c.session_id)).toEqual(["b"]);
-  });
-
-  it("keeps the open conversation listed when it is older than the recent ones (#2283)", () => {
-    const list = [conv("main", "2026-11-03"), conv("a", "2026-11-01"), conv("b", "2026-11-02"), conv("c", "2026-10-30")];
-    expect(otherConversations(list, "main", 1, "c").map((c) => c.session_id)).toEqual(["b", "c"]);
-    // already among the recent ones, or not a conversation at all: the list is as before
-    expect(otherConversations(list, "main", 2, "b").map((c) => c.session_id)).toEqual(["b", "a"]);
-    expect(otherConversations(list, "main", 1, "main").map((c) => c.session_id)).toEqual(["b"]);
-    expect(otherConversations(list, "main", 1, "gone").map((c) => c.session_id)).toEqual(["b"]);
   });
 
   it("shortens a list to its first n and the open item after them (#2283)", () => {

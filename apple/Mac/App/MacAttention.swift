@@ -25,7 +25,8 @@ enum MacAttention {
             case .needsYou:
                 return prefs.input && !looking.contains(s.key) ? (s, .needsYou) : nil
             case .unread:
-                guard !s.assistant, was.state != .needsYou else { return nil }
+                // Inside this device's quiet hours nothing says an agent finished, as the hub skips that push (#1863).
+                guard !s.assistant, was.state != .needsYou, prefs.quiet?.active(at: now) != true else { return nil }
                 switch prefs.done {
                 case .off: return nil
                 case .always: return (s, .unread)
@@ -148,14 +149,16 @@ extension MacAttention {
     }
 
     /// The banner for one agent. The userInfo keys are the hub push's (`machine_id`, `session_id`, `interaction_id`),
-    /// so MacAppDelegate opens the chat or resolves a button the same way for both.
-    static func content(_ s: Session, _ state: AgentState, interaction: Interaction?) -> UNMutableNotificationContent {
+    /// so MacAppDelegate opens the chat or resolves a button the same way for both. `hushed`: inside this device's quiet
+    /// hours, without a sound and passive, like the hub's push then (#1863).
+    static func content(_ s: Session, _ state: AgentState, interaction: Interaction?, hushed: Bool = false) -> UNMutableNotificationContent {
         let (title, body) = text(s, state)
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
         c.threadIdentifier = s.machineID
-        c.sound = state == .needsYou ? .default : nil
+        c.sound = state == .needsYou && !hushed ? .default : nil
+        if hushed { c.interruptionLevel = .passive }
         var info: [String: String] = ["machine_id": s.machineID, "session_id": s.sessionID]
         if state == .needsYou, let interaction {
             c.categoryIdentifier = NotificationActions.category(interaction.kind)
@@ -248,9 +251,10 @@ extension MacAttention {
         let metKeys = flippedAt.keys.filter { key in interactions.contains { $0.sessionKey == key } }
         for key in metKeys { flippedAt[key] = nil }
         guard !ping.isEmpty || !cards.isEmpty else { return }
+        let hushed = prefs.quiet?.active(at: now) == true
         var requests = ping.map { s, state in
             UNNotificationRequest(identifier: MacAttention.identifier(s, state),
-                                  content: MacAttention.content(s, state, interaction: interactions.first { $0.sessionKey == s.key }),
+                                  content: MacAttention.content(s, state, interaction: interactions.first { $0.sessionKey == s.key }, hushed: hushed),
                                   trigger: nil)
         }
         // One banner per new card, identified by the card's uid like the hub push's collapse id: answering removes
@@ -258,7 +262,7 @@ extension MacAttention {
         requests += cards.compactMap { ix -> UNNotificationRequest? in
             guard let s = MacAttention.session(for: ix, in: sessions) else { return nil }
             return UNNotificationRequest(identifier: MacAttention.identifier(ix),
-                                         content: MacAttention.content(s, .needsYou, interaction: ix), trigger: nil)
+                                         content: MacAttention.content(s, .needsYou, interaction: ix, hushed: hushed), trigger: nil)
         }
         waiting += requests
         if asked {

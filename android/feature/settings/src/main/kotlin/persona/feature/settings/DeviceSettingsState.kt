@@ -46,6 +46,23 @@ class DeviceSettingsState(private val api: DeviceSettings?, private val unpair: 
         }
     }
 
+    /** Only `quiet` goes, in this phone's time zone [zone] (as the web and iOS save it): the other prefs stay as they are. */
+    suspend fun saveQuietHours(next: QuietHours, zone: String = java.time.ZoneId.systemDefault().id) {
+        val previous = mutable.value.preferences
+        if (mutable.value.busy || previous?.quiet == null) return
+        val quiet = next.copy(tz = zone)
+        perform(R.string.settings_notify_prefs_save_failed) {
+            mutable.value = mutable.value.copy(preferences = previous.copy(quiet = quiet))
+            try {
+                val saved = requireNotNull(api).saveQuietHours(quiet)
+                mutable.value = mutable.value.copy(preferences = mutable.value.preferences?.copy(quiet = saved))
+            } catch (error: Exception) {
+                mutable.value = mutable.value.copy(preferences = previous)
+                throw error
+            }
+        }
+    }
+
     suspend fun revoke(device: PairedDevice) = perform(R.string.settings_devices_revoke_failed) {
         val devices = requireNotNull(mutable.value.devices)
         requireNotNull(api).revoke(device.id)

@@ -105,7 +105,12 @@ def build(config, checkout, sha, directory):
          ":core:hub:test", ":feature:settings:testDebugUnitTest",
          ":feature:agents:testDebugUnitTest", ":platform:notify:testDebugUnitTest",
          ":app:assembleRelease"], checkout / "android", env=env)
-    shutil.copyfile(checkout / "android/app/build/outputs/apk/release/app-release-unsigned.apk", unsigned)
+    outputs = checkout / "android/app/build/outputs"
+    apk = outputs / "apk/release/app-release-unsigned.apk"
+    # R8 keeps only what code references; stop before signing when it dropped something reached by name.
+    run(["python3", "scripts/release/check_android_shrink.py", str(apk), str(outputs / "mapping/release")],
+        checkout, env=env)
+    shutil.copyfile(apk, unsigned)
     result = dict(repository=config["repository"], source_sha=sha, unsigned_sha256=digest(unsigned),
                   package=config["application_id"], version_code=code, version_name=name)
     atomic_json(receipt, result)

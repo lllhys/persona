@@ -25,7 +25,7 @@ nonisolated extension Theme {
 }
 
 nonisolated extension Theme.Size {
-    /// The band along the conversation's right edge where a slide up or down opens the navigator (`ChatEdgeScrub`):
+    /// The band along the conversation's right edge where a finger held still opens the navigator (`ChatEdgeScrub`):
     /// inside the list's side margin, so no message's own touch is taken.
     static let edgeBand: CGFloat = 16
     /// A tick of the navigator, one per message the user typed, and the one under the finger.
@@ -35,4 +35,10 @@ nonisolated extension Theme.Size {
     /// fit show only the newest).
     static let edgeTickGapMax: CGFloat = 14
     static let edgeTickGapMin: CGFloat = 5
+}
+
+nonisolated extension Theme.Motion {
+    /// How long a finger stays put in the right edge's band before the navigator opens (`ChatEdgeScrub`): a swipe that
+    /// starts there without it scrolls the list (#2615).
+    static let edgeScrubHold: TimeInterval = 0.3
 }

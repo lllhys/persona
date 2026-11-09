@@ -99,6 +99,19 @@ class HttpDeviceSettings(
         return mutedManagers(answer) ?: throw HubFailure(HubError.Protocol)
     }
 
+    override suspend fun saveQuietHours(quiet: QuietHours): QuietHours {
+        require(preferenceDeviceId.isNotBlank())
+        val answer = request("devices", preferenceDeviceId, "prefs", method = "PUT", body = buildJsonObject {
+            put("quiet", buildJsonObject {
+                put("enabled", quiet.enabled)
+                put("start", quiet.start)
+                put("end", quiet.end)
+                quiet.tz?.takeIf(String::isNotBlank)?.let { put("tz", it) }
+            })
+        })
+        return quietHours(answer) ?: throw HubFailure(HubError.Protocol)
+    }
+
     /** Tells the hub this device's Settings › Translation (only that field: the rest of its prefs stay as they are). */
     suspend fun saveTranslatePrefs(prefs: HubTranslatePrefs): HubTranslatePrefs? {
         require(preferenceDeviceId.isNotBlank())
@@ -121,6 +134,7 @@ class HttpDeviceSettings(
         liveActivity = data["live_activity"]?.jsonPrimitive?.booleanOrNull ?: true,
         muteWhileDesktop = data["mute_while_desktop"]?.jsonPrimitive?.booleanOrNull,
         mutedManagers = mutedManagers(data),
+        quiet = quietHours(data),
         translate = (data["translate"] as? JsonObject)?.let {
             runCatching { JsonCodec.decodeFromJsonElement(HubTranslatePrefs.serializer(), it) }.getOrNull()
         },
@@ -131,6 +145,17 @@ class HttpDeviceSettings(
         is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
         JsonNull -> emptyList()
         else -> null
+    }
+
+    /** `quiet` (an object from a hub that has it, empty times while never set); null from an older hub. */
+    private fun quietHours(data: JsonObject): QuietHours? {
+        val value = data["quiet"] as? JsonObject ?: return null
+        return QuietHours(
+            enabled = (value["enabled"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            start = value.text("start")?.takeIf { QuietHours.minutes(it) != null } ?: QuietHours.DEFAULT_START,
+            end = value.text("end")?.takeIf { QuietHours.minutes(it) != null } ?: QuietHours.DEFAULT_END,
+            tz = value.text("tz")?.takeIf(String::isNotBlank),
+        )
     }
 
     private fun JsonObject.text(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull

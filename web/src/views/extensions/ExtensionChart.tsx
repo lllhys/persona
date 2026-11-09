@@ -5,33 +5,20 @@
 // labels thinned so they never overlap. Hovering (or the arrow keys) shows the label and every series' value (a
 // candle's open, high, low, close and volume; a slice's share). A compact chart (a card) draws no axis text: only the
 // marks and the first / last label. The geometry is in lib/extension-ui.ts and lib/extension-ui-v6.ts.
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { barSpans, chartExtent, compactNumber, edgeLabels, labelWidth, linear, niceTicks, pointText, seriesColors, sliceColors, thinLabels, type ChartPoint, type UIItem } from "../../lib/extension-ui";
 import { arcPath, areaBands, candleColors, candleExtent, candleOf, shareText, slices } from "../../lib/extension-ui-v6";
 import { t } from "../../i18n";
 import { cx } from "../../ui/atoms";
 import { ChartFrame, LABEL_H, plotHeight } from "./ChartFrame";
 import { useTween } from "../../ui/motion";
+import { useWidth } from "../../lib/use-width";
 
 const FONT = 10.5; // axis text, px
 const TOP = 6;
 const VOL_GAP = 6; // between a candlestick's prices and its volume
 
 type XYKind = "bar" | "line" | "area" | "candlestick";
-
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
 
 /** A bar from its base to its end, the free end rounded (square at the base). */
 function barPath(x: number, w: number, base: number, end: number, r: number, round: boolean): string {

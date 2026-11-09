@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -81,6 +82,26 @@ func exitNodeUsage(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	fmt.Fprintln(os.Stderr, Named(NodeUsage))
 	os.Exit(2)
+}
+
+// nodeProcs is the most Ps (GOMAXPROCS) the node that serves a hub keeps unless the environment says otherwise. It
+// sleeps most of the time, between a few timers and reads; on a machine with many cores every P Go keeps is one more to
+// wake and search for work on each of those, and more threads and per-P caches held (on a 64-core host with 4 watched
+// sessions: 28 threads against 12, and about 4 MB more resident than with 4).
+const nodeProcs = 4
+
+// capProcs lowers GOMAXPROCS to nodeProcs for `node --stdio` and `node --attach`, unless the GOMAXPROCS environment
+// variable is set (that one wins, as it does for the runtime). A runtime.GOMAXPROCS call stops the runtime's own
+// updates of it (from a container's or cgroup's CPU limit changing later), so it is made only when it lowers it: a
+// machine or container with 4 CPUs or fewer keeps the runtime's value and its updates. The variable is not set, so the
+// agents and programs the node starts keep their own defaults.
+func capProcs() {
+	if os.Getenv("GOMAXPROCS") != "" {
+		return
+	}
+	if runtime.GOMAXPROCS(0) > nodeProcs {
+		runtime.GOMAXPROCS(nodeProcs)
+	}
 }
 
 // residentArgs reads what may follow --attach: --supervised, at most once. Anything else is refused rather than

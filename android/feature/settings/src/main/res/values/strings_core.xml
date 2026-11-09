@@ -97,6 +97,12 @@
     <string name="settings_notify_live_about">On by default. On Android 16 and later, status counts show on the lock screen and in the status bar chip; when off or unsupported, the regular ongoing notification stays.</string>
     <string name="settings_notify_lock_details">Show details on lock screen</string>
     <string name="settings_notify_lock_details_about">When off, the ongoing notification never shows agent names or request contents.</string>
+    <string name="settings_notify_quiet">Quiet hours</string>
+    <string name="settings_notify_quiet_off">Off: notifications come at any time</string>
+    <string name="settings_notify_quiet_start">From</string>
+    <string name="settings_notify_quiet_end">Until</string>
+    <string name="settings_notify_quiet_footer">During these hours you\'re not told when an agent finishes (the morning\'s Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot\'s nudges about unanswered cards also wait while any of your devices is in its quiet hours. In this phone\'s time zone.</string>
+    <string name="settings_notify_quiet_footer_zone">During these hours you\'re not told when an agent finishes (the morning\'s Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot\'s nudges about unanswered cards also wait while any of your devices is in its quiet hours. They\'re in %1$s, where they were set; changing them here puts them in this phone\'s time zone.</string>
     <string name="settings_reading">Reading</string>
     <string name="settings_retry_read">Try again</string>
     <string name="settings_saving">Saving…</string>

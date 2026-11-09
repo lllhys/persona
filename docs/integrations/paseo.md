@@ -20,7 +20,7 @@ The bridge is a runtime (`docs/integrations/runtimes.md`), speaking Paseo's WebS
 3. Wait a few seconds; the Paseo Agents appear in Agents.
 
 Nothing else needs to be installed. The bridge requires Node.js 22 or newer. Node uses Paseo's own copy: the node used by the CLI version, or the desktop App's binary,
-run with `ELECTRON_RUN_AS_NODE=1`.
+run with `ELECTRON_RUN_AS_NODE=1`. A plain `node` always runs the bridge without that variable, even when Node itself was started from an Electron host (such as an editor's extension host) and inherited it.
 
 ## Which sessions appear
 

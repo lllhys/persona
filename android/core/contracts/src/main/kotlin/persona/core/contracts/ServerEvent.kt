@@ -160,6 +160,8 @@ data class NotifyEvent(
     @SerialName("interaction_id") val interactionId: String? = null,
     /** alert: the caller's id; the same one again replaces the earlier alert (#5614). */
     val id: String? = null,
+    /** This device is inside its quiet hours (the prefs' `quiet`): shown, but without a sound. */
+    val quiet: Boolean = false,
 ) : ServerEvent
 
 /**

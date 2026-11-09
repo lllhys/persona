@@ -50,6 +50,14 @@ describe("the sidebar's Persona chats", () => {
     expect(recent.map((c) => c.session_id)).toEqual(["b", "c", "a"]);
   });
 
+  it("leaves the list as it is when the open one is already shown, is the main one or is gone, and lists all without a main one (#2283)", () => {
+    const ids = (main: string | undefined, current?: string) => sidebarConversations(list, main, [], 2, current).recent.map((c) => c.session_id);
+    expect(ids("main", "b")).toEqual(["b", "c"]);
+    expect(ids("main", "main")).toEqual(["b", "c"]);
+    expect(ids("main", "gone")).toEqual(["b", "c"]);
+    expect(ids(undefined)).toEqual(["main", "b"]);
+  });
+
   it("leaves the hub's automatic conversations out of 最近 unless pinned (#3264)", () => {
     const withOrigins = [
       { ...conv("inbox", "2026-11-06T09:00:00Z"), origin: "inbox" },

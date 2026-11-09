@@ -338,6 +338,9 @@ func TestNodeSwitchBackAndBundled(t *testing.T) {
 	g := newFakeEnv(t)
 	deviceFiles(t, g, true, false)
 	exe, _ := g.exe()
+	if p, err := filepath.EvalSymlinks(exe); err == nil { // where placeBundledNode looks: beside the resolved executable
+		exe = p
+	}
 	bundled := filepath.Join(filepath.Dir(exe), "persona-node")
 	_ = os.WriteFile(bundled, []byte("#!/bin/sh\n# bundled persona-node\n"), 0o755)
 	prev := g.onCommand

@@ -90,21 +90,30 @@ nonisolated struct AssistantTaskChats: Equatable, Sendable {
 @Observable final class AssistantTaskChatsStore {
     static let shared = AssistantTaskChatsStore()
 
-    private(set) var known = AssistantTaskChats.none
-    @ObservationIgnored private var loading = false
+    /// By page (group and the manager the Persona page shows): each manager has its own tasks.
+    private var byPage: [String: AssistantTaskChats] = [:]
+    /// The page a read is on its way for: one for a page left meanwhile doesn't land.
+    @ObservationIgnored private var loading: String?
 
-    func update(tasks: [APIClient.ScheduledTask], runs: [APIClient.ScheduleRun]) {
+    /// What is known of the page `api` reads.
+    func known(on api: APIClient?) -> AssistantTaskChats { api.flatMap { byPage[Self.page($0)] } ?? .none }
+
+    func update(tasks: [APIClient.ScheduledTask], runs: [APIClient.ScheduleRun], on api: APIClient) {
         let next = AssistantTaskChats(tasks: tasks, runs: runs)
-        if next != known { known = next }
+        if next != byPage[Self.page(api)] { byPage[Self.page(api)] = next }
     }
 
     /// Reads the tasks and runs again; what was known stays when the hub cannot say (offline, no tasks there).
     func refresh(_ api: APIClient?) async {
-        guard let api, !loading else { return }
-        loading = true
-        defer { loading = false }
+        guard let api else { return }
+        let page = Self.page(api)
+        guard loading != page else { return }
+        loading = page
+        defer { if loading == page { loading = nil } }
         async let r = try? api.scheduleRuns()
-        guard let tasks = try? await api.scheduledTasks(), let runs = await r else { return }
-        update(tasks: tasks, runs: runs)
+        guard let tasks = try? await api.scheduledTasks(), let runs = await r, loading == page else { return }
+        update(tasks: tasks, runs: runs, on: api)
     }
+
+    private static func page(_ api: APIClient) -> String { api.group + "\u{0}" + (api.shownManager ?? "") }
 }

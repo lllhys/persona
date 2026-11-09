@@ -108,6 +108,7 @@ func TestRuntimeExactLookupFullRow(t *testing.T) {
 	m.mu.Unlock()
 	h.deleted.mu.Lock()
 	h.deleted.loaded, h.deleted.m = true, map[string]time.Time{"demo/" + full.SessionID: time.Now().UTC()}
+	h.deleted.byMachine = notesByMachine(h.deleted.m)
 	h.deleted.mu.Unlock()
 	h.sessionsChanged(m)
 	if page := runtimePage(t, h, q); page.Total != 0 || len(page.Sessions) != 0 {

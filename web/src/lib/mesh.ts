@@ -15,11 +15,6 @@ export function hubLabel(machine: Machine | undefined, machines: Machine[]): str
   return machine.hub_name || machine.hub_id || "";
 }
 
-/** The hub name for a machine id (sessions carry only their machine id). */
-export function hubOf(machineId: string, machines: Machine[]): string {
-  return hubLabel(machines.find((m) => m.id === machineId), machines);
-}
-
 /** "Home · MacBook" when hubs are worth naming, else just the machine's name. */
 export function machineWithHub(machineId: string, machines: Machine[]): string {
   const m = machines.find((x) => x.id === machineId);

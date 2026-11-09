@@ -96,6 +96,12 @@
     <string name="settings_notify_live_about">既定でオンです。Android 16以降では、ロック画面とステータスバーのチップに状態の件数を表示します。オフのときやシステムが対応していないときは、通常の常駐通知を表示します。</string>
     <string name="settings_notify_lock_details">ロック画面に詳細を表示</string>
     <string name="settings_notify_lock_details_about">オフにすると、常駐通知にエージェント名やリクエストの内容を表示しません。</string>
+    <string name="settings_notify_quiet">おやすみ時間</string>
+    <string name="settings_notify_quiet_off">オフ：いつでも通知します</string>
+    <string name="settings_notify_quiet_start">開始</string>
+    <string name="settings_notify_quiet_end">終了</string>
+    <string name="settings_notify_quiet_footer">この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。いずれかのデバイスがおやすみ時間の間は、チャットボットからの未回答カードのお知らせも後回しにします。このスマートフォンのタイムゾーンで判断します。</string>
+    <string name="settings_notify_quiet_footer_zone">この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。いずれかのデバイスがおやすみ時間の間は、チャットボットからの未回答カードのお知らせも後回しにします。現在は設定した場所の%1$sで判断します。ここで変更すると、このスマートフォンのタイムゾーンで判断します。</string>
     <string name="settings_reading">読み込み中</string>
     <string name="settings_retry_read">再読み込み</string>
     <string name="settings_saving">保存中…</string>

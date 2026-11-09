@@ -4,7 +4,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BUSY_MOTION, BUSY_MOTION_REDUCED_SECONDS, SPIN_TURNS, spinStyle } from "./busy-motion";
+import { BUSY_MOTION, SPIN_TURNS, spinStyle } from "./busy-motion";
 
 const SRC = join(__dirname, "..");
 
@@ -45,7 +45,7 @@ describe("busy indicators under reduced motion", () => {
     expect(BUSY_MOTION).toBe("busy-motion");
     const rule = new RegExp(`\\.${BUSY_MOTION}[^{]*\\{([^}]*)\\}`).exec(block);
     expect(rule).not.toBeNull();
-    expect(rule![1]).toContain(`animation-duration: calc(${BUSY_MOTION_REDUCED_SECONDS}s * var(--busy-cycles, 1)) !important`);
+    expect(rule![1]).toContain("animation-duration: calc(2.4s * var(--busy-cycles, 1)) !important");
     expect(rule![1]).toContain("animation-iteration-count: infinite !important");
   });
 

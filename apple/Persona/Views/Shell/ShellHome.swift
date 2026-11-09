@@ -10,6 +10,7 @@ struct ShellHome: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     /// iPhone Duo's bars down the side: the top bar is the side rail, and the page's top is free.
     @Environment(\.shellRailEdge) private var railEdge
+    @Environment(\.managerSwitcherRoom) private var switcherRoom
     var pending: PendingStart?
     var error: String?
     @Binding var launcher: String?
@@ -54,7 +55,7 @@ struct ShellHome: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .dismissesKeyboardOnTap()
-        .contentMargins(.top, AssistantTopBar.room(railEdge), for: .scrollContent)
+        .contentMargins(.top, AssistantTopBar.room(railEdge) + switcherRoom, for: .scrollContent)
         // Room to scroll the last things to ask clear of the fade.
         .contentMargins(.bottom, pending == nil ? Self.fade : ChatView.newestGap, for: .scrollContent)
         .onPreferenceChange(WelcomeFold.self) { room.fold = $0 }
@@ -81,9 +82,10 @@ struct ShellHome: View {
                         .onDisappear { room.card = 0 }
                 }
                 if pending == nil, !mentionOpen {
-                    ShellNeedsYou(maxHeight: room.needs(withError: shownError != nil, top: AssistantTopBar.room(railEdge)), openInbox: openInbox).shellScaled()
+                    ShellNeedsYou(maxHeight: room.needs(withError: shownError != nil, top: AssistantTopBar.room(railEdge) + switcherRoom), openInbox: openInbox).shellScaled()
                 }
-                StarterComposer(disabled: pending != nil, shell: StarterComposer.ShellModes(launcher: $launcher, mode: $mode, effort: $effort),
+                if let m = model.assistantManagerOffline { ManagerOfflineNote(manager: m) }
+                StarterComposer(disabled: pending != nil || model.assistantManagerOffline != nil, shell: StarterComposer.ShellModes(launcher: $launcher, mode: $mode, effort: $effort),
                                 gate: model.readinessGate(route: $route), send: send)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room.composerAtRest($0, typeSize: typeSize) }
                     .onPreferenceChange(MentionMenuOpen.self) { open in withAnimation(Theme.Motion.standard) { mentionOpen = open } }

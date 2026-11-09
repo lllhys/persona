@@ -59,9 +59,7 @@ struct InboxHandOffBar: View {
     /// The Agents the menu offers, latest first: three in the menu, the rest under More…. Read unwatched
     /// (`sessionsNow`): the bar is always on screen and must not be drawn again by every push about any agent.
     private var agents: [Session] {
-        model.sessionsNow.filter { !$0.assistant }
-            .sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-            .prefix(Self.listed).map { $0 }
+        InboxHandOffModel.agents(model.sessionsNow, limit: Self.listed) { model.machine($0)?.online == true }
     }
     static let inMenu = 3
     static let listed = 12
@@ -190,7 +188,7 @@ struct InboxHandOffBar: View {
     /// The remembered target, if it is still there: an Agent no longer listed goes back to the main chat.
     private var remembered: InboxHandOffModel.Target {
         let t = InboxHandOffModel.Target(stored: stored)
-        if case .agent(let key) = t, model.session(key) == nil { return .main }
+        if case .agent(let key) = t, !agents.contains(where: { $0.key == key }) { return .main }
         return t
     }
 

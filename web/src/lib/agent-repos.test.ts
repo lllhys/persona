@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRepoMachineTree, buildRepoTree, repoOf, showsWorktreeLevel, type RepoTree } from "./agent-repos";
+import { buildRepoMachineTree, repoOf, showsWorktreeLevel, type RepoTree } from "./agent-repos";
 import type { AgentState, Machine, Session } from "./types";
 
 const machines: Machine[] = [
@@ -53,14 +53,20 @@ describe("从 cwd 推断仓库与工作树", () => {
 const ids = (sessions: Session[]) => sessions.map((s) => s.session_id);
 const names = (tree: RepoTree[]) => tree.map((r) => r.name);
 const worktrees = (r: RepoTree) => r.worktrees.map((w) => `${w.name}${w.main ? "*" : ""}`);
+/** The repositories in machine-a's section, the only one: the tree's agents are all on machine-a. */
+const onMachineA = (all: Session[]) => {
+  const built = buildRepoMachineTree(all, machines);
+  expect(built.map((m) => m.machine.id)).toEqual(["machine-a"]);
+  return built[0]!.repos;
+};
 
 describe("按仓库分组的树", () => {
   it("带 repo_root 的会话（Paseo 的 worktree）归到主仓库下，不再各成一个仓库", () => {
-    const tree = buildRepoTree([
+    const tree = onMachineA([
       session("main", "/code/app", { repo_root: "/code/app" }),
       session("w1", "/home/me/.paseo/worktrees/1a2b3c4d/brave-fox", { repo_root: "/code/app" }),
       session("w2", "/home/me/.paseo/worktrees/1a2b3c4d/calm-bear", { repo_root: "/code/app" }),
-    ], machines);
+    ]);
     expect(names(tree)).toEqual(["app"]);
     expect(tree[0]!.worktrees.map((w) => [w.name, w.main, ids(w.sessions)])).toEqual([
       ["app", true, ["main"]], ["brave-fox", false, ["w1"]], ["calm-bear", false, ["w2"]],
@@ -74,7 +80,7 @@ describe("按仓库分组的树", () => {
       session("wt-a", "/code/app/.worktrees/fix-a"),
       session("wt-a2", "/code/app/.worktrees/fix-a"),
     ];
-    const tree = buildRepoTree(all, machines);
+    const tree = onMachineA(all);
     expect(names(tree)).toEqual(["app"]);
     expect(worktrees(tree[0]!)).toEqual(["app*", "fix-a", "fix-b"]);
     expect(ids(tree[0]!.worktrees[1]!.sessions)).toEqual(["wt-a", "wt-a2"]);
@@ -82,18 +88,18 @@ describe("按仓库分组的树", () => {
   });
 
   it("一个 Agent 都没有的仓库不出现；仓库按名字排序", () => {
-    const tree = buildRepoTree([session("z", "/code/zeta"), session("a", "/code/alpha")], machines);
+    const tree = onMachineA([session("z", "/code/zeta"), session("a", "/code/alpha")]);
     expect(names(tree)).toEqual(["alpha", "zeta"]);
   });
 
   it("离线机器的 Agent 不进树", () => {
-    const tree = buildRepoTree([session("on", "/code/app"), session("off", "/code/app", { machine_id: "machine-off" })], machines);
+    const tree = onMachineA([session("on", "/code/app"), session("off", "/code/app", { machine_id: "machine-off" })]);
     expect(ids(tree[0]!.worktrees[0]!.sessions)).toEqual(["on"]);
   });
 
-  it("不同机器上的同名仓库各算一个，同名时按机器的顺序", () => {
-    const tree = buildRepoTree([session("a", "/code/app"), session("b", "/code/app", { machine_id: "machine-b" })], machines);
-    expect(tree.map((r) => `${r.machineId}/${r.name}`)).toEqual(["machine-b/app", "machine-a/app"]);
+  it("不同机器上的同名仓库各算一个，各在自己电脑的分段里，按机器的顺序", () => {
+    const tree = buildRepoMachineTree([session("a", "/code/app"), session("b", "/code/app", { machine_id: "machine-b" })], machines);
+    expect(tree.map((m) => [m.machine.id, m.repos.map((r) => `${r.machineId}/${r.name}`)])).toEqual([["machine-b", ["machine-b/app"]], ["machine-a", ["machine-a/app"]]]);
   });
 
   it("工作树里的 Agent 排序沿用 byAttention（需要你优先）", () => {
@@ -101,11 +107,11 @@ describe("按仓库分组的树", () => {
       session("idle", "/code/app/.worktrees/wt"),
       session("needs", "/code/app/.worktrees/wt", { state: "needs_you", status: "needs_you" }),
     ];
-    expect(ids(buildRepoTree(all, machines)[0]!.worktrees[0]!.sessions)).toEqual(["needs", "idle"]);
+    expect(ids(onMachineA(all)[0]!.worktrees[0]!.sessions)).toEqual(["needs", "idle"]);
   });
 
   it("助手会话不进树", () => {
-    expect(buildRepoTree([session("assistant", "/code/app", { assistant: true })], machines)).toEqual([]);
+    expect(buildRepoMachineTree([session("assistant", "/code/app", { assistant: true })], machines)).toEqual([]);
   });
 });
 
@@ -484,7 +490,7 @@ describe("Orca child worktrees in By repo", () => {
 
 describe("showsWorktreeLevel", () => {
   it("hides the level for a single main worktree", () => {
-    expect(showsWorktreeLevel(buildRepoTree([session("main", "/code/app")], machines)[0]!)).toBe(false);
+    expect(showsWorktreeLevel(onMachineA([session("main", "/code/app")])[0]!)).toBe(false);
   });
 
   it("hides the level for a single Orca worktree named like its project", () => {
@@ -510,7 +516,7 @@ describe("showsWorktreeLevel", () => {
   });
 
   it("shows the level for a single non-main worktree with another name", () => {
-    expect(showsWorktreeLevel(buildRepoTree([session("wt", "/code/app/.worktrees/feature-a")], machines)[0]!)).toBe(true);
+    expect(showsWorktreeLevel(onMachineA([session("wt", "/code/app/.worktrees/feature-a")])[0]!)).toBe(true);
   });
 });
 
@@ -521,12 +527,12 @@ describe("the node's git place (#1805): machine → project → branch → sessi
 
   it("puts linked worktrees under their main repository, labelled by branch, main first", () => {
     const fix = "/home/u/orca/workspaces/app/fix-login";
-    const tree = buildRepoTree([
+    const tree = onMachineA([
       mac("fix", fix, "fix/login"),
       mac("main", "/home/u/Code/app", "main"),
       mac("sub", fix, "fix/login", { cwd: `${fix}/web` }),
       session("other", "/home/u/Code/notes", { repo_root: "/home/u/Code/notes", worktree: "/home/u/Code/notes", branch: "trunk" }),
-    ], machines);
+    ]);
     expect(names(tree)).toEqual(["app", "notes"]);
     expect(worktrees(tree[0]!)).toEqual(["main*", "fix/login"]);
     expect(ids(tree[0]!.worktrees[1]!.sessions).sort()).toEqual(["fix", "sub"]);
@@ -534,16 +540,16 @@ describe("the node's git place (#1805): machine → project → branch → sessi
 
   it("joins Orca-hosted and other agents of one repository into one project", () => {
     const fix = "/home/u/orca/workspaces/app/fix-login";
-    const tree = buildRepoTree([
+    const tree = onMachineA([
       mac("orca", fix, "fix/login", { space_kind: "orca", space_id: spaceId("repo-a", fix) }),
       mac("cli", "/home/u/Code/app", "main"),
-    ], machines);
+    ]);
     expect(names(tree)).toEqual(["app"]);
     expect(worktrees(tree[0]!)).toEqual(["main*", "fix/login"]);
   });
 
   it("keeps the branch level under a project with only its main checkout", () => {
-    const tree = buildRepoTree([mac("main", "/home/u/Code/app", "main")], machines);
+    const tree = onMachineA([mac("main", "/home/u/Code/app", "main")]);
     expect(showsWorktreeLevel(tree[0]!)).toBe(true);
     expect(worktrees(tree[0]!)).toEqual(["main*"]);
   });

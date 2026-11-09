@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { matchFiles } from "../../lib/file-find";
+import { createFileSearch } from "../../lib/file-find";
 import { FilesHeading, FilesNotice, FileResultRow, type FileRow } from "./FilesSection";
 
 // the modules read the colour scheme and this browser's settings when they load
@@ -11,7 +11,7 @@ vi.hoisted(() => {
   g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) };
 });
 
-const row = (path: string, query: string): FileRow => ({ kind: "file", key: `f:${path}`, hit: matchFiles([path], query)[0], ctx: { mid: "m1", cwd: "/work/app" } });
+const row = (path: string, query: string): FileRow => ({ kind: "file", key: `f:${path}`, hit: createFileSearch([path]).search(query)[0], ctx: { mid: "m1", cwd: "/work/app" } });
 const draw = (r: FileRow) => renderToStaticMarkup(<FileResultRow row={r} className="row" onMouseMove={() => {}} onClick={() => {}} />);
 
 describe("a file in the palette", () => {

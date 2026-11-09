@@ -118,6 +118,25 @@ func (s *Service) assistantSessions(m fleetMachine) []proto.Session {
 	return list
 }
 
+// placeCard places a card of one of this manager's headless conversations in the conversation's directory, where
+// it started (its row), rather than where the hook ran: Claude Code gives a hook the shell's directory after the
+// model's `cd`, and a health conversation's card from health/reports or /tmp went to the lock screen and the channels
+// in full (#2368). Every node lists a running headless conversation in its start directory, so this holds for older
+// nodes too. A hook directory inside a health space stays (identity.CardCwd): a mix-up can only hide more. A card
+// with no listed row, or an agent's, keeps its own.
+func (s *Service) placeCard(ix *proto.Interaction) {
+	if ix.SessionID == "" {
+		return
+	}
+	row, ok := s.nodeSession(ix.MachineID, ix.SessionID)
+	if !ok || row.PaneID != "" || row.Cwd == "" {
+		return
+	}
+	if m, ok := s.fleetMachine(ix.MachineID); ok && m.isAssistant(row) {
+		ix.Cwd = identity.CardCwd(row.Cwd, ix.Cwd)
+	}
+}
+
 // isAssistantSession identifies manager's headless conversations in its directory dir, or its health space's. A host
 // pane is stronger evidence than a shared working directory. Another manager's directory, left on a machine moved
 // away from it, is not this one's (docs/assistant/managers.md "Directories on a computer").

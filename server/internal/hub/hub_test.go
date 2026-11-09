@@ -348,13 +348,13 @@ func TestPhoneToolsPersist(t *testing.T) {
 	h.store = database
 	tools := []proto.Tool{{Name: "phone_device_info", Description: "info", InputSchema: json.RawMessage(`{"type":"object"}`)}}
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "legacy", Tools: tools})
-	if got := h.phoneToolList(); len(got) != 1 || got[0].Name != "phone_device_info" {
+	if got := h.phoneToolList(); len(got) != 3 || got[0].Name != "phone_device_info" {
 		t.Fatalf("tools = %+v", got)
 	}
 	reloaded := newTestHub(t)
 	reloaded.store = database
 	reloaded.loadPhoneTools()
-	if got := reloaded.phoneToolList(); len(got) != 1 || got[0].Name != "phone_device_info" {
+	if got := reloaded.phoneToolList(); len(got) != 3 || got[0].Name != "phone_device_info" {
 		t.Fatalf("reloaded tools = %+v", got)
 	}
 }

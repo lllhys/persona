@@ -7,7 +7,6 @@ import {
   agentRunState,
   backgroundCount,
   backgroundLine,
-  backgroundRunning,
   otherBackground,
   phaseCount,
   phaseRows,
@@ -64,7 +63,6 @@ describe("workflows (#2935)", () => {
     const s = session({ workflows: [run], background: [{ id: "wdp5zxh37", kind: "workflow" }, { id: "b1", kind: "shell" }] });
     expect(otherBackground(s).map((b) => b.id)).toEqual(["b1"]);
     expect(backgroundCount(s)).toBe(2);
-    expect(backgroundRunning(s)).toBe(true);
   });
 
   it("falls back to 后台运行中 on a hub without workflows", () => {

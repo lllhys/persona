@@ -33,7 +33,7 @@ class NotificationExecutionTest {
             persona.core.contracts.api.DeviceNotificationPreferences(input = false)
         var visible = false
         val posted = mutableListOf<NotifyEvent>()
-        val delivery = NotificationDelivery(center, sessions, { visible }, { fail("Not an interaction") },
+        val delivery = NotificationDelivery(center, sessions, { visible }, { _, _ -> fail("Not an interaction") },
             { posted += it }, {}, { settings })
         val alert = NotifyEvent("alert", "machine", "session", title = "提醒", body = "请查看任务")
         delivery.accept(alert)
@@ -204,7 +204,7 @@ class NotificationExecutionTest {
         val notifications = mutableListOf<NotifyEvent>()
         val retracted = mutableListOf<String>()
         val delivery = NotificationDelivery(center, sessions, { visible },
-            { posted += it }, { notifications += it }, { retracted += it })
+            { ix, _ -> posted += ix }, { notifications += it }, { retracted += it })
         val notice = NotifyEvent("interaction", "machine", "session", interactionId = request.id)
         delivery.accept(InteractionEvent(request))
         assertTrue(posted.isEmpty())
@@ -241,7 +241,7 @@ class NotificationExecutionTest {
             override suspend fun refresh() = Unit
         }
         val posted = mutableListOf<Interaction>()
-        val delivery = NotificationDelivery(center, sessions, { true }, { posted += it }, { fail("Not an alert") }, {})
+        val delivery = NotificationDelivery(center, sessions, { true }, { ix, _ -> posted += ix }, { fail("Not an alert") }, {})
         delivery.accept(NotifyEvent("interaction", "machine", "", interactionId = script.id))
         assertEquals(listOf(script), posted)
         // The same id under another machine is not this card.
@@ -259,7 +259,7 @@ class NotificationExecutionTest {
         var settings: persona.core.contracts.api.DeviceNotificationPreferences? =
             persona.core.contracts.api.DeviceNotificationPreferences(input = false, done = persona.core.contracts.api.DoneNotification.Off)
         var posted = 0
-        val delivery = NotificationDelivery(center, sessions, { false }, { posted++ }, { posted++ }, {}, { settings })
+        val delivery = NotificationDelivery(center, sessions, { false }, { _, _ -> posted++ }, { posted++ }, {}, { settings })
         val notice = NotifyEvent("interaction", "machine", "session", interactionId = request.id)
         delivery.accept(InteractionEvent(request))
         delivery.accept(notice)
@@ -283,7 +283,7 @@ class NotificationExecutionTest {
             override suspend fun refresh() = Unit
         }
         var posted = 0
-        val delivery = NotificationDelivery(center, sessions, { false }, { posted++ }, { posted++ }, {})
+        val delivery = NotificationDelivery(center, sessions, { false }, { _, _ -> posted++ }, { posted++ }, {})
         val notice = NotifyEvent("interaction", "machine", "session", interactionId = request.id)
         delivery.accept(notice)
         delivery.accept(notice.copy(kind = "done"))
@@ -291,6 +291,22 @@ class NotificationExecutionTest {
         sessions.sessions.value = listOf(Session(machineId = "machine", sessionId = "session"))
         delivery.accept(notice.copy(kind = "done"))
         assertEquals(1, posted)
+    }
+
+    // Quiet hours (#1863): a card the hub marks `quiet` (inside this device's window) is still shown, without a sound.
+    @Test fun aCardInsideQuietHoursIsPostedHushed() = runBlocking {
+        val center = Center(request)
+        val sessions = object : SessionsRepository {
+            override val machines = MutableStateFlow<List<Machine>>(emptyList())
+            override val sessions = MutableStateFlow(listOf(Session(machineId = "machine", sessionId = "session")))
+            override suspend fun refresh() = Unit
+        }
+        val hushed = mutableListOf<Boolean>()
+        val delivery = NotificationDelivery(center, sessions, { false }, { _, quiet -> hushed += quiet }, { fail("Not a card") }, {})
+        val notice = NotifyEvent("interaction", "machine", "session", interactionId = request.id)
+        delivery.accept(notice)
+        delivery.accept(notice.copy(quiet = true))
+        assertEquals(listOf(false, true), hushed)
     }
 
     private class Center(request: Interaction) : InteractionCenter {

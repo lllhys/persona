@@ -61,6 +61,7 @@ func (h *Hub) routes() http.Handler {
 	})
 	api.HandleFunc("GET /api/v1/ops/{id}", h.getClientOp)
 	h.fleetRoutesRelayed(api) // resolve, history, seen: the manager's (fleet_link.go)
+	h.phoneWriteRoutes(api)
 	h.deviceRoutes(api)
 	h.pushRoutes(api)
 	h.live.routes(api)
@@ -906,6 +907,7 @@ func startBudget(async bool) time.Duration {
 type client struct {
 	canonicalContracts atomic.Bool
 	cancel             context.CancelFunc
+	done               <-chan struct{} // the phone connection ended; pending writes become uncertain
 	stopping           atomic.Bool
 	dropped            atomic.Bool // closed for falling behind (dropSlow): the close runs once, not once per send that finds it full
 
@@ -1114,6 +1116,11 @@ func (h *Hub) phoneClient(tool ...string) *client {
 	// Only connected providers of the requested tool are eligible; prefer real devices, then recent activity.
 	var best *client
 	for c := range h.clients {
+		select {
+		case <-c.done:
+			continue
+		default:
+		}
 		if !c.phone || (len(tool) > 0 && !c.phoneToolNames[tool[0]]) {
 			continue
 		}
@@ -1143,7 +1150,7 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(64 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	who := principalOf(r.Context())
-	c := &client{cancel: cancel, hub: h, conn: conn, out: make(chan []byte, 512), subs: map[[2]string]bool{}, since: time.Now(),
+	c := &client{cancel: cancel, done: ctx.Done(), hub: h, conn: conn, out: make(chan []byte, 512), subs: map[[2]string]bool{}, since: time.Now(),
 		device: who.ID, role: who.Role, delta: wantsFeature(r, featureSessionsDelta), listMode: wantsFeature(r, featureSessionsList), have: map[string]map[string][]byte{},
 		urlFeatures: urlFeatures(r), acceptLang: i18n.FromRequest(r), meta: clientMeta{updates: make(chan heartbeatConfig, 512), done: ctx.Done()}}
 	c.traffic = h.requestTrafficAttribution(r, who)

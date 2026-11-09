@@ -2,7 +2,7 @@
 // and launcher filters, the range's sums, throughput per minute (every token, or the four kinds stacked; a legend entry
 // hides its kind: cache reads are often nine tenths of it), the cache hit rate, and each model's and launcher's share.
 // Hovering either chart (or ← → on it) shows that moment in both; the legend then says that moment's values.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, enc, errorText, isAbort } from "../../lib/api";
 import { hm, scale, timeAt, yAxis } from "../../lib/machine-detail";
 import {
@@ -26,6 +26,7 @@ import {
 } from "../../lib/tokens";
 import { Button, cx, Loading } from "../../ui/atoms";
 import { t } from "../../i18n";
+import { useWidth } from "../../lib/use-width";
 
 const H = 150;
 const HIT_H = 84;
@@ -35,20 +36,6 @@ const TOP = 6;
 
 const kindName = (k: UsageKind) => t(`machines-usage.kind_${k}`);
 const launcherName = (name: string) => (name === "" ? t("machines-usage.other_launcher") : name);
-
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
 
 /** Round times for the x axis: hours, or days for the week. */
 function ticksFor(t0: number, t1: number, range: UsageRange, tz: number, count: number): number[] {

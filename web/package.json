@@ -12,7 +12,7 @@
     "prebuild": "npm run check:privacy",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "lint": "eslint src/lib/session-list.ts src/lib/runtime-list.ts src/lib/store.ts src/lib/sessions.ts src/lib/agents.ts src/lib/agent-groups.ts src/lib/workflows.ts src/lib/types.ts src/lib/runtime-session.ts src/ui/SessionDetailNotice.tsx src/views/chat/ChatView.tsx src/App.tsx src/ui/list-metrics.ts src/views/Sidebar.tsx src/views/agents/PagedSessionList.tsx src/views/agents/AgentsView.tsx",
+    "lint": "eslint src/lib/session-list.ts src/lib/runtime-list.ts src/lib/store.ts src/lib/sessions.ts src/lib/agents.ts src/lib/agent-groups.ts src/lib/workflows.ts src/lib/types.ts src/lib/runtime-session.ts src/ui/SessionDetailNotice.tsx src/views/chat/ChatView.tsx src/App.tsx src/ui/list-metrics.ts src/views/Sidebar.tsx src/views/SidebarParts.tsx src/views/SidebarRows.tsx src/views/SidebarTree.tsx src/views/SidebarRail.tsx src/views/agents/PagedSessionList.tsx src/views/agents/AgentsView.tsx",
     "test": "node --test e2e/extension-mirrors-cleanup.node-test.mjs && vitest run"
   },
   "dependencies": {

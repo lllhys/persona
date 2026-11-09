@@ -205,9 +205,9 @@ struct NotificationSettingsView: View {
             }
         } footer: {
             if let zone = quiet.elsewhere() {
-                Text("During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. They're in \(zone), where they were set; changing them here puts them in this device's time zone.")
+                Text("During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot's nudges about unanswered cards also wait while any of your devices is in its quiet hours. They're in \(zone), where they were set; changing them here puts them in this device's time zone.")
             } else {
-                Text("During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. In this device's time zone.")
+                Text("During these hours you're not told when an agent finishes (the morning's Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot's nudges about unanswered cards also wait while any of your devices is in its quiet hours. In this device's time zone.")
             }
         }
     }

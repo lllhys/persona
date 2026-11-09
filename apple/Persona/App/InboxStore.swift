@@ -250,6 +250,19 @@ final class InboxStore {
         }
     }
 
+    /// Files an outbox-restored hand-off whose item may not be listed yet. The optimistic path is used when it is;
+    /// otherwise the same single-item request goes directly to its manager.
+    func setDone(id: String, manager: String?, done: Bool) {
+        if let item = items.first(where: { $0.key == InboxItem.key(id: id, manager: manager) }) {
+            setDone(item, done, haptic: false)
+            return
+        }
+        Task {
+            do { try await AppModel.shared.api?.manager(manager).setInboxDone(id, done) }
+            catch { AppModel.shared.show(error) }
+        }
+    }
+
     /// Mute This Repository / Session / Sender (the row's menu): the item and the others of its source it covers are done at once;
     /// the hub keeps the mute, so later ones do not come in. A failure puts them back.
     func mute(_ item: InboxItem, _ option: InboxItem.MuteOption) {

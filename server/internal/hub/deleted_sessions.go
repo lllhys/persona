@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,7 +25,24 @@ const deletedSessionsKey = "sessions.deleted"
 type deletedBook struct {
 	mu     sync.Mutex
 	loaded bool
-	m      map[string]time.Time // "machine/session id" → when it was deleted
+	m      map[string]time.Time // "machine/session id" → when it was deleted, as saved
+	// m split at the first "/": machine → session id → when. Every push looks up its machine here instead of going
+	// through all the notes, which never expire. The maps are replaced, never changed, so readers keep theirs.
+	byMachine map[string]map[string]time.Time
+}
+
+// notesByMachine is deletedBook.byMachine for the notes m.
+func notesByMachine(m map[string]time.Time) map[string]map[string]time.Time {
+	out := map[string]map[string]time.Time{}
+	for k, t := range m {
+		if machine, sid, ok := strings.Cut(k, "/"); ok {
+			if out[machine] == nil {
+				out[machine] = map[string]time.Time{}
+			}
+			out[machine][sid] = t
+		}
+	}
+	return out
 }
 
 // deletedLocked reads the notes once; b.mu is held. A failed read leaves them unloaded (nothing is saved over them).
@@ -43,11 +61,12 @@ func (h *Hub) deletedLocked(ctx context.Context) bool {
 	if m == nil {
 		m = map[string]time.Time{}
 	}
-	b.m, b.loaded = m, true
+	b.m, b.byMachine, b.loaded = m, notesByMachine(m), true
 	return true
 }
 
-// deletedAt is when each deleted session of machine was deleted, by session id.
+// deletedAt is when each deleted session of machine was deleted, by session id (nil: none). Read only: it is the
+// book's own map, which nobody changes.
 func (h *Hub) deletedAt(machine string) map[string]time.Time {
 	b := &h.deleted
 	b.mu.Lock()
@@ -55,6 +74,10 @@ func (h *Hub) deletedAt(machine string) map[string]time.Time {
 	if !h.deletedLocked(context.Background()) {
 		return nil
 	}
+	if !strings.Contains(machine, "/") {
+		return b.byMachine[machine]
+	}
+	// hub.json does not forbid a "/" in a machine id; byMachine splits such notes at its first "/", so go through them.
 	var out map[string]time.Time
 	prefix := machine + "/"
 	for k, t := range b.m {
@@ -157,10 +180,18 @@ func (h *Hub) noteDeleted(ctx context.Context, machine, id string, at time.Time)
 	for k, t := range b.m {
 		next[k] = t
 	}
-	next[machine+"/"+id] = at
+	key := machine + "/" + id
+	next[key] = at
+	byMachine := make(map[string]map[string]time.Time, len(b.byMachine)+1)
+	maps.Copy(byMachine, b.byMachine)
+	mk, sid, _ := strings.Cut(key, "/") // as notesByMachine splits it
+	mine := make(map[string]time.Time, len(byMachine[mk])+1)
+	maps.Copy(mine, byMachine[mk])
+	mine[sid] = at
+	byMachine[mk] = mine
 	if err := h.store.PutSetting(ctx, deletedSessionsKey, next); err != nil {
 		return err
 	}
-	b.m = next
+	b.m, b.byMachine = next, byMachine
 	return nil
 }

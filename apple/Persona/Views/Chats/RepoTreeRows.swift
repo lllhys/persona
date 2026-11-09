@@ -38,7 +38,7 @@ struct WorkspaceSidebarStatus: View {
     var body: some View {
         Group {
             if workspace.sidebarUnread {
-                ThemedIcon(Theme.Icon.workspaceUnread).font(Theme.WorkspaceSidebar.meta)
+                ThemedIcon(Theme.Icon.notification).font(Theme.WorkspaceSidebar.meta)
                     .foregroundStyle(Theme.WorkspaceSidebar.unread)
             } else {
                 StatusDot(state: workspace.sidebarState, size: Theme.Size.dot)

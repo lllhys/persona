@@ -103,7 +103,7 @@ func withLiveHub(t *testing.T, n *Node) *liveEvents {
 }
 
 // replyNode is a node with the session's transcript (its prompt so far) read once, as a watch's first read does; watched
-// says whether the hub watches it. The transcript then goes on only when the test calls n.refresh, as watchLoop would.
+// says whether the hub watches it. The transcript then goes on only when the test calls n.refresh, as the watch pump would.
 func replyNode(t *testing.T, watched bool) (*Node, *transcript.File, string, *liveEvents) {
 	t.Helper()
 	n := codexTestNode(t)

@@ -10,6 +10,8 @@ const STORAGE_ALIASES: Record<string, string> = Object.assign(Object.create(null
   "draft:persona-new": "draft:jarvis-new",
 });
 
+/** The browser's token and the id of its device token at the hub. "persona.tokenId" is where this browser keeps that id,
+ *  to revoke it on signing out and to have it replaced when it signs in again. */
 export function storedCredentials(store: Storage = localStorage): { token: string; tokenId: string } {
   const token = store.getItem("persona.token");
   const id = store.getItem("persona.tokenId");

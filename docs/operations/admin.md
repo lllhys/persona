@@ -166,8 +166,8 @@ not signed in or session expired is 401 `login_required`, a wrong CSRF token is 
 | `POST peers/{hub_id}/center` `{"confirm"}` | Make primary (hub_id may be this hub); 409 `confirm_required` (the old primary is unreachable, needs confirmation) / `unreachable`, 404 `not_in_group` |
 | `…/peers`, `…/routes` | Linked hubs: paired hubs (each with `role`), discovered hubs, link codes, disconnect, routes ([mesh.md](../server/mesh.md) ("Admin API and command line")) |
 | `devices*` on a member | 409 `member_hub`: devices are managed by the primary |
-| `GET extensions` | `{"extensions": [ExtensionDetail], "can_install", "upload_most"}`: each item is the app API's detail ([extensions.md](../extensions/extensions.md) ("hub API")); `upload_most` is the upload limit (bytes) |
-| `GET extensions/{id}` | One extension's detail; 404 `not_found` |
+| `GET extensions` | `{"extensions": [ExtensionDetail], "can_install", "upload_most"}`: each item is the app API's detail ([extensions.md](../extensions/extensions.md) ("hub API")), each with `data_dir`; `upload_most` is the upload limit (bytes) |
+| `GET extensions/{id}` | One extension's detail (with `data_dir`, its data directory on the manager's machine); 404 `not_found` |
 | `POST extensions/preview` `{"source", "upgrade"?}` | Preview (source syntax same as `personad extension install`), returns the preview (with `permissions_digest`, and `more_permissions` / `added_permissions` on upgrade); 400 `invalid_plugin` (`error` is a human-readable reason), 409 `busy`, 429 `rate_limited` |
 | `POST extensions/upload?name=<file name>&upgrade=<id>` | The request body is the `.tar.gz` / `.tgz` / `.zip` itself (`Content-Type: application/octet-stream`, the only non-JSON write, still needs the CSRF header), at most 200 MB, returns the preview; 413 `too_large`, others as above |
 | `POST extensions/install` `{"preview_id", "permissions_digest"}` | Install the previewed package, returns the detail; without a digest 400 `confirm_required`; digest mismatch or expired preview 400 `install_failed` |

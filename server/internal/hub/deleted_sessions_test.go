@@ -1,7 +1,10 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -222,5 +225,109 @@ func TestShownCopiesOnlyToLeaveOut(t *testing.T) {
 	}
 	if got := h.shown("box", list); len(got) != 2 || got[1].SessionID != "c" || &got[0] == &list[0] || list[1].SessionID != "b" {
 		t.Fatalf("archived row: shown %v, list %v", got, list)
+	}
+}
+
+// tombstoneHub is a hub whose saved notes hold per deleted sessions on each of the machines m0, m1, ...
+func tombstoneHub(t testing.TB, machines, per int) *Hub {
+	t.Helper()
+	h := &Hub{store: &settingsStore{vals: map[string][]byte{}}}
+	notes := map[string]time.Time{}
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	for m := range machines {
+		for i := range per {
+			notes[fmt.Sprintf("m%d/gone-%04d", m, i)] = at
+		}
+	}
+	if err := h.store.PutSetting(context.Background(), deletedSessionsKey, notes); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// Tombstones never expire, so a push must not go through every machine's notes to find its own.
+func TestDeletedAtLooksUpOneMachine(t *testing.T) {
+	h := tombstoneHub(t, 3, 1000)
+	if got := h.deletedAt("m0"); len(got) != 1000 {
+		t.Fatalf("m0 has %d notes, want 1000", len(got))
+	}
+	if n := testing.AllocsPerRun(100, func() { h.deletedAt("m0") }); n != 0 {
+		t.Fatalf("deletedAt allocates %v times a call", n)
+	}
+}
+
+// The notes by machine are the saved "machine/session id" notes split at the machine: loaded, after a new note
+// and reloaded. A map already handed out does not change under its reader.
+func TestDeletedAtMatchesTheSavedNotes(t *testing.T) {
+	ctx := context.Background()
+	h := newTestHub(t)
+	h.store = &settingsStore{vals: map[string][]byte{}}
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	// old-entry is a hub.json entry absorbed into m1: its notes stay its own.
+	notes := map[string]time.Time{"m1/a": at, "m1/b/c": at, "m10/a": at.Add(time.Minute), "m0/z": at, "old-entry/a": at, "stray": at, "/x": at}
+	if err := h.store.PutSetting(ctx, deletedSessionsKey, notes); err != nil {
+		t.Fatal(err)
+	}
+	// What deletedAt found before: every note whose key starts with "machine/".
+	scan := func(machine string) map[string]time.Time {
+		out := map[string]time.Time{}
+		for k, at := range notes {
+			if sid, ok := strings.CutPrefix(k, machine+"/"); ok {
+				out[sid] = at
+			}
+		}
+		return out
+	}
+	same := func(h *Hub, when string) {
+		t.Helper()
+		for _, machine := range []string{"m0", "m1", "m10", "m2", "old-entry", "elsewhere", "", "m1/b"} {
+			if got, want := h.deletedAt(machine), scan(machine); !maps.EqualFunc(got, want, time.Time.Equal) {
+				t.Fatalf("%s: deletedAt(%q) = %v, want %v", when, machine, got, want)
+			}
+		}
+	}
+	same(h, "loaded")
+	list := []proto.Session{
+		{SessionID: "a", Status: proto.StatusOffline, UpdatedAt: at.Add(-time.Hour)},
+		{SessionID: "d", Status: proto.StatusOffline, UpdatedAt: at.Add(-time.Hour)},
+	}
+	if got := ids(h.shown("m1", list)); got != "d" {
+		t.Fatalf("m1 shows %q, want d", got)
+	}
+	if got := ids(h.shown("elsewhere", list)); got != "a d" {
+		t.Fatalf("a machine without notes shows %q, want all", got)
+	}
+
+	before := h.deletedAt("m1")
+	for _, n := range []struct{ machine, id string }{{"m1", "d"}, {"m2", "e"}} {
+		if err := h.noteDeleted(ctx, n.machine, n.id, at); err != nil {
+			t.Fatal(err)
+		}
+		notes[n.machine+"/"+n.id] = at
+	}
+	if len(before) != 2 {
+		t.Fatalf("a map handed out changed: %v", before)
+	}
+	same(h, "noted")
+	if got := ids(h.shown("m1", list)); got != "" {
+		t.Fatalf("m1 shows %q after the new note, want none", got)
+	}
+	h2 := newTestHub(t)
+	h2.store = h.store
+	same(h2, "reloaded")
+}
+
+// BenchmarkShownWithTombstones is a push of a machine's 150 sessions, none of them deleted, on a hub holding 3,000
+// deletion notes over 3 machines.
+func BenchmarkShownWithTombstones(b *testing.B) {
+	h := tombstoneHub(b, 3, 1000)
+	list := make([]proto.Session, 150)
+	for i := range list {
+		list[i] = proto.Session{SessionID: fmt.Sprintf("live-%04d", i), Status: proto.StatusOffline}
+	}
+	h.shown("m0", list) // loads the notes
+	b.ReportAllocs()
+	for b.Loop() {
+		h.shown("m0", list)
 	}
 }

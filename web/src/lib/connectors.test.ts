@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canSendStep, chatHeadline, connectorBrand, connectorOpenTitle, connectorState, connectorSummary, connectorTone, deletedLine, feedsFooter, fieldInput, githubInboxFooter, githubMachineLine,
-  githubOptions, githubScopeAdvice, deleteIMessageData, imessageAIFooter, setIMessageAI, isDeviceCode, isPolledStep, isStarting, labelColor, listConnectors, logoutMessage, mediaLine, mergeNewest, mergeOlder, mutableRepo,
+  githubOptions, githubScopeAdvice, deleteIMessageData, imessageAIFooter, setIMessageAI, isPolledStep, isStarting, labelColor, listConnectors, logoutMessage, mediaLine, mergeNewest, mergeOlder, mutableRepo,
   otherConnectors, reachMessage, setGitHubAuth, signInFooter, signsInHere, startsGroup, stepView, storesData, switchFooter, switchLabel, undescribed,
   type HubConnector, type ThreadMessage, type ThreadPage,
 } from "./connectors";
@@ -141,9 +141,7 @@ describe("分步登录", () => {
     expect(isPolledStep(null)).toBe(false);
   });
 
-  it("knows a device code and each field's input", () => {
-    expect(isDeviceCode({ kind: "device_code", user_code: "ABCD-1234" })).toBe(true);
-    expect(isDeviceCode({ kind: "device_code" })).toBe(false);
+  it("knows each field's input", () => {
     expect(fieldInput({ name: "password", label: "", secret: true }).type).toBe("password");
     expect(fieldInput({ name: "phone", label: "" }).inputMode).toBe("tel");
     expect(fieldInput({ name: "code", label: "" }).inputMode).toBe("numeric");

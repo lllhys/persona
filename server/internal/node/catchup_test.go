@@ -73,7 +73,7 @@ func withHub(t *testing.T, n *Node) *hubEnd {
 	return end
 }
 
-func testNode(t *testing.T) (*Node, string) {
+func testNode(t testing.TB) (*Node, string) {
 	t.Helper()
 	home := t.TempDir()
 	n := &Node{home: home, paths: map[string]string{}, files: map[string]*transcript.File{}, procs: map[string]*assistantProc{},

@@ -52,13 +52,13 @@ class SettingsCoreShotsTest {
     private fun out(): File = File(System.getProperty("persona.shots") ?: "build/i18n-shots").also { it.mkdirs() }
 
     @Config(sdk = [35], qualifiers = "zh-w400dp-h2600dp-xhdpi")
-    @Test fun simplifiedChinese() = shots("zh", settings = "设置", diagnostics = "连接诊断")
+    @Test fun simplifiedChinese() = shots("zh", settings = "设置", diagnostics = "连接诊断", quiet = "免打扰时段")
 
     @Config(sdk = [35], qualifiers = "en-w400dp-h2600dp-xhdpi")
-    @Test fun english() = shots("en", settings = "Settings", diagnostics = "Connection diagnostics")
+    @Test fun english() = shots("en", settings = "Settings", diagnostics = "Connection diagnostics", quiet = "Quiet hours")
 
     @Config(sdk = [35], qualifiers = "ja-w400dp-h2600dp-xhdpi")
-    @Test fun japanese() = shots("ja", settings = "設定", diagnostics = "接続の診断")
+    @Test fun japanese() = shots("ja", settings = "設定", diagnostics = "接続の診断", quiet = "おやすみ時間")
 
     private class Live(sample: ConnectionDiagnostics) : HubConnection, ConnectionDiagnosticsSource {
         override val state = MutableStateFlow(ConnectionState.Online)
@@ -79,7 +79,8 @@ class SettingsCoreShotsTest {
             revoked = listOf(PairedDevice("old", "iPhone", "iphone", "full", platform = "ios", revokedAt = "2026-10-20T10:00:00Z")),
         )
         override suspend fun revoke(credentialId: String) = Unit
-        override suspend fun preferences() = DeviceNotificationPreferences(longTurnSeconds = 120, doneDelaySeconds = 1)
+        override suspend fun preferences() = DeviceNotificationPreferences(longTurnSeconds = 120, doneDelaySeconds = 1,
+            quiet = QuietHours(enabled = true, tz = "Pacific/Auckland"))
         override suspend fun savePreferences(preferences: DeviceNotificationPreferences) = preferences
     }
 
@@ -101,7 +102,7 @@ class SettingsCoreShotsTest {
         override suspend fun put(value: TriageSwitches) = value
     }
 
-    private fun shots(language: String, settings: String, diagnostics: String) {
+    private fun shots(language: String, settings: String, diagnostics: String, quiet: String) {
         val resources = rule.activity.resources
         val demo = demoSettingsServices(resources)
         val sample = kotlinx.coroutines.runBlocking { demo.diagnostics!!.read() }.copy(
@@ -155,6 +156,7 @@ class SettingsCoreShotsTest {
                 rule.waitForIdle()
                 if (p.first.startsWith("list")) rule.onNodeWithText(settings).assertExists()
                 if (p.first == "diagnostics") rule.onNodeWithText(diagnostics).assertExists()
+                if (p.first == "notify") rule.onNodeWithText(quiet).assertExists()
                 val texts = rule.onAllNodes(isRoot()).fetchSemanticsNodes().flatMap { root ->
                     fun walk(node: androidx.compose.ui.semantics.SemanticsNode): List<String> =
                         node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.flatMap(::walk)

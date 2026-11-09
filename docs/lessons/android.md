@@ -4,6 +4,15 @@
 
 Changing only default-open flags leaves Agent running-step previews visible. Remove the preview and tool-card exceptions, keep every call in the manual trace, and key the outside reply by its turn slot rather than its changing message ID. Preserve the actual ID for menus, jumps and receipts. `produceState` retains its previous value when keys change: a stable slot can therefore briefly draw the predecessor's parsed Markdown even after the text has changed. Carry the parse's source identity and render it only when it matches the current source; show the new plain text while parsing. A regression must render running → new text → completed under the same key, not just compare pure line lists. Test every conversation type × style × appearance, manual toggles, completion folding and restored hub-fold loading. A background wake continues the same genuine user exchange: do not truncate ordered/process rows after its latest reply or divert tail tools into a noninteractive drawer. A wake after an away recap must mark the real reopened turn live, not add a second empty working placeholder.
 
+## `-dontobfuscate` does not keep every method name (#2441)
+
+When D8 or R8 desugars a Kotlin lambda, it may rename the implementation method to `$r8$lambda$<hash>`, whatever the
+obfuscation flags say: about a third of persona's lambda methods carry such names in an unshrunk build and about half in
+the shrunk release. Error-report frames inside Compose callbacks and coroutine blocks then need `mapping.txt`; the
+release build is reproducible, so rebuilding the reported commit regenerates it. State what shrinking keeps from the built
+dex or `mapping.txt`, not from the flags' names. And pin the switch itself: the shrink check passes an unshrunk APK by
+design and hosted CI builds no release, so `scripts/release/test_check_android_shrink.py` asserts `isMinifyEnabled = true`.
+
 ## Inbox writes must not wait behind full-list reads (#2545)
 
 A grouped conversation swipe used the explicit bulk-cleanup path, so each success emitted its own Undo notice (deliberately exempt

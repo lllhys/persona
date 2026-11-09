@@ -210,7 +210,7 @@
   "server/internal/link/poke_windows_test.go": 1,
   "server/internal/mail/imap_test.go": 2,
   "server/internal/mail/imaptest_test.go": 1,
-  "server/internal/manager/builtin_service_test.go": 9,
+  "server/internal/manager/builtin_service_test.go": 8,
   "server/internal/manager/manager_test.go": 3,
   "server/internal/managerupdate/controller_test.go": 1,
   "server/internal/mcpserver/mcpserver_test.go": 1,

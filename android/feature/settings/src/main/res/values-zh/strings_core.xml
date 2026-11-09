@@ -96,6 +96,12 @@
     <string name="settings_notify_live_about">默认开启。Android 16 及以上可在锁屏和状态栏胶囊显示状态计数；关闭或系统不支持时保留普通常驻通知。</string>
     <string name="settings_notify_lock_details">锁屏显示详情</string>
     <string name="settings_notify_lock_details_about">关闭后，常驻通知一律不显示 Agent 名字和请求内容。</string>
+    <string name="settings_notify_quiet">免打扰时段</string>
+    <string name="settings_notify_quiet_off">关闭：任何时间都会通知</string>
+    <string name="settings_notify_quiet_start">开始</string>
+    <string name="settings_notify_quiet_end">结束</string>
+    <string name="settings_notify_quiet_footer">这段时间里，Agent 做完不再通知（早上的「今天要知道的」卡片会汇总），需要你的事照常送达但不响铃。你让助手设的提醒照常提醒。只要你有一台设备在免打扰时段内，聊天机器人对未回答卡片的提醒也会顺延。按这台手机的时区计算。</string>
+    <string name="settings_notify_quiet_footer_zone">这段时间里，Agent 做完不再通知（早上的「今天要知道的」卡片会汇总），需要你的事照常送达但不响铃。你让助手设的提醒照常提醒。只要你有一台设备在免打扰时段内，聊天机器人对未回答卡片的提醒也会顺延。目前按设置时所在的%1$s计算，在这里改动后改按这台手机的时区计算。</string>
     <string name="settings_reading">正在读取</string>
     <string name="settings_retry_read">重试读取</string>
     <string name="settings_saving">正在保存…</string>

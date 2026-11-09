@@ -26,7 +26,6 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     // An assistant card's html page: its own WebView and the bridge's message listener (AssistantHtml.kt).
     implementation(libs.androidx.webkit)
-    implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     testImplementation(libs.junit)
     // An inbox item's page in pictures: the inbox's header over a plugin's body (InboxItemShotsTest).

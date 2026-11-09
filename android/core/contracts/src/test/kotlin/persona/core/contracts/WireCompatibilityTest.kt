@@ -62,7 +62,12 @@ class WireCompatibilityTest {
         assertEquals("示例任务", (notify.subtitle).zhAny())
         assertEquals("待确认", (notify.body).zhAny())
         assertEquals("ix_example", (notify.interactionId).zhAny())
+        assertFalse(notify.quiet)
         assertEquals(notify, ServerEvent.decode(JsonCodec.encodeToString<ServerEvent>(notify)))
+        // Inside the device's quiet hours (#1863) the hub marks a card `quiet`.
+        val hushed = ServerEvent.decode("""{"type":"notify","kind":"interaction","machine_id":"m1","session_id":"s1","interaction_id":"ix_example","quiet":true}""") as NotifyEvent
+        assertTrue(hushed.quiet)
+        assertEquals(hushed, ServerEvent.decode(JsonCodec.encodeToString<ServerEvent>(hushed)))
         for (kind in listOf("done", "assistant")) {
             val event = ServerEvent.decode("""{"type":"notify","kind":"$kind","machine_id":"m1","session_id":"s1","body":"示例"}""") as NotifyEvent
             assertEquals(kind, event.kind)

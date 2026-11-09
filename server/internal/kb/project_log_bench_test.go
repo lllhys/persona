@@ -23,9 +23,21 @@ func bigLog(zone *time.Location, n int) []byte {
 	return []byte(b.String())
 }
 
-// BenchmarkProjectLog: appending a line to, and reading the latest lines of, a project's 20k-line timeline.
+// todoTail is n todo lines (TodoOutcomes) as they follow a timeline written by bigLog.
+func todoTail(n int) []byte {
+	var b strings.Builder
+	at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	for i := range n {
+		fmt.Fprintf(&b, "- %s · %s%s · %sdone %d\n", at.Add(time.Duration(i)*time.Minute).Format("2006-01-02 15:04"),
+			TodoLogSource, TodoLogTitle(fmt.Sprintf("todo %d", i)), TodoOutcomePrefix, i)
+	}
+	return []byte(b.String())
+}
+
+// BenchmarkProjectLog: appending a line to, and reading the latest lines or todo outcomes of, a project's 20k-line
+// timeline (with 5 todo lines at its end, or none: TodoOutcomes then walks all of it).
 func BenchmarkProjectLog(b *testing.B) {
-	setup := func(b *testing.B) (*Store, func()) {
+	setupWith := func(b *testing.B, raw []byte) (*Store, func()) {
 		b.Helper()
 		st, err := NewStore(b.TempDir())
 		if err != nil {
@@ -34,7 +46,6 @@ func BenchmarkProjectLog(b *testing.B) {
 		if _, err := st.Rezone(time.UTC); err != nil {
 			b.Fatal(err)
 		}
-		raw := bigLog(time.UTC, benchLogLines)
 		reset := func() {
 			if err := os.WriteFile(st.Path(KindProject, "p", "log.md"), raw, 0o600); err != nil {
 				b.Fatal(err)
@@ -46,6 +57,7 @@ func BenchmarkProjectLog(b *testing.B) {
 		reset()
 		return st, reset
 	}
+	setup := func(b *testing.B) (*Store, func()) { return setupWith(b, bigLog(time.UTC, benchLogLines)) }
 	b.Run("Append", func(b *testing.B) {
 		st, reset := setup(b)
 		at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
@@ -69,6 +81,26 @@ func BenchmarkProjectLog(b *testing.B) {
 		for range b.N {
 			if got := st.Log("p", 30); len(got) != 30 {
 				b.Fatalf("%d lines", len(got))
+			}
+		}
+	})
+	b.Run("TodoOutcomes5", func(b *testing.B) {
+		st, _ := setupWith(b, append(bigLog(time.UTC, benchLogLines), todoTail(5)...))
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			if got := st.TodoOutcomes("p", 5); len(got) != 5 {
+				b.Fatalf("%d outcomes", len(got))
+			}
+		}
+	})
+	b.Run("TodoOutcomesNone", func(b *testing.B) {
+		st, _ := setup(b)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			if got := st.TodoOutcomes("p", 5); len(got) != 0 {
+				b.Fatalf("%d outcomes", len(got))
 			}
 		}
 	})

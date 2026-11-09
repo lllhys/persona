@@ -25,7 +25,6 @@ dependencies {
     implementation(libs.serialization.json)
     implementation(libs.coil.compose)
     implementation(libs.compose.preview)
-    implementation(libs.compose.icons)
     implementation("org.jsoup:jsoup:1.18.3")
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)

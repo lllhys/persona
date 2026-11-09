@@ -17,6 +17,111 @@ final class NewConversationEntryTests: XCTestCase {
         try handOff(name: "shell", newChat: true)
     }
 
+    @MainActor func testAgentHandOffShowsMessageAndFiltersUnavailableTargets() throws {
+        let hub = try mockHub()
+        setInboxDone(hub, false)
+        requireAgentFixtures(hub)
+        let app = open(hub, [])
+        defer { app.terminate() }
+        let send = app.navigationBars["交给 AI"].buttons["发送"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 20), "no 交给 AI sheet:\n\(app.debugDescription)")
+        XCTAssertTrue(row(app, "给天气 App 加主屏幕小组件").exists, "the writable live Agent is missing")
+        XCTAssertFalse(row(app, "排查构建缓存").exists, "a view-only Agent is offered")
+        XCTAssertFalse(row(app, "迁移日志采集").exists, "an offline Agent is offered")
+        XCTAssertFalse(row(app, "备份照片库").exists, "an Agent on an offline computer is offered")
+
+        let ask = "Agent hand-off \(UUID().uuidString.prefix(8))"
+        let before = sentTo(hub).count
+        row(app, "给天气 App 加主屏幕小组件").tap()
+        let field = instructions(app)
+        field.tap()
+        field.typeText(ask)
+        send.tap()
+        let bubble = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", ask)).firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 4), "the Agent chat did not open on the sent message:\n\(app.debugDescription)")
+        shot(app, "handoff-agent-sent")
+        let handed = sentTo(hub)
+        XCTAssertEqual(handed.count, before + 1)
+        XCTAssertEqual(handed.last?["session_id"] as? String, "a1f3c2d4-0000-4000-8000-000000000001")
+        XCTAssertTrue(inboxDone(hub, waiting: 5), "the delivered hand-off did not file the item")
+    }
+
+    @MainActor func testAgentHandOffInDoubtKeepsSheetAndItemOpen() throws {
+        let hub = try mockHub()
+        setInboxDone(hub, false)
+        let app = open(hub, [])
+        defer {
+            app.terminate()
+            fault(hub, on: false)
+        }
+        let send = app.navigationBars["交给 AI"].buttons["发送"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 20), "no 交给 AI sheet:\n\(app.debugDescription)")
+        row(app, "给天气 App 加主屏幕小组件").tap()
+        let ask = "Agent hand-off in doubt \(UUID().uuidString.prefix(8))"
+        let before = sentTo(hub).count
+        let field = instructions(app)
+        field.tap()
+        field.typeText(ask)
+        loseTheNextAnswer(hub)
+        send.tap()
+        shot(app, "handoff-agent-in-doubt")
+        XCTAssertTrue(send.exists, "the sheet closed without a delivery answer")
+        XCTAssertEqual(sentTo(hub).count, before + 1, "the mock did not run the write before losing its answer")
+        XCTAssertFalse(inboxDone(hub), "an answer in doubt filed the item")
+    }
+
+    @MainActor private func row(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    /// The negative target assertions are meaningful only with the view-only and offline fixtures enabled.
+    private func requireAgentFixtures(_ hub: String) {
+        var titles: Set<String> = []
+        let finished = expectation(description: "agent fixtures")
+        URLSession.shared.dataTask(with: URL(string: hub + "/api/v1/sessions?limit=200&summary=1")!) { data, _, _ in
+            if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let sessions = obj["sessions"] as? [[String: Any]] {
+                titles = Set(sessions.compactMap { $0["title"] as? String })
+            }
+            finished.fulfill()
+        }.resume()
+        wait(for: [finished], timeout: 10)
+        let required = ["给天气 App 加主屏幕小组件", "排查构建缓存", "迁移日志采集", "备份照片库"]
+        XCTAssertTrue(required.allSatisfy(titles.contains), "mock needs MOCK_SOURCES=1 MOCK_TODO_OFFLINE=1; missing \(required.filter { !titles.contains($0) })")
+    }
+
+    private func setInboxDone(_ hub: String, _ done: Bool) {
+        var req = URLRequest(url: URL(string: hub + "/api/v1/inbox/done")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try! JSONSerialization.data(withJSONObject: ["ids": ["mail:acc1:t1:501"], "done": done])
+        var status = 0
+        let finished = expectation(description: "reset inbox item")
+        URLSession.shared.dataTask(with: req) { _, response, _ in
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            finished.fulfill()
+        }.resume()
+        wait(for: [finished], timeout: 10)
+        XCTAssertEqual(status, 200, "the mock did not reset the inbox item")
+    }
+
+    private func inboxDone(_ hub: String, waiting: TimeInterval = 0) -> Bool {
+        var done = false
+        let deadline = Date().addingTimeInterval(waiting)
+        repeat {
+            let finished = expectation(description: "inbox item")
+            URLSession.shared.dataTask(with: URL(string: hub + "/api/v1/inbox/mail:acc1:t1:501")!) { data, _, _ in
+                if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    done = obj["done_at"] as? String != nil || obj["done"] as? Bool == true
+                }
+                finished.fulfill()
+            }.resume()
+            wait(for: [finished], timeout: 10)
+            if done || Date() >= deadline { return done }
+            usleep(200_000)
+        } while true
+    }
+
     /// The answer to a hand-off gets lost after the hub ran it (the mock's lost_receipt fault: 502, delivered unknown): the
     /// sheet stays and says to look in the chat first. Sending again goes under the same client id, so the mock answers it
     /// from the first and the chat gets the hand-off once; its answer lost too, the sheet adds how to send it anyway.
@@ -173,7 +278,8 @@ final class NewConversationEntryTests: XCTestCase {
         XCTAssertEqual(status, 200, "the mock did not take the lost_receipt fault (enabled: \(on))")
     }
 
-    /// Where the mock's hand-offs went (`/mock/sent_to`; the main chat's are the ones there with an inbox block).
+    /// Where the mock's hand-offs went (`/mock/sent_to`; the main chat's are the ones there with an inbox block, the
+    /// Agent cases here with their unique ask).
     private func sentTo(_ hub: String) -> [[String: Any]] {
         guard let url = URL(string: hub + "/mock/sent_to") else { return [] }
         var answer: [[String: Any]] = []
@@ -181,7 +287,10 @@ final class NewConversationEntryTests: XCTestCase {
         URLSession.shared.dataTask(with: url) { data, _, _ in
             if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let sent = obj["sent"] as? [[String: Any]] {
-                answer = sent.filter { ($0["text"] as? String)?.contains("收件箱事件") == true }
+                answer = sent.filter {
+                    let text = $0["text"] as? String ?? ""
+                    return text.contains("收件箱事件") || text.contains("Agent hand-off")
+                }
             }
             done.fulfill()
         }.resume()

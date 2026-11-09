@@ -15,7 +15,6 @@ import {
   isStaged,
   joinPath,
   languageOf,
-  languageOfFence,
   lexLine,
   markdownChunks,
   parseDiff,
@@ -209,9 +208,6 @@ describe("lexer", () => {
     expect(languageOf("deploy", "#!/bin/bash -e")?.id).toBe("Shell");
     expect(languageOf("Info", "<?xml version=\"1.0\"?>")?.id).toBe("XML");
     expect(languageOf("notes.txt")).toBeNull();
-    expect(languageOfFence("sh")?.id).toBe("Shell");
-    expect(languageOfFence("python")?.id).toBe("Python");
-    expect(languageOfFence("")).toBeNull();
   });
 
   it("colors comments, strings and numbers", () => {

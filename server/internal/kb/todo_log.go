@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"bytes"
 	"path"
 	"path/filepath"
 	"strings"
@@ -76,12 +77,17 @@ func (s *Store) TodoOutcomes(slug string, n int) []TodoOutcome {
 		return nil
 	}
 	var out []TodoOutcome
-	lines := s.Log(slug, 1<<30)
-	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-		if o, ok := parseTodoLine(lines[i]); ok {
-			out = append(out, o)
+	// Every todo line has this right after its time (parseTodoLine): the other lines are passed by without a string
+	// made of them.
+	mark := []byte(logSep + TodoLogSource)
+	s.scanLog(slug, func(l []byte) bool {
+		if at := len("- 2006-01-02 15:04"); len(l) >= at && bytes.HasPrefix(l[at:], mark) {
+			if o, ok := parseTodoLine(string(l)); ok {
+				out = append(out, o)
+			}
 		}
-	}
+		return len(out) < n
+	})
 	return out
 }
 

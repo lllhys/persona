@@ -2,10 +2,11 @@
 // the range, each run between gaps its own line (no line across a time the machine sent nothing); a hairline grid,
 // round ticks on the right and below; a crosshair that snaps to the nearest point. Every chart of the page follows
 // the same moment (the page holds it). Drawn at the real pixel size, so the labels are not stretched.
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { hm, isEmpty, nearest, runs, scale, timeAt, timeTicks, yAxis, type DetailPoint, type Reader } from "../../lib/machine-detail";
 import { cx } from "../../ui/atoms";
 import { t } from "../../i18n";
+import { useWidth } from "../../lib/use-width";
 
 export interface ChartSeries {
   name: string;
@@ -20,20 +21,6 @@ const H = 132; // plot height
 const AXIS_W = 52; // y labels on the right
 const AXIS_H = 20; // time labels below
 const TOP = 6;
-
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
 
 export function MetricChart({
   title,

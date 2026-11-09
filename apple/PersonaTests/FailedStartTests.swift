@@ -11,6 +11,18 @@ struct FailedStartTests {
                             reason: nil, at: Date(timeIntervalSince1970: 1_700_000_000))
     }
 
+    @Test func eachPageHoldsItsOwnFailedFirstMessage() {
+        let home = message(mayHaveStarted: false)
+        var work = home, health = home, healthFromWork = home
+        work.manager = "m-1"
+        health.space = "health"
+        healthFromWork.space = "health"
+        healthFromWork.manager = "m-1"
+        #expect(!work.samePage(home), "another manager's Persona page")
+        #expect(work.samePage(work) && health.samePage(healthFromWork), "Health is one page, whichever manager was shown")
+        #expect(!health.samePage(home))
+    }
+
     @Test func whatLeavesItPossiblyStarted() {
         #expect(FailedStart.mayHaveStarted(APIError(status: 502, message: "", fields: ["code": "assistant_in_doubt", "delivered": "unknown"])))
         #expect(FailedStart.mayHaveStarted(APIError(status: 202, message: "", fields: ["code": OpReceipt.unknownCode])))

@@ -570,3 +570,23 @@ func (s *meshStore) InsertTodoDecision(context.Context, db.TodoDecisionRow) (boo
 func (s *meshStore) SetTodoDecisionSupersedes(context.Context, string, string, string, time.Time) (*db.TodoDecisionRow, error) {
 	return nil, db.ErrDecisionNotFound
 }
+
+// Queue tests use Postgres; this unrelated fixture has no durable phone delivery store.
+func (s *meshStore) EnqueuePhoneWrite(context.Context, string, string, json.RawMessage) (*db.PhoneWrite, error) {
+	return nil, errors.New("phone write queue unavailable")
+}
+func (s *meshStore) PhoneWrites(context.Context) ([]db.PhoneWrite, error)  { return nil, nil }
+func (s *meshStore) ClaimPhoneWrite(context.Context, string) (bool, error) { return false, nil }
+func (s *meshStore) FinishPhoneWrite(context.Context, string, string, json.RawMessage) error {
+	return nil
+}
+func (s *meshStore) CancelPhoneWrite(context.Context, string) (*db.PhoneWrite, error) {
+	return nil, nil
+}
+func (s *meshStore) RecoverPhoneWrites(context.Context) error { return nil }
+
+func (s *meshStore) FindQueuedPhoneWrite(context.Context, string, json.RawMessage) (*db.PhoneWrite, error) {
+	return nil, nil
+}
+
+func (s *meshStore) QueuedPhoneWrites(context.Context) ([]db.PhoneWrite, error) { return nil, nil }

@@ -127,11 +127,8 @@ func TestLogLinesMatchTheFullScan(t *testing.T) {
 		st := logStore(t, time.Local, []byte(text))
 		for _, n := range []int{0, 1, 2, 3, 30, 1 << 30, math.MaxInt} {
 			want := oldLogLines([]byte(text), n)
-			if got := lastLogLines([]byte(text), n); !reflect.DeepEqual(got, want) || (got == nil) != (want == nil) {
-				t.Errorf("%s, n=%d: %q (nil %v), want %q (nil %v)", name, n, got, got == nil, want, want == nil)
-			}
 			if got := st.Log("p", n); !reflect.DeepEqual(got, want) || (got == nil) != (want == nil) {
-				t.Errorf("Log, %s, n=%d: %q, want %q", name, n, got, want)
+				t.Errorf("Log, %s, n=%d: %q (nil %v), want %q (nil %v)", name, n, got, got == nil, want, want == nil)
 			}
 		}
 	}
@@ -139,10 +136,10 @@ func TestLogLinesMatchTheFullScan(t *testing.T) {
 		t.Errorf("no file: %q", got)
 	}
 	// A negative n used to panic (a slice past the end); now it is n == 0.
-	if got := lastLogLines([]byte(texts["long"]), -1); got == nil || len(got) != 0 {
+	if got := logStore(t, time.Local, []byte(texts["long"])).Log("p", -1); got == nil || len(got) != 0 {
 		t.Errorf("n=-1: %q", got)
 	}
-	if got := lastLogLines(nil, -1); got != nil {
+	if got := logStore(t, time.Local, []byte(texts["header only"])).Log("p", -1); got != nil {
 		t.Errorf("n=-1, no lines: %q", got)
 	}
 }

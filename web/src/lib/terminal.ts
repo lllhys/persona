@@ -181,12 +181,6 @@ export class WheelLines {
   }
 }
 
-/** The grid a panel of this size holds at this cell size (what the browser asks to drive the terminal at). */
-export function fitGrid(width: number, height: number, cellWidth: number, cellHeight: number): { cols: number; rows: number } | null {
-  if (!(cellWidth > 0 && cellHeight > 0 && width > 0 && height > 0)) return null;
-  return { cols: Math.floor(width / cellWidth), rows: Math.floor(height / cellHeight) };
-}
-
 /** A grid worth driving at (smaller than this, Claude Code cannot lay itself out). */
 export function usableGrid(g: { cols: number; rows: number } | null | undefined): g is { cols: number; rows: number } {
   return Boolean(g && g.cols >= 10 && g.rows >= 4);

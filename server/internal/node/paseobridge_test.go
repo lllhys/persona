@@ -48,8 +48,9 @@ func TestPaseoBridgeIsWrittenOut(t *testing.T) {
 }
 
 // What runs the bridge: PERSONA_NODEJS first; an app binary (Paseo's desktop app) runs as node with
-// ELECTRON_RUN_AS_NODE; one too old is skipped.
+// ELECTRON_RUN_AS_NODE, and a node without it, also when the node inherited it; one too old is skipped.
 func TestPaseoBridgeJSRuntime(t *testing.T) {
+	t.Setenv("ELECTRON_RUN_AS_NODE", "1") // as under an Electron host, such as an editor's extension host
 	dir := t.TempDir()
 	fake := func(name, version string) string {
 		p := filepath.Join(dir, name)
@@ -74,6 +75,21 @@ func TestPaseoBridgeJSRuntime(t *testing.T) {
 	t.Setenv("PERSONA_NODEJS", node)
 	if js, err := findJSRuntime(context.Background(), t.TempDir()); err != nil || js.Path != node || js.Electron {
 		t.Fatalf("node: %+v %v", js, err)
+	}
+}
+
+// The runtime's environment sets ELECTRON_RUN_AS_NODE itself: once for an app binary, never for a node (dropping an
+// inherited one), and the caller's slice is left as it was.
+func TestJSRuntimeEnv(t *testing.T) {
+	base := []string{"A=1", "ELECTRON_RUN_AS_NODE=1", "B=2"}
+	if got := (jsRuntime{Path: "node"}).env(base); !slices.Equal(got, []string{"A=1", "B=2"}) {
+		t.Fatalf("node: %q", got)
+	}
+	if got := (jsRuntime{Path: "Paseo", Electron: true}).env(base); !slices.Equal(got, []string{"A=1", "B=2", "ELECTRON_RUN_AS_NODE=1"}) {
+		t.Fatalf("app binary: %q", got)
+	}
+	if !slices.Equal(base, []string{"A=1", "ELECTRON_RUN_AS_NODE=1", "B=2"}) {
+		t.Fatalf("base changed: %q", base)
 	}
 }
 

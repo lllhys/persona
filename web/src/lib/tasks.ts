@@ -269,12 +269,6 @@ export function subagentEnded(result: Item | undefined, meta: Subagent | undefin
   return isLaunchReceipt(result) ? (at(meta?.updated_at) ?? at(result?.ts)) : (at(result?.ts) ?? at(meta?.updated_at));
 }
 
-/** A subagent launched to run in the background: its call returns a launch receipt and it reports after the
- *  exchange, so its card is never folded away with the exchange's work. */
-export function isBackgroundAgent(use: Item, result: Item | undefined, meta: Subagent | undefined): boolean {
-  return Boolean(meta?.background) || isLaunchReceipt(result) || (use.tool_input as { run_in_background?: unknown } | undefined)?.run_in_background === true;
-}
-
 const sameTool = (x: Subagent["last_tool"], y: Subagent["last_tool"]) => x === y || (x?.id === y?.id && x?.name === y?.name && x?.summary === y?.summary);
 
 /** The subagents the main agent is waiting on (#5602, Claude Desktop's "2 agents working — …"): running ones it

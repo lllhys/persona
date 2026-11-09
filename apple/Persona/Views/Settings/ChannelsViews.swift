@@ -340,10 +340,11 @@ struct ChannelDetailView: View {
         var id: String { tag }
     }
 
-    /// The assistant's recent conversations (the main one is Main Chat), with the current one if it is not among them.
+    /// The assistant's recent conversations (the main one is Main Chat), with the current one if it is not among them:
+    /// the default manager's, whose channels these are, whichever manager the Persona page shows.
     private func choices(_ c: HubChannel) -> [Choice] {
-        let main = model.assistantMain
-        var out = model.assistantConversations.filter { $0.key != main }.prefix(15).map { s in
+        let main = model.defaultAssistantMain
+        var out = model.defaultAssistantConversations.filter { $0.key != main }.prefix(15).map { s in
             Choice(tag: "c:" + s.machineID + "/" + s.sessionID, title: s.title.isEmpty ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title)
         }
         if let t = c.target, t.kind == "conversation", case let tag = Self.tag(t), !out.contains(where: { $0.tag == tag }) {

@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 // Sidebar rows take their height from --sidebar-row, never the text's own line box, and headings are not uppercased
 // (docs/apple/sidebar.md, #1647): the same size in every language.
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
-const sidebar = source("./Sidebar.tsx");
+// The sidebar's source is Sidebar.tsx and the files split out of it.
+const sidebar = ["./Sidebar.tsx", "./SidebarParts.tsx", "./SidebarRows.tsx", "./SidebarTree.tsx", "./SidebarRail.tsx"].map(source).join("\n");
 const css = source("../styles.css");
 
 // A sidebar row: a full-width rounded row with the sidebar's horizontal inset.

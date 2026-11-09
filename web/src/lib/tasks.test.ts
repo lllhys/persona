@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseAPIError } from "./api-errors";
-import { agentStatus, agentsWorking, agentSummary, buildTaskIndex, isBackgroundAgent, loopCadence, loopLabel, loopNext, loopShortLabel, loopTask, nestedSubagents, stableSubagents, subagentEnded, subagentTree, taskBadge, taskPill, wakeSummary } from "./tasks";
+import { agentStatus, agentsWorking, agentSummary, buildTaskIndex, loopCadence, loopLabel, loopNext, loopShortLabel, loopTask, nestedSubagents, stableSubagents, subagentEnded, subagentTree, taskBadge, taskPill, wakeSummary } from "./tasks";
 import type { Item, Subagent } from "./types";
 
 describe("buildTaskIndex", () => {
@@ -134,14 +134,6 @@ describe("a subagent call's card", () => {
     const receipt = res("Async agent launched successfully.\nagentId: x (This is an internal ID for your use)");
     expect(agentStatus(receipt, meta(true), false)).toBe("running");
     expect(agentStatus(receipt, meta(false), true)).toBe("completed");
-  });
-
-  it("tells a background subagent by its list entry, receipt or call", () => {
-    const use: Item = { id: "c#0", seq: 1, role: "assistant", kind: "tool_use", tool_use_id: "c", tool_name: "Agent", tool_input: { description: "d" } };
-    expect(isBackgroundAgent(use, res("done"), meta(false))).toBe(false);
-    expect(isBackgroundAgent(use, res("done"), { ...meta(false), background: true })).toBe(true);
-    expect(isBackgroundAgent(use, res("Async agent launched successfully."), undefined)).toBe(true);
-    expect(isBackgroundAgent({ ...use, tool_input: { run_in_background: true } }, undefined, undefined)).toBe(true);
   });
 
   it("times a background subagent to its last line, not its launch receipt (#5602)", () => {

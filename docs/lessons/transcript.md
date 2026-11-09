@@ -140,3 +140,12 @@ A view that fetches once per id cannot recover when the store puts the same id b
   id whose `projects/…/<id>.jsonl` never appears. (The pid file has no transcript path; node derives it from the session id —
   `transcriptPath` in `node/transcript_files.go` looks for `<config dir>/projects/*/<id>.jsonl`.) Check the node's own environment
   for the child flag first (`/proc/<pid>/environ`, on macOS `KERN_PROCARGS2`), then the pane shell's.
+
+## A session's cwd follows `cd` (#2368, Claude Code 2.1.319)
+
+- Claude Code writes the Bash tool's current directory into every transcript line's `cwd`, and into every hook input's `cwd`, once the model `cd`s (there is a `CwdChanged` hook too). The transcript file stays in `~/.claude/projects/<encoded start directory>/`, and its first lines carry the start directory.
+- So "a session's latest `cwd`" is where its shell is now, not where the session is. A Persona conversation whose Lark `/agent` turn `cd`'d into `~/.persona/assistant/.claude/skills/<skill>` was listed there: the hub's exact directory check said `assistant: false`, the conversation lost its origin and title and showed under Agents. A health conversation that `cd`s into `reports/` or `/tmp` would have left the health space, with its cards on the lock screen.
+- Codex rollouts record `cwd` only in `session_meta`; a later `turn_context` directory does not move it.
+- Decide placement (assistant, space, health redaction) by where the session started: the node's start record, else the transcript's first `cwd` (`quickMeta.start`), else its own project directory's name (a first prompt bigger than the 256 KB head read hides the first line). Agents keep reporting their latest directory: their git place walks up to `.git`, so a `cd` into a subfolder keeps the repository. Except an assistant or health directory itself: an agent started in the home directory that `cd`s into one is listed where it started, or the hub, going by the exact directory, takes it for one of their conversations at rest.
+- Hiding and confirming may count a directory inside a health space (`identity.InHealthSpace`); classifying must not (`SpaceOf`, `IsAssistantDirOf` stay exact): a pane-less Claude the user runs in a subfolder of the assistant directory is theirs.
+- Reproduce with Stop, not the 20-minute reap: Stop kills `claude -p`, and the conversation is listed from its transcript at once.

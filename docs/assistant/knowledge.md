@@ -78,6 +78,7 @@ Transcribed text from phone recordings (and watch recordings relayed through the
   produces a summary, one-line description, title (used if the user has not named it), tags and mentioned projects; projects are linked normally (a "Recording · Title" project timeline entry). At most 24k characters go to the model (keeping the beginning and end).
 - Retention follows assistant setting `recording_days` (default 14 days, independent of `text_days`): each round deletes directories and index rows whose start time predates retention; tombstones are retained equally long.
 - `kb_list` / `kb_get` / `kb_search` and the app's Knowledge page gain the `recordings` category; `kb_get` includes summary, bookmarks and full transcription (up to 12k characters). Recording content cannot be edited via `kb_update` (the phone is authoritative); only tags can change.
+- A recording with `kind: meeting` also gets structured minutes instead of only the short summary ([meeting-minutes.md](./meeting-minutes.md)): `minutes.json` in the same directory, removed with the recording, returned as `detail.minutes`.
 
 ## Extra notes directories (`kb.extra_dirs`)
 

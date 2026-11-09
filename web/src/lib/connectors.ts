@@ -279,11 +279,6 @@ export function canSendStep(p: ConnectorPrompt | null, values: Record<string, st
   return p.fields.every((f) => (values[f.name] ?? "").trim().length > 0);
 }
 
-/** A code to enter on a web page (GitHub's device flow), asked again until the user has. */
-export function isDeviceCode(p?: ConnectorPrompt | null): boolean {
-  return p?.kind === "device_code" && !!p.user_code;
-}
-
 /** How the page draws a sign-in step: fields to fill in, a device code, a QR code (or, without its modules, the
  * link it encodes), or a step this page cannot draw (a kind it does not know, a QR code with nothing to show, a form
  * with no fields) — said so, with what to do instead, rather than an empty form whose "Next" never lights up. */

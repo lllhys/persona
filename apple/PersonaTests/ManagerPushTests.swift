@@ -87,4 +87,19 @@ struct ManagerPushTests {
         let tokyo = QuietHours(tz: "Asia/Tokyo").elsewhere(here: here, locale: Locale(identifier: "en_US"))
         #expect(tokyo?.contains("Japan") == true)
     }
+
+    @Test func quietHoursAreReadInTheirOwnZoneAndMayCrossMidnight() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        // 2026-01-15 23:30 UTC; 08:30 the next morning in Tokyo.
+        let late = Date(timeIntervalSince1970: 1_768_519_800)
+        let night = QuietHours(enabled: true, start: "23:00", end: "07:00")
+        #expect(night.active(at: late, fallback: utc), "across midnight, read in the fallback zone")
+        #expect(!night.active(at: late.addingTimeInterval(8 * 3600), fallback: utc), "07:30 is past it")
+        var tokyo = night
+        tokyo.tz = "Asia/Tokyo"
+        #expect(!tokyo.active(at: late, fallback: utc), "08:30 in its own zone")
+        #expect(QuietHours(enabled: true, start: "08:00", end: "17:00", tz: "Asia/Tokyo").active(at: late, fallback: utc))
+        #expect(!QuietHours(enabled: false).active(at: late, fallback: utc), "off")
+        #expect(!QuietHours(enabled: true, start: "07:00", end: "07:00").active(at: late, fallback: utc), "start = end is no window")
+    }
 }

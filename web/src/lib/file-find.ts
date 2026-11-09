@@ -169,16 +169,9 @@ function scorePath(path: string, terms: string[], positions: boolean): FileHit |
 
 const byRank = (a: FileHit, b: FileHit) => b.score - a.score || a.path.length - b.path.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
-/**
- * One-shot: the best `limit` files for a query, best first; every term has to match (AND). An empty query matches
- * nothing (the palette's file section is for something typed).
- */
-export function matchFiles(files: readonly string[], query: string, limit = MAX_FILE_HITS): FileHit[] {
-  return createFileSearch(files).search(query, limit);
-}
-
 export interface FileSearch {
-  /** The best `limit` matches of the query. Typing on from the last query narrows the last query's matches. */
+  /** The best `limit` files for a query, best first; every term has to match (AND). An empty query matches nothing (the
+   *  palette's file section is for something typed). Typing on from the last query narrows the last query's matches. */
   search(query: string, limit?: number): FileHit[];
 }
 

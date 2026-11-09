@@ -9,9 +9,6 @@ function browserName() {
   return [b, os].filter(Boolean).join(" · ");
 }
 
-/** Where this browser keeps the id of its device token at the hub, to revoke it on signing out and to have it
- *  replaced when it signs in again. */
-export const TOKEN_ID_KEY = "persona.tokenId";
 /** The id of a device token this browser signed out of without the hub revoking it (lib/disconnect.ts): the next
  *  sign-in here names it in `replaces`, so the hub takes it off then. */
 export const UNREVOKED_KEY = "persona.unrevokedTokenId";

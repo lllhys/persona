@@ -190,11 +190,21 @@ func jsVersion(ctx context.Context, js jsRuntime) (string, error) {
 	return v, nil
 }
 
+// env is base to run js with, in a new slice: ELECTRON_RUN_AS_NODE=1 for an app binary, and never for a node. A node
+// started from an Electron host (an editor's extension host starts its children with it) inherits the variable; it
+// is dropped, or everything the bridge starts would get it too, and an Electron app started from there would run as
+// a bare Node.js.
 func (js jsRuntime) env(base []string) []string {
-	if js.Electron {
-		return append(base, "ELECTRON_RUN_AS_NODE=1")
+	out := make([]string, 0, len(base)+1)
+	for _, kv := range base {
+		if !strings.HasPrefix(kv, "ELECTRON_RUN_AS_NODE=") {
+			out = append(out, kv)
+		}
 	}
-	return base
+	if js.Electron {
+		out = append(out, "ELECTRON_RUN_AS_NODE=1")
+	}
+	return out
 }
 
 // processExecutable is the executable a process of this user runs ("" when it cannot be told).

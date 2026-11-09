@@ -11,7 +11,6 @@ import {
   indexFresh,
   lacksFind,
   loadFileIndex,
-  matchFiles,
   mentionOf,
   MAX_FILE_HITS,
   searchTerms,
@@ -28,16 +27,16 @@ describe("matching", () => {
   const files = ["src/AppView.tsx", "src/app/index.ts", "src/lib/shapes.ts", "docs/approach.md", "README.md", "web/src/lib/palette.ts", "web/src/views/Palette.tsx", "web/src/views/PaletteFiles.test.tsx"];
 
   it("matches nothing for an empty query", () => {
-    expect(matchFiles(files, "")).toEqual([]);
-    expect(matchFiles(files, "   ")).toEqual([]);
+    expect(createFileSearch(files).search("")).toEqual([]);
+    expect(createFileSearch(files).search("   ")).toEqual([]);
   });
   it("needs the letters in order, and ignores case", () => {
-    expect(paths(matchFiles(files, "READ"))).toEqual(["README.md"]);
-    expect(matchFiles(files, "mdr")).toEqual([]);
+    expect(paths(createFileSearch(files).search("READ"))).toEqual(["README.md"]);
+    expect(createFileSearch(files).search("mdr")).toEqual([]);
   });
   it("puts a word start before letters scattered in the middle of words", () => {
     // "ap" starts the words in app/ and AppView and approach, but is only inside "shapes"
-    const got = paths(matchFiles(files, "ap"));
+    const got = paths(createFileSearch(files).search("ap"));
     expect(got).toContain("src/lib/shapes.ts");
     expect(got.indexOf("src/lib/shapes.ts")).toBeGreaterThan(got.indexOf("src/AppView.tsx"));
     expect(got.indexOf("src/lib/shapes.ts")).toBeGreaterThan(got.indexOf("docs/approach.md"));
@@ -45,62 +44,62 @@ describe("matching", () => {
   it("counts the humps of camelCase as word starts", () => {
     const list = ["src/xAppView.tsx", "src/xapplication.tsx"];
     // "av": the A and V of xAppView are word starts; xapplication has no v after an a
-    expect(paths(matchFiles(list, "av"))).toEqual(["src/xAppView.tsx"]);
+    expect(paths(createFileSearch(list).search("av"))).toEqual(["src/xAppView.tsx"]);
     const both = ["src/mapview.ts", "src/MapView.ts"];
-    const hits = matchFiles(both, "mv");
+    const hits = createFileSearch(both).search("mv");
     expect(hits[0].path).toBe("src/MapView.ts");
     expect(marked(hits[0])).toBe("MV");
   });
   it("prefers the file's own name to the folders above it", () => {
     const list = ["palette/other.txt", "web/palette.ts"];
-    expect(paths(matchFiles(list, "palette"))).toEqual(["web/palette.ts", "palette/other.txt"]);
+    expect(paths(createFileSearch(list).search("palette"))).toEqual(["web/palette.ts", "palette/other.txt"]);
   });
   it("prefers an exact or leading name, and then the shorter path", () => {
     const list = ["a/very/deep/folder/index.ts", "index.ts", "index.test.ts", "indexes/readme.md"];
-    expect(paths(matchFiles(list, "index"))[0]).toBe("index.ts");
-    expect(paths(matchFiles(list, "index")).indexOf("index.test.ts")).toBeLessThan(paths(matchFiles(list, "index")).indexOf("a/very/deep/folder/index.ts"));
+    expect(paths(createFileSearch(list).search("index"))[0]).toBe("index.ts");
+    expect(paths(createFileSearch(list).search("index")).indexOf("index.test.ts")).toBeLessThan(paths(createFileSearch(list).search("index")).indexOf("a/very/deep/folder/index.ts"));
   });
   it("does not rank a file lower for being in deeper folders", () => {
     const list = ["Sources/App/Views/ForecastView.swift", "Tests/AppTests/ForecastViewModelTests.swift", "Sources/App/Models/ForecastViewModel.swift"];
-    expect(paths(matchFiles(list, "fore"))).toEqual(["Sources/App/Views/ForecastView.swift", "Sources/App/Models/ForecastViewModel.swift", "Tests/AppTests/ForecastViewModelTests.swift"]);
-    expect(paths(matchFiles(list, "fvm"))[0]).toBe("Sources/App/Models/ForecastViewModel.swift");
+    expect(paths(createFileSearch(list).search("fore"))).toEqual(["Sources/App/Views/ForecastView.swift", "Sources/App/Models/ForecastViewModel.swift", "Tests/AppTests/ForecastViewModelTests.swift"]);
+    expect(paths(createFileSearch(list).search("fvm"))[0]).toBe("Sources/App/Models/ForecastViewModel.swift");
   });
   it("needs every term, in any order (AND)", () => {
-    expect(paths(matchFiles(files, "views palette"))).toEqual(expect.arrayContaining(["web/src/views/Palette.tsx", "web/src/views/PaletteFiles.test.tsx"]));
-    expect(paths(matchFiles(files, "palette views"))).toHaveLength(2);
-    expect(paths(matchFiles(files, "palette lib"))).toEqual(["web/src/lib/palette.ts"]);
-    expect(matchFiles(files, "palette docs")).toEqual([]);
+    expect(paths(createFileSearch(files).search("views palette"))).toEqual(expect.arrayContaining(["web/src/views/Palette.tsx", "web/src/views/PaletteFiles.test.tsx"]));
+    expect(paths(createFileSearch(files).search("palette views"))).toHaveLength(2);
+    expect(paths(createFileSearch(files).search("palette lib"))).toEqual(["web/src/lib/palette.ts"]);
+    expect(createFileSearch(files).search("palette docs")).toEqual([]);
   });
   it("lists the letters that matched, for drawing them", () => {
-    const [hit] = matchFiles(["web/src/views/Palette.tsx"], "pal tsx");
+    const [hit] = createFileSearch(["web/src/views/Palette.tsx"]).search("pal tsx");
     expect(marked(hit)).toBe("Paltsx");
     expect(hit.matched).toEqual([...hit.matched].sort((a, b) => a - b));
     expect(new Set(hit.matched).size).toBe(hit.matched.length);
   });
   it("takes the best alignment, not the first", () => {
     // the first p, p of "src/pp/x" would do, but the contiguous word "pp" later is better; either way it is a match
-    const [hit] = matchFiles(["a/p_x/p_p/zzz.txt"], "pp");
+    const [hit] = createFileSearch(["a/p_x/p_p/zzz.txt"]).search("pp");
     expect(hit.matched.length).toBe(2);
     expect(hit.path[hit.matched[0]]).toBe("p");
   });
   it("lists at most 50 by default, best first, and as many as asked", () => {
     const many = Array.from({ length: 200 }, (_, i) => `dir/file${i}.ts`);
-    expect(matchFiles(many, "file")).toHaveLength(MAX_FILE_HITS);
-    expect(matchFiles(many, "file", 7)).toHaveLength(7);
+    expect(createFileSearch(many).search("file")).toHaveLength(MAX_FILE_HITS);
+    expect(createFileSearch(many).search("file", 7)).toHaveLength(7);
   });
   it("splits the query on any space", () => {
     expect(searchTerms("  a   b\tc ")).toEqual(["a", "b", "c"]);
     expect(searchTerms("")).toEqual([]);
   });
   it("works with a path of one character and a term longer than the path", () => {
-    expect(paths(matchFiles(["a"], "a"))).toEqual(["a"]);
-    expect(matchFiles(["a"], "ab")).toEqual([]);
+    expect(paths(createFileSearch(["a"]).search("a"))).toEqual(["a"]);
+    expect(createFileSearch(["a"]).search("ab")).toEqual([]);
   });
 });
 
 describe("drawing a hit", () => {
   it("cuts a path into matched and plain runs", () => {
-    const [hit] = matchFiles(["web/src/Palette.tsx"], "pal");
+    const [hit] = createFileSearch(["web/src/Palette.tsx"]).search("pal");
     const dir = hit.path.slice(0, hit.path.lastIndexOf("/") + 1);
     const name = hit.path.slice(dir.length);
     expect(highlightRuns(dir, 0, hit.matched)).toEqual([{ text: dir, hit: false }]);
@@ -123,7 +122,7 @@ describe("narrowing the last query", () => {
 
   it("gives the same answer as searching the whole list", () => {
     const s = createFileSearch(files);
-    for (const q of ["w", "wi", "wid", "wid 1", "wid 12", "wid 120"]) expect(s.search(q)).toEqual(matchFiles(files, q));
+    for (const q of ["w", "wi", "wid", "wid 1", "wid 12", "wid 120"]) expect(s.search(q)).toEqual(createFileSearch(files).search(q));
   });
   it("only looks at the last matches while the query goes on from the last one", () => {
     const seen: string[] = [];
@@ -144,15 +143,15 @@ describe("narrowing the last query", () => {
   it("is not fooled by a shorter, a changed or a cleared query", () => {
     const s = createFileSearch(files);
     s.search("widget 12");
-    expect(s.search("widget")).toEqual(matchFiles(files, "widget"));
-    expect(s.search("readme")).toEqual(matchFiles(files, "readme"));
+    expect(s.search("widget")).toEqual(createFileSearch(files).search("widget"));
+    expect(s.search("readme")).toEqual(createFileSearch(files).search("readme"));
     expect(s.search("")).toEqual([]);
-    expect(s.search("readme")).toEqual(matchFiles(files, "readme"));
+    expect(s.search("readme")).toEqual(createFileSearch(files).search("readme"));
   });
   it("narrows by words too: a word added to the query", () => {
     const s = createFileSearch(files);
     s.search("mod1");
-    expect(paths(s.search("mod1 pkg3"))).toEqual(paths(matchFiles(files, "mod1 pkg3")));
+    expect(paths(s.search("mod1 pkg3"))).toEqual(paths(createFileSearch(files).search("mod1 pkg3")));
   });
 });
 

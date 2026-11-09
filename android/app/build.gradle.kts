@@ -64,7 +64,11 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 shrinks without obfuscating (proguard-rules.pro), so error reports keep class names
+            // (docs/android/android.md "Release shrinking"; scripts/release/check_android_shrink.py checks the APK).
+            // A rollback to false also changes scripts/release/test_check_android_shrink.py, which pins this line.
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 }
@@ -99,7 +103,6 @@ dependencies {
     implementation(project(":platform:capsule"))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
-    implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     debugImplementation(libs.compose.tooling)
 

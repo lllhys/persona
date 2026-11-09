@@ -189,11 +189,13 @@ func (n *Node) warmTranscripts(ctx context.Context) {
 // followCopy points an open transcript at the file transcriptPath names now, when that is another: moved since it was
 // opened (a Codex thread archived or restored), or a newer copy took over (resumed in another project or profile, or
 // copied when its working directory moved). The session list's rev and updated_at read that file, so the items must
-// too (#1423). Relocate to another inode starts over.
-func (n *Node) followCopy(id string, f *transcript.File) {
+// too (#1423). Relocate to another inode starts over. moved says it pointed the transcript elsewhere.
+func (n *Node) followCopy(id string, f *transcript.File) (moved bool) {
 	if p := n.transcriptPath(id); p != "" && p != f.Where() {
 		f.Relocate(p)
+		return true
 	}
+	return false
 }
 
 // maxFiles caps the transcripts kept parsed in memory: every session ever opened used to stay, items and all.

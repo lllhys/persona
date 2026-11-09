@@ -348,7 +348,7 @@ External Codex sessions keep using `(machine_id, session_id)`. The fixed legacy 
 
 New optional Session fields: `source_kind` (`codex_history` / `codex_app_server` / `identity_conflict`; Agent runtime sessions are `runtime`, see "Runtime ↔ node"; Claude Code sessions outside Persona's terminals are `claude_bg` (a background session), `claude_desktop` (Claude's desktop app) and `claude_cli` (a terminal Persona does not drive), sending through the session's peer inbox when the node can use it, see `docs/integrations/claude-integration.md` "Claude outside Persona's terminals"), `source_thread_id`, `source_instance_id`, `parent_thread_id`, `read_only_reason`, `attached`, `capabilities` (six booleans: read/send/interrupt/approve/terminal/attach). Old sources lacking these fields stay compatible; new sources lacking capabilities default to refusing writes. Without the terminal capability, terminal / keys / close pane are not shown.
 Session also has the optional field `pane_index` (#2320): this pane's positional index within its tab (from 0, top-left is 0). The herdr node computes it from the split tree in the snapshot's `layouts` (`splits`; by rect on older herdr without it). It is omitted when the host gives no layout, on old nodes, or when the pane isn't in the layout; `0` is still sent, and only absence means unknown. A change in it alone also pushes `sessions.changed`. Clients group the Agents of one tab (`slot_id`) in this order, with 0 as the initiator; old clients ignore it (`docs/protocol/agent-states.md` "Several panes in one tab").
-Session also has the optional field `space` (#2691): which assistant space an assistant chat belongs to. Chats in the health space are `"health"`; the assistant's own chats omit it. The hub fills it from the session's `cwd` (the health directory `~/.persona/health`); it has nothing to do with herdr's `space_id` / `space_name`. Old clients ignore it (`docs/assistant/health.md`).
+Session also has the optional field `space` (#2691): which assistant space an assistant chat belongs to. Chats in the health space are `"health"`; the assistant's own chats omit it. The hub fills it from the session's `cwd` (the health directory `~/.persona/health`), which for an assistant chat is the directory it started in, not where a `cd` in it went (#2368, see `cwd` below); it has nothing to do with herdr's `space_id` / `space_name`. Old clients ignore it (`docs/assistant/health.md`).
 A Session's space also has the optional field `parent_space_id` (#2073): which space this space hangs under in the host, same machine, same `space_kind`; top-level spaces omit it. The Orca host fills it from `worktree.ps`'s `parentWorktreeId` (pointing at itself counts as none), and the hub forwards it as-is. Old clients ignore it and stay flat; the web client's **By Machine** and iOS / Mac's **By Repository** fold child spaces under their parent (`docs/web/web.md`, `docs/apple/ios.md`).
 
 Reasoning effort (`docs/integrations/codex.md` "Reasoning effort"): Codex sessions the phone drives through app-server (sendable ones in `codex_app_server`, and herdr panes attached to the shared daemon, which have no `source_kind`) carry `efforts`: the levels `effort` on `POST …/modes` can take, weakest to strongest (as reported by `model/list` for this thread's model; Codex's minimal … ultra when unavailable). `effort` is its current value, and `permission_mode` is omitted. For these sessions `/modes` accepts only `effort`; sending `permission_mode` is an error, a level not in `efforts` is an error, and failing to apply it (app-server disconnected, no timely response, Codex refused) is an error too, never a premature success. All other sessions omit `efforts`: Claude Code and the assistant keep the client's own set of levels, and the rest can't be changed. Clients show only reasoning effort when `efforts` is non-empty and sending is possible, without guessing from the Agent type; old clients ignore the field.
@@ -477,6 +477,10 @@ Provider responses carry only the description and `has_key`, never secrets. Defa
 
 // Session: (machine_id, session_id) is unique. session_id is Claude Code's session uuid.
 {"machine_id":"server","session_id":"uuid","title":"AI-generated title or directory name","cwd":"<project directory>",
+ // cwd: an Agent's latest working directory (Claude Code records the shell's directory after each Bash `cd`), except that an Agent whose `cd` landed in an
+ // assistant or health directory itself is listed where it started. For an assistant or health chat it is the directory the chat runs in, where it started,
+ // never where its last `cd` left it (#2368): the node lists it there running, at rest and in session info. Only an updated node keeps to this: one from
+ // before #2368 reports the latest directory for rows at rest (a chat drifts out of its directory, an Agent into an assistant one), and nothing tells the two apart
  "workspace_cwd":"<physical directory verified by the node>",   // optional; used for workspace association, falls back to cwd when missing, doesn't replace the original cwd
  "repo_root":"<main checkout of the repo cwd belongs to>",   // optional (#2840): named by the host (the Paseo bridge: its worktrees live under Paseo's own directory), else read by the node off git (#1805);
                    // "By Repository" groups by it: cwd inside it is the main checkout, otherwise one of its worktrees. When absent, clients infer from the cwd path as before
@@ -614,6 +618,9 @@ Provider responses carry only the description and `has_key`, never secrets. Defa
 
 // Interaction: something that needs a person
 {"id":"ix_…","machine_id":"server","session_id":"uuid","session_title":"…","cwd":"…",
+ // cwd: for a card of an assistant chat, the chat's directory, where it started (set by the node, and again by the manager when it takes the card), not
+ // the hook's directory after a `cd`; a hook directory inside a health space a chat outside it does not have is kept. A card whose cwd is a health space's
+ // directory or inside one counts as the health space's: hidden on the lock screen, not forwarded, confirmed each time (#2368, docs/assistant/health.md)
  "task_title":"…",   // when the asking Agent works on a task opened from an assistant chat, the hub fills in the task name when sending to clients (docs/assistant/unified-entry.md)
  "kind":"question|plan|permission|screen|elicitation",
  "created_at":"…","expires_at":"…","tool_name":"AskUserQuestion","tool_use_id":"…",
@@ -1038,7 +1045,7 @@ Clients report their errors and crashes only while `features` has `error_reports
 | GET | `/api/v1/sessions/{mid}/{sid}/items/{item id}/image` | The raw bytes of an item's image (Content-Type is the image type, cacheable forever); the item id contains `#` and must be percent-encoded |
 | GET | `/api/v1/sessions/{mid}/{sid}/items/{item id}/full` | An item's full text (`Item`, without images and without `full_size`; at most 1 MB): fetched when the App taps "show full text". The node re-reads and parses that line |
 | POST | `/api/v1/sessions/{mid}/{sid}/messages` | `{"text":"…","images":[{"mime","data"}]?,"client_msg_id"?,"clear_draft"?,"todo_id"?}`; `todo_id` is optional: attached after a successful send (missing 404, done 409, read-only device 403), and the to-do's decisions are prepended to `text`; for a session created with `todo_id` and no `prompt`, its first message (within 15 minutes, with or without `todo_id`) also gets the project background prepended (`docs/assistant/todos.md` ("Record the conclusion when done")); if the session is offline, it is first started with the original launcher via `--resume`; for rejections see "Sending messages" below |
-| GET | `/api/v1/sessions/{mid}/{sid}/info` | Session info: `{session_id,transcript_path,cwd,model,launcher,git_branch,version,permission_mode,effort,context_tokens,output_tokens,compactions,turns,started_at,last_activity}` |
+| GET | `/api/v1/sessions/{mid}/{sid}/info` | Session info: `{session_id,transcript_path,cwd,model,launcher,git_branch,version,permission_mode,effort,context_tokens,output_tokens,compactions,turns,started_at,last_activity}`. `cwd` is as on the Session: an Agent's latest directory, an assistant or health chat's own directory where it started (#2368) |
 | POST | `/api/v1/sessions/{mid}/{sid}/queue` | `{keep:[indexes]}`: takes back the queued input and keeps only the given items, in the order given, returns `{queue}`; used for editing, deleting and reordering (a permutation of the indexes, #6088); doesn't go through client_ops |
 | POST | `/api/v1/sessions/{mid}/{sid}/queue/send-now` | Gives the agent what waits in Claude Code's queue now (#6088, node `session.queue.send_now`): Claude Code's own send-now (ctrl+x ctrl+s), so a command it runs moves to the background and goes on, and a reply it is writing is asked again with the message (Esc would stop the command). The node presses it only while the screen offers it (the hint "ctrl+x ctrl+s to send now" under a queued message): that is the queue at that moment, which the transcript reports about a second late. → `{sent:true}` once the queue is gone from the screen. 409 `nothing_queued` (nothing queued on the screen), `send_now_unsupported` (not a Claude in a terminal, or a Claude Code with no send-now while something is queued), `send_now_in_doubt` (`delivered: "unknown"`: the key went in, the queue is still shown); an older node: `node_outdated`. It sends the whole queue |
 | POST | `/api/v1/sessions/{mid}/{sid}/seen` | Mark the session as seen, returns `{ok:true}`; `seen` can also be sent over WS |
@@ -1602,7 +1609,7 @@ The web shows it for subscribed sessions, so the node reads it from the screen a
   `thought_s` (`thought for 3s`), `at` (when the node read it, RFC 3339); missing fields are omitted.
 - node → hub event `session.live {session_id, live}`, where `live` is a `SessionLive` or `null`.
   - Only read while this session is watched (a client is subscribed), it's Claude (`agent == "claude"`) in a host whose screen can be read (herdr, herdr-core (Herdr App) or Orca; the latter two read plain text and parse it the same way, #3904; Codex, botmux, runtimes and the headless assistant aren't read), and the host reports `working`:
-    the screen is read about once a second (for herdr, `pane.read --source visible --lines 60`) with a 3-second timeout per read, in the watch's own goroutine, so it doesn't slow down the 250 ms transcript push loop (`node/claudestatus.go`).
+    the screen is read about once a second (for herdr, `pane.read --source visible --lines 60`) with a 3-second timeout per read, in a goroutine of its own and one read at a time per session, so it slows down neither the 250 ms transcript pushes nor another session (`node/claudestatus.go`). One ticker on the node drives every watched session (`watchPump` in `node/session_watch.go`): each tick stats the transcript and reads it only when it grew, so a watched session at rest costs a stat four times a second and no screen read.
   - Parsing: starting from the top border of the input box (the second-to-last horizontal line on screen) and going up, skip blank and indented lines (hints, to-dos, right-aligned `/goal`); the first unindented line is the status line, or there is no status line;
     so a status line quoted in body text, tool output or a user message is never taken as the current one. Any spinner character (`· ✢ ✳ ✶ ✻ ✽`…), durations `2s` / `1m 5s` / `1h 2m 3s`, token units k / M / none; segments in the parentheses may be missing or in any order,
     and hints like `esc to interrupt` are ignored.
@@ -2532,10 +2539,10 @@ A resident node (`personad node --attach`: Persona Link, the Mac's launchd node,
   - A replay that runs after new hooks went ahead of it (a held replay, or a hook that waited out its limit) leaves alone what they moved on: kept hook events of a session that had a new hook since are dropped (the manager already heard newer news of it), and a pane a new hook bound is not bound back to the session it had before. A resumed hook (one asking again, such as a permission standby told to retry) does not count as new: it reports nothing itself, so its kept copy is still handed over.
   - A hook entry gets the bookkeeping a live hook gets (turn counters with the original time, pane binding, transcript path) and a `hook.event` with `spool_id` and `spooled_at`. It never creates a card, and SessionStart's herdr restore and the assistant's view repair are not replayed.
   - A notification goes through the usual `notify` request with `spool_id` (5 seconds at most each).
-  - An entry leaves the file once it was handed over: a hook event once written to the connection, a notification once the manager answered. When the connection ends mid-replay, the rest stays for the next one. A notification the manager refused, did not answer in 5 seconds, or could not take now stays too (the rest goes on, so hook events keep their order; once one times out or the manager says the hub is away, the other notifications are not tried in that pass). One that can never be sent (empty, not JSON) is dropped at once.
+  - An entry leaves the file once it was handed over: a hook event once written to the connection, a notification once the manager answered. The node takes those out together, in one rewrite of the file every 64 entries and when the pass ends (also when it ends early), so the file is at most 64 entries behind the replay; standby adds an entry by appending to the file. When the connection ends mid-replay, the rest stays for the next one. A notification the manager refused, did not answer in 5 seconds, or could not take now stays too (the rest goes on, so hook events keep their order; once one times out or the manager says the hub is away, the other notifications are not tried in that pass). One that can never be sent (empty, not JSON) is dropped at once.
   - **Retries on the same connection.** The kept notifications are tried again on the same connection after 30 seconds, 1, 2 and 4 minutes, then every 4 minutes while any is left; new requests do not wait for this. One is dropped after 5 failed tries (refused, or not answered in 5 seconds: about 7 minutes of refusals). "Not now" answers do not count, so they only wait: `spool_busy` (the manager still has an earlier try) and `hub_away` (the manager has no connection to the hub, or the link was down before the call went out; both codes in `server/internal/nodeproto`), and neither does a call that times out as its connection drops (the node looks for the close for a quarter of a second).
   - Entries older than a day are dropped unsent. The day counts from when standby took the entry, not from a first refusal: what a notification or hook event says dates from then (a day-old "build finished" is no news), and a refused notification no longer waits for a reconnect to be tried again, so the age only bounds what waits for a manager or a hub that stays away.
-  - Repeats: an entry handed over twice (the node stopped between sending and removing it) is dropped by the manager by `spool_id` (`devices/spooldedupe.go`, in memory per machine). A notification's id is remembered once the hub took it, and also once it went out to the hub and the manager's link dropped before the answer: the hub may have pushed it and does not tell a repeat itself, so it is taken for sent (at most once rather than twice). A hook event written just as the connection drops can still be lost.
+  - Repeats: an entry handed over twice (the node stopped between sending it and taking it out of the file, at most 64 entries) is dropped by the manager by `spool_id` (`devices/spooldedupe.go`, in memory per machine). A notification's id is remembered once the hub took it, and also once it went out to the hub and the manager's link dropped before the answer: the hub may have pushed it and does not tell a repeat itself, so it is taken for sent (at most once rather than twice). A hook event written just as the connection drops can still be lost.
 
 ## Runtime ↔ node (unix socket `~/.persona/runtime.sock`, or a daemon the node connects to)
 
@@ -2710,13 +2717,83 @@ A call that asks for progress (`_meta.progressToken`, which Claude Code always s
 
 | Tool | Executed by | Description |
 | --- | --- | --- |
-| `phone_*` | iPhone App | declared by the App via `register_phone` (contacts, calendar, reminders, location, health, photos, clipboard, device info, notifications…) |
+| Device `phone_*` tools | phone App | declared by the App via `register_phone` (contacts, calendar, reminders, location, health, photos, clipboard, device info, notifications…); the hub adds `queue_if_offline` to confirmed writes (below) |
+| `phone_write_queue_list` / `phone_write_queue_cancel` | hub | inspect retained phone writes / cancel an unsent write, including when all phones are offline |
 | `mail_accounts` / `mail_search` / `mail_read` | hub | read-only |
 | `mail_save_attachment` | node on the agent's machine | writes a file under `<data dir>/attachments/mail`; the bytes come from the manager over `mail.attachment` (at most 25 MB, only while the mail connector offers the tool to that caller); `mail_read` lists the attachment ids |
 | `mail_send` | hub (mail connector) | write: goes through `connector_gate`; by default a `permission` interaction is created before sending, and it sends only after approval on the phone. Bad params are refused directly without a card |
 | `github_search` / `github_read` / `github_diff` / `github_checks` | hub (GitHub connector) | read-only, see the next row |
 | `github_comment` / `github_review` | hub (GitHub connector) | write: goes through `connector_gate`; by default each one is confirmed on the phone. The card states repo#number "title", the full text and who will see it; approvals start with [Approve] |
 | `<connector id>_*` | hub (connector) | only for the assistant, and only for connectors whose status is `ok`. Read-only tools run directly; writes first go through `connector_gate` in the manager's manager.json, which by default creates a `permission` interaction (the card states who will see it), and run only after approval on the phone (`server/internal/connector`) |
+
+### Phone write queue
+
+The hub adds an optional `queue_if_offline: boolean` to the schemas of `phone_calendar_create_event`,
+`phone_reminders_create`, `phone_reminders_update`, `phone_reminders_complete`, `phone_reminders_delete`, and
+`phone_health_write_sample`. Without true, the existing immediate call and background wake behavior stays unchanged.
+With true and no connected device offering the tool, the hub persists a queue entry and immediately returns that record
+as JSON text in a successful `ToolResult`. After admission it schedules a best-effort silent push in the background,
+using the normal most-recent-device selection and 30-second wake throttle; the reply does not wait for the push or a
+connection. Without configured push, this attempt does nothing. A woken phone registers its tools and triggers delivery
+as usual. With a connected device the hub calls the tool normally. The hub strips the option
+before sending `tool_call`; existing apps need no change, and reads and writes without phone confirmation cannot queue.
+The tool must also appear in a retained phone registration before the hub accepts it into the queue. A queued receipt
+means the request was accepted for later delivery; it does not mean the change was saved.
+
+The queue belongs to this hub's transport, shared across its computer sessions and devices. An entry contains:
+
+```text
+PhoneWrite {
+  id: string, tool: string, args: object,
+  state: queued | delivering | succeeded | declined | failed | uncertain | cancelled,
+  result?: ToolResult,
+  created_at: RFC3339, updated_at: RFC3339
+}
+```
+
+| Operation | Response |
+| --- | --- |
+| MCP `phone_write_queue_list {id?}` | `{items: [PhoneWrite], pending_count: N}`; an optional ID filters the list, but the count always includes all pending entries |
+| MCP `phone_write_queue_cancel {id}` | The cancelled `PhoneWrite`; an already-cancelled ID returns the same record, otherwise an error if missing or no longer queued |
+| `GET /api/v1/phone/write-queue?id=<optional id>` | The same list envelope; records in enqueue order, empty `items` if the ID is not retained |
+| `POST /api/v1/phone/write-queue/{id}/cancel` | The cancelled record (also for a repeated cancellation); 404 if missing, 409 for any other nonqueued state |
+
+Both HTTP routes use normal hub authentication and require full credentials; answer-only devices and extension tokens
+cannot access them. They need no phone connection. Clients can poll the list on connection, foregrounding, and while a
+queue view is visible. `pending_count` counts `queued` plus `delivering` and can supply a badge. This API prepares the data for an App queue view; iOS and Android do not yet display that view or badge.
+
+At `register_phone`, the hub schedules a single asynchronous delivery loop. It picks the oldest queued entry whose tool
+is currently registered by a connected phone, commits `delivering` before sending, and waits for that phone's result
+before taking another entry. The normal phone confirmation remains mandatory. Queue delivery never holds the hub's
+global lock while waiting for storage or the phone, and registration never waits for delivery. A disconnected or disabled
+tool leaves its entries queued until a capable device registers it again. Each delivery pass reads only queued entries
+in enqueue order, at most 100, using the queue's partial index; its idle timer does not load terminal history. The list
+API and list tool use a plain SELECT without taking the queue mutation lock or deleting records.
+
+| State | Meaning |
+| --- | --- |
+| `queued` | Persisted and not sent; cancellation is still possible |
+| `delivering` | Claimed for delivery; awaiting the normal phone confirmation/result |
+| `succeeded` | Phone returned a successful result |
+| `declined` | Phone explicitly returned `The user declined on the phone.` with `isError: true` |
+| `failed` | Phone returned another tool error; the result includes its explanation |
+| `uncertain` | Confirmation timed out, the sending connection closed, or the hub restarted while delivery was in progress; never automatically resent |
+| `cancelled` | Cancelled before delivery began |
+
+Each send waits up to `phoneConfirmWait` (30 minutes), independent of the original caller's request lifetime. A timeout
+or disconnect does not prove the phone made no change, even when a late result arrives after reconnecting; inspect the
+actual phone data before submitting another write. Restart recovery changes leftover `delivering` entries to `uncertain`
+and preserves queued entries. There is no automatic retry for terminal records.
+
+Deduplication covers only `queued` entries: the same tool and normalized JSON arguments reuse the existing ID (key order
+and whitespace are irrelevant). It does not cover already-delivering or terminal entries. The limit is 100 pending
+entries (`queued` plus `delivering`), with at most 64 KiB of arguments each. Cleanup runs only on admission and when
+recording a delivery result, removing terminal records older than 30 days and keeping the newest 1,000 terminal records.
+Reads, cancellations, and startup recovery do not clean up: older records and additional terminal records from
+cancellation or recovery remain visible until the next cleanup. The total table remains bounded at 1,100 records.
+Stored results are limited to 64 KiB; when a phone returns more, the hub stores an explanation instead of its full result
+without changing the outcome state. Pending entries do not expire or get evicted when a queue is full.
+See `docs/apple/phone-tools.md`, "Offline write queue", for caller behavior and confirmation details.
 
 ## Connector API
 
@@ -2870,11 +2947,20 @@ Like the other knowledge base endpoints, the hub forwards them as-is to the mana
   "language": "zh-CN",                        // BCP 47
   "device": "phone",                          // phone | watch: the device that recorded
   "title": "",                                // optional, name given by the user
+  "kind": "note",                             // optional: "meeting" or "note" (default "note"); a meeting gets minutes ([meeting-minutes.md](../assistant/meeting-minutes.md))
+  "calendar": {"title": "", "attendees": [], "location": ""},  // optional hint from the device's own calendar; no event id
   "bookmarks": [{"at": 120.5, "label": ""}],  // at: seconds from the start
   "segments": [{"start": 0, "end": 4.2, "text": "…"}],  // seconds from the start
   "complete": false                           // true only when recording has ended and transcription is fully done; send the parts available before that
 }
 ```
+
+Minutes for a meeting recording ([meeting-minutes.md](../assistant/meeting-minutes.md)):
+
+- `kind` and `calendar` are optional and travel with the full-state upload, so a later upload replaces them. Unknown `kind` is `400`. A client sending neither is unchanged.
+- `GET /api/v1/kb/recordings/{id}` adds to `detail.meta`: `kind`, `calendar` (when sent), `meeting` (`{kind, id, name}` of an overlapping `meetings` or `events` item, when matched) and `minutes_state` (`pending`, `ready`, `failed`; absent for a note). When `minutes_state` is `ready`, `detail.minutes` is `{title, when, where?, attendees?, points:[{text, at, who?}], decisions:[{text, at}], actions:[{who?, what, by?, at}], open:[{text, at}]}`, with `at` in seconds from the start, the same clock as `segments[].start`. Absent sections and unknown names are omitted, never filled in.
+- `detail.summary` stays the short summary either way. `kb_get` returns `detail.minutes` too, and `kb_search` matches the minutes text.
+- `POST /api/v1/recordings/{id}/minutes` regenerates a meeting's minutes: `202 {"state":"pending"}`, `409` when the transcript is not `complete`, `404` when the recording does not exist. It does not change the transcript or the revision.
 
 - Response `200 {"id","revision","status"}`: `stored` was written (a replay of the same revision also overwrites); `stale` the stored revision is higher, nothing written; `expired` the start time is before the retention window, not stored.
 - `410`, `code: recording_deleted`: this recording was deleted (the tombstone stays until the retention window ends); the phone should stop sending it.

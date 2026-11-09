@@ -533,18 +533,6 @@ export function languageOf(name: string, firstLine = ""): Lang | null {
   return LANGS[id];
 }
 
-/** The language of a Markdown code fence (```swift). */
-export function languageOfFence(name: string): Lang | null {
-  const alias: Record<string, string> = {
-    python3: "py", python: "py", javascript: "js", node: "js", typescript: "ts", bash: "sh", shell: "sh", console: "sh",
-    shellscript: "sh", zsh: "sh", golang: "go", rust: "rs", kotlin: "kt", ruby: "rb", "c++": "cpp", "objective-c": "m",
-    objc: "m", csharp: "cs", "c#": "cs", docker: "dockerfile", make: "mk", makefile: "mk", terraform: "tf", yml: "yaml",
-  };
-  const n = name.trim().toLowerCase();
-  if (!n) return null;
-  return n === "dockerfile" ? LANGS.docker : languageOf("x." + (alias[n] ?? n));
-}
-
 const IDENT = /[A-Za-z0-9_$]/;
 const NUMBER = /(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*)?\.?\d[\d_]*(?:[eE][+-]?\d+)?)[a-zA-Z]{0,3}/y;
 const WORD = /[A-Za-z_$~][A-Za-z0-9_$]*/y;

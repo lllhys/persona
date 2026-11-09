@@ -94,6 +94,24 @@ struct MacAttentionTests {
         #expect(MacAttention.managerMuted(prefs, group: "", sessions: [session("a", .needsYou)], interactions: [])(key("a")), "no stamp: the hub's own assistant")
     }
 
+    @Test func quietHoursDropFinishedBannersAndHushTheRest() throws {
+        // #1863: inside this device's window, as the hub does with its pushes then.
+        var prefs = NotifyPrefs(done: .always)
+        let old = [session("a", .working), session("b", .working)]
+        let new = [session("a", .needsYou), session("b", .unread)]
+        prefs.quiet = QuietHours(enabled: true, start: "23:00", end: "07:00")
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        #expect(prefs.quiet?.active(at: now, fallback: utc) == false, "the test's clock, 13:46 UTC")
+        prefs.quiet?.tz = "UTC"
+        #expect(ping(old, new, prefs: prefs) == ["a:needs_you", "b:unread"], "outside the window")
+        prefs.quiet?.start = "13:00"
+        prefs.quiet?.end = "14:00"
+        #expect(ping(old, new, prefs: prefs) == ["a:needs_you"], "inside it nothing says an agent finished")
+        let hushed = MacAttention.content(session("a", .needsYou), .needsYou, interaction: nil, hushed: true)
+        #expect(hushed.sound == nil && hushed.interruptionLevel == .passive)
+        #expect(MacAttention.content(session("a", .needsYou), .needsYou, interaction: nil).sound != nil)
+    }
+
     @Test func personaAsksButItsRepliesDoNotPing() {
         let old = [session("j", .working, assistant: true), session("k", .working, assistant: true)]
         let new = [session("j", .needsYou, assistant: true), session("k", .unread, assistant: true)]

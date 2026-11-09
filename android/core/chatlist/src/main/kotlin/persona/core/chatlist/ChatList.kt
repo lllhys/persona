@@ -1,14 +1,11 @@
 package persona.core.chatlist
 
-import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
@@ -210,16 +207,4 @@ fun ChatList(
 ) {
     LazyColumn(state = state.list, reverseLayout = true, modifier = modifier,
         contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
-}
-
-@Composable
-fun ReturnToLatestButton(state: ChatListState, newMessages: Int? = null, hasMoreNewer: Boolean = false, modifier: Modifier = Modifier) {
-    if (state.followsEnd) return
-    FilledTonalButton(onClick = state::returnToLatest, modifier = modifier) {
-        Icon(Icons.Default.ArrowDownward, stringResource(R.string.chatlist_return_to_latest))
-        newMessages?.takeIf { it > 0 }?.let {
-            Spacer(Modifier.width(4.dp))
-            Text("$it${if (hasMoreNewer) "+" else ""}", maxLines = 1)
-        }
-    }
 }

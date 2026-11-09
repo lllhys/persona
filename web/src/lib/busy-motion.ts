@@ -9,9 +9,6 @@ import type { CSSProperties } from "react";
 /** The class that exempts an element from the reduced-motion strip (styles.css, `.busy-motion`). */
 export const BUSY_MOTION = "busy-motion";
 
-/** How long one cycle of a busy indicator takes under reduced motion, in seconds (styles.css has the same number). */
-export const BUSY_MOTION_REDUCED_SECONDS = 2.4;
-
 /** How many turns the spinners' keyframes (styles.css `spin-long`) make in one cycle. A CSS animation that loops sends
  *  an `animationiteration` event every cycle, and React listens for those at the root, so each turn of each spinner
  *  cost the page a style recalc (8 marks turning: ~8% of an idle main thread). Many turns per cycle at the same speed

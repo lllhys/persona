@@ -130,11 +130,3 @@ export function followRoute(mid: string, e: Pick<HerdrFocus, "pane_id" | "sessio
   }
   return { name: "terminal", mid, id: `pane:${e.pane_id}` };
 }
-
-/** The address a route shows a terminal for (the session page's agent, the "Terminal" page's terminal); undefined for other pages. */
-export function routeAddress(r: Route, sidOfTab?: string): { mid: string; address: string } | undefined {
-  if (r.name === "session") return { mid: r.mid, address: r.sid };
-  if (r.name === "tab" && (sidOfTab || r.sid)) return { mid: r.mid, address: sidOfTab || r.sid! };
-  if (r.name === "terminal" && r.mid && r.id) return { mid: r.mid, address: r.id };
-  return undefined;
-}

@@ -15,6 +15,9 @@ import persona.core.contracts.api.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.format.TextStyle
 
 @Composable
 internal fun DevicesPage(
@@ -136,6 +139,7 @@ internal fun NotificationPreferences(
                     prefs.doneDelaySeconds?.let { SettingsCaption(pluralStringResource(R.plurals.settings_notify_done_delay, it, it)) }
                 }
             }
+            if (prefs.quiet != null) quietHoursItems(controller)
             item {
                 JGroupItem(GroupPosition.of(0, 2)) {
                     JSwitchRow(stringResource(R.string.settings_notify_live), prefs.liveActivity, { scope.launch { controller.savePreferences(prefs.copy(liveActivity = it)) } }, enabled = enabled)
@@ -156,6 +160,57 @@ internal fun NotificationPreferences(
         }
         if (state.busy && state.preferences != null) item { SettingsCaption(stringResource(R.string.settings_saving)) }
     }
+}
+
+/**
+ * This phone's quiet hours (#1863, iOS `quietHoursSection`): a switch, then From / Until. Each change sends only `quiet`, in
+ * this phone's time zone; hours set in another zone say which until they are changed here.
+ */
+private fun LazyListScope.quietHoursItems(controller: DeviceSettingsState) {
+    item("quiet") {
+        val state by controller.state.collectAsState()
+        val scope = rememberCoroutineScope()
+        val quiet = state.preferences?.quiet ?: return@item
+        val enabled = !state.busy && !state.needsCleanup
+        // Which end is being picked: true From, false Until.
+        var picking by remember { mutableStateOf<Boolean?>(null) }
+        val rows = if (quiet.enabled) 3 else 1
+        Column(Modifier.padding(top = Tokens.Space.s)) {
+            JGroupItem(GroupPosition.of(0, rows)) {
+                JSwitchRow(stringResource(R.string.settings_notify_quiet), quiet.enabled, { on -> scope.launch { controller.saveQuietHours(quiet.copy(enabled = on)) } },
+                    subtitle = if (quiet.enabled) null else stringResource(R.string.settings_notify_quiet_off), leadingIcon = PhIcons.Moon, enabled = enabled)
+            }
+            if (quiet.enabled) {
+                JGroupItem(GroupPosition.of(1, rows)) {
+                    JRow(stringResource(R.string.settings_notify_quiet_start), value = quiet.start, enabled = enabled, onClick = { picking = true })
+                }
+                JGroupItem(GroupPosition.of(2, rows)) {
+                    JRow(stringResource(R.string.settings_notify_quiet_end), value = quiet.end, enabled = enabled, onClick = { picking = false })
+                }
+            }
+        }
+        picking?.let { start ->
+            val clock = if (start) quiet.start else quiet.end
+            JTimePickerDialog(QuietHours.minutes(clock)?.let { LocalTime.of(it / 60, it % 60) }, { time ->
+                val next = QuietHours.clock(time.hour * 60 + time.minute)
+                if (next != clock) scope.launch { controller.saveQuietHours(if (start) quiet.copy(start = next) else quiet.copy(end = next)) }
+            }, { picking = null }, title = stringResource(if (start) R.string.settings_notify_quiet_start else R.string.settings_notify_quiet_end))
+        }
+    }
+    item("quiet-note") {
+        val state by controller.state.collectAsState()
+        val zone = state.preferences?.quiet?.tz?.let { elsewhere(it) }
+        SettingsCaption(if (zone != null) stringResource(R.string.settings_notify_quiet_footer_zone, zone) else stringResource(R.string.settings_notify_quiet_footer),
+            Modifier.padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.s))
+    }
+}
+
+/** The name of [tz] when it isn't this phone's zone (the hours were set somewhere else); null when it is, or unknown. */
+@Composable
+private fun elsewhere(tz: String): String? {
+    val zone = runCatching { ZoneId.of(tz) }.getOrNull() ?: return null
+    if (zone.id == ZoneId.systemDefault().id) return null
+    return zone.getDisplayName(TextStyle.FULL, currentLocale)
 }
 
 @Composable

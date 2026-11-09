@@ -3,8 +3,10 @@ package node
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/transcript"
 )
@@ -25,7 +27,14 @@ type quickMeta struct {
 	bgWait   bool                   // bg and loop are not known yet (a big first read is running)
 	wf       []proto.Workflow       // workflow runs, as the transcript tells them (bgWorkflows)
 	wfScript map[string]string      // their script files by run id
-	cwd      string
+	// cwd: where the session runs. An agent's latest directory (Claude Code writes the shell's directory after each
+	// Bash `cd` into every line), but where it started when that latest one is an assistant or health directory; for
+	// a conversation that started in an assistant or health directory, that directory, wherever its `cd`s took it
+	// since (#2368).
+	cwd string
+	// start: the first directory the transcript's head names, where the session started ("" when the head has none:
+	// a first prompt bigger than the head read).
+	start    string
 	model    string
 	surface  string // the client it runs in (transcript.Meta.Surface)
 	lastText string
@@ -145,6 +154,13 @@ func (n *Node) meta(path string, st os.FileInfo) quickMeta {
 		return m
 	}
 	m = readQuickMetaSince(path, st, m) // m: the last read's, zero when there is none
+	if m.start == "" {
+		// A first prompt bigger than the head read (an inline image) hides where the session started: the node's own
+		// assistant or health project says it (#2368).
+		if dir := n.assistantDirOfProject(filepath.Base(filepath.Dir(path))); dir != "" {
+			m.cwd = dir
+		}
+	}
 	m.readAt = time.Now()
 	m.bg, m.loop, m.goal, m.bgWait = n.backgroundTasks(path)
 	m.wf, m.wfScript = n.bgWorkflows(path)
@@ -173,6 +189,7 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 	}
 	defer f.Close()
 	var tm transcript.Meta
+	start := "" // the first cwd: tm.Cwd moves with every `cd` the head's lines record, and the tail's overwrite it
 	// The first prompt is usually in the first 32 KB. A Codex rollout puts its instructions first (the assistant's
 	// AGENTS.md and snapshot: 74 KB in), so up to 256 KB is read while it has not turned up.
 	head := make([]byte, 32*1024)
@@ -182,6 +199,9 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 			if bytes.Contains(line, []byte(`"cwd"`)) || bytes.Contains(line, []byte(`"type":"user"`)) ||
 				bytes.Contains(line, []byte(`"type":"UserMessage"`)) { // Codex rollouts: session_meta, then the first prompt
 				transcript.ParseLine(0, line, &tm)
+				if start == "" {
+					start = tm.Cwd
+				}
 				if tm.Cwd != "" && tm.FirstUser != "" {
 					break
 				}
@@ -249,6 +269,15 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 	}
 	rewound := tail.Settle(&tm)
 	m.title, m.cwd, m.model, m.lastText, m.first, m.activity, m.queue = tm.Title, tm.Cwd, tm.Model, tm.LastText, first, tm.LastActivity, tm.Queue
+	m.start = start
+	if identity.IsAssistantDir(start) || start != "" && identity.IsAssistantDir(m.cwd) {
+		// An assistant or health conversation is where it started: its space, CLAUDE.md, memory and resume project.
+		// A `cd` into a skill's folder had it listed as an agent there (#2368). The other way round, an agent whose
+		// `cd` landed in an assistant or health directory (one started in the home directory) is not one of their
+		// conversations: listed there at rest, the hub took it for one. An exact assistant or health directory is
+		// only ever where a session started.
+		m.cwd = start
+	}
 	m.surface = tm.Surface
 	if m.surface == "" {
 		m.surface = prev.surface // Claude writes it on every line, a rollout on its first: the head read above has it

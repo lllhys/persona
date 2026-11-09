@@ -180,10 +180,11 @@ class Notifier @Inject constructor(
 
     internal fun updateOngoing(status: OngoingStatus) = post(null, ONGOING_ID, ongoing(status))
 
-    fun postInteraction(ix: Interaction) { postInteraction(ix, note = null) }
+    /** [hushed]: inside this device's quiet hours (the hub's `quiet`), shown without a sound. */
+    fun postInteraction(ix: Interaction, hushed: Boolean = false) { postInteraction(ix, note = null, hushed = hushed) }
 
     /** [note] replaces the line under the title and leads the expanded text (#5008). False when nothing was posted. */
-    private fun postInteraction(ix: Interaction, note: String?): Boolean {
+    private fun postInteraction(ix: Interaction, note: String?, hushed: Boolean = false): Boolean {
         if (preferences.preferences.value?.input != true) return false
         if (NotificationPolicy.expired(ix)) { retract(ix.id); return false }
         val assistant = isAssistant(ix.sessionKey)
@@ -198,6 +199,7 @@ class Notifier @Inject constructor(
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setOnlyAlertOnce(true)
+            .setSilent(hushed)
             .setAutoCancel(true)
             .setContentIntent(open(ix.sessionKey, request = ix.id))
         ix.expiresAt?.let { deadline ->
@@ -243,6 +245,8 @@ class Notifier @Inject constructor(
             .setContentText(event.body.ifBlank { event.subtitle })
             .setSubText(event.subtitle.takeIf { it.isNotBlank() })
             .setStyle(NotificationCompat.BigTextStyle().bigText(event.body.take(2000)))
+            // Inside this device's quiet hours (the hub marks reply reminders so): shown, without a sound.
+            .setSilent(event.quiet)
             .setAutoCancel(true).apply {
                 if (session != null) setContentIntent(open(session, if (event.kind == "assistant") true else isAssistant(session)))
             }.build())

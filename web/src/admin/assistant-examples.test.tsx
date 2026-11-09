@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { example, EXAMPLE_ORDER, previewAction, readExample, replyOf, submitSummary } from "./assistant-examples";
+import { example, EXAMPLE_ORDER, previewAction, readExample, submitSummary } from "./assistant-examples";
 import { fieldValues } from "../lib/extension-ui";
 import { Preview } from "./pages/Assistant";
 
@@ -34,9 +34,9 @@ describe("the example cards", () => {
 
   it("finds an action's reply, on a row or a button", () => {
     const decision = example("decision")!;
-    expect(replyOf(decision.raw, "choose-b")).toBe("选 B：队列去重");
-    expect(replyOf(example("form")!.raw, "submit")).toBe("按这些信息安排任务");
-    expect(replyOf(decision.raw, "nope")).toBe("");
+    expect(previewAction(decision.raw, "choose-b")).toEqual({ sends: true, text: "选 B：队列去重" });
+    expect(previewAction(example("form")!.raw, "submit")).toEqual({ sends: true, text: "按这些信息安排任务" });
+    expect(previewAction(decision.raw, "nope")).toBeNull();
   });
 
   it("describes navigation without turning opaque ids into reply text", () => {

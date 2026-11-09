@@ -1,0 +1,54 @@
+[
+  {
+    "name": "phone_reminders_create",
+    "description": "Create a reminder after confirmation on the phone.\n\nIf the phone is offline and this write can wait for the user to open Persona and confirm it, explicitly set queue_if_offline=true. The hub then saves it and returns a queue receipt immediately, not a completed write. Use phone_write_queue_list to check its state and phone_write_queue_cancel to cancel it before delivery. Defaults to false: ordinary calls keep their existing behavior. Never enqueue a retry of an uncertain write without checking the phone first.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "queue_if_offline": {
+          "default": false,
+          "description": "Opt in to durable queuing when no connected phone provides this write tool. Returns a receipt immediately; the user still confirms on the phone when it connects. Defaults to false. Do not use to retry a write whose outcome is uncertain.",
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "phone_write_queue_list",
+    "description": "List retained phone write receipts, optionally selecting one id. queued means waiting for a connected phone; delivering means awaiting confirmation; succeeded, declined, failed, uncertain and cancelled are terminal. pending_count counts all queued and delivering writes, even when filtering by id. Queued does not mean written. An uncertain write is never retried automatically: check the phone's actual data and pending approval before requesting another write.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Optional queue receipt id."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "phone_write_queue_cancel",
+    "description": "Cancel a queued phone write by its receipt id. Only writes that have not been sent can be cancelled. A delivering or uncertain write cannot be recalled; check the phone before requesting another write. Repeating cancellation of an already cancelled receipt is safe.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Queue receipt id returned when the write was queued."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

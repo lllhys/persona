@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FocusGuard, FOLLOW_MS, SENT_MS, decideFocus, focusAddress, followRoute, parseFocus, routeAddress, type HerdrFocus } from "./herdr-focus";
+import { FocusGuard, FOLLOW_MS, SENT_MS, decideFocus, focusAddress, followRoute, parseFocus, type HerdrFocus } from "./herdr-focus";
 import type { Session } from "./types";
 
 const ev = (over: Partial<HerdrFocus> = {}): HerdrFocus => ({
@@ -121,18 +121,5 @@ describe("followRoute", () => {
   it("falls back to the pane's address for an agent that cannot show a terminal here", () => {
     expect(followRoute("m1", { pane_id: "w1:p1", session_id: "gone" }, [session()])).toEqual({ name: "terminal", mid: "m1", id: "pane:w1:p1" });
     expect(followRoute("m1", { pane_id: "w1:p1", session_id: "s1" }, [session({ state: "offline" })])).toEqual({ name: "terminal", mid: "m1", id: "pane:w1:p1" });
-  });
-});
-
-describe("routeAddress", () => {
-  it("names the terminal a page shows", () => {
-    expect(routeAddress({ name: "session", mid: "m1", sid: "s1" })).toEqual({ mid: "m1", address: "s1" });
-    expect(routeAddress({ name: "tab", mid: "m1", space: "w1", slot: "w1:t1", sid: "s2" })).toEqual({ mid: "m1", address: "s2" });
-    expect(routeAddress({ name: "tab", mid: "m1", space: "w1", slot: "w1:t1" }, "s3")).toEqual({ mid: "m1", address: "s3" });
-    expect(routeAddress({ name: "terminal", mid: "m1", id: "pane:w1:p2" })).toEqual({ mid: "m1", address: "pane:w1:p2" });
-  });
-  it("is nothing for the other pages", () => {
-    expect(routeAddress({ name: "terminal" })).toBeUndefined();
-    expect(routeAddress({ name: "settings" })).toBeUndefined();
   });
 });

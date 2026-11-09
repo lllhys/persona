@@ -64,7 +64,7 @@ func TestPhoneToolsWriteStallsNothingElse(t *testing.T) {
 		close(st.release)
 		t.Fatal("the write did not give up at its timeout")
 	}
-	if got := h.phoneToolList(); len(got) != 0 {
+	if got := h.phoneToolList(); len(got) != 2 || got[0].Name != "phone_write_queue_list" || got[1].Name != "phone_write_queue_cancel" {
 		t.Fatalf("a registration that was not saved is listed: %+v", got)
 	}
 }
@@ -90,7 +90,7 @@ func TestPhoneToolsRevokedDuringTheWrite(t *testing.T) {
 	}
 	close(st.release)
 	<-done
-	if got := h.phoneToolList(); len(got) != 0 {
+	if got := h.phoneToolList(); len(got) != 2 || got[0].Name != "phone_write_queue_list" || got[1].Name != "phone_write_queue_cancel" {
 		t.Fatalf("a revoked device's tools are listed: %+v", got)
 	}
 }

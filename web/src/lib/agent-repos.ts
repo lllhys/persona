@@ -276,20 +276,10 @@ function buildRepos(sessions: Session[], machineId: string): RepoTree[] {
 }
 
 /**
- * The sidebar's repository tree: every live agent under the repository its cwd names, that repository's working trees
- * under it. Repositories sort by name (then machine), a tree's main checkout comes first, the rest by name; agents
- * inside a tree keep the sidebar's own order (needs-you first).
- */
-export function buildRepoTree(all: Session[], machines: Machine[]): RepoTree[] {
-  const order = (m: string) => machines.findIndex((x) => x.id === m);
-  return buildRepoMachineTree(all, machines)
-    .flatMap((m) => m.repos)
-    .sort((a, b) => a.name.localeCompare(b.name) || order(a.machineId) - order(b.machineId));
-}
-
-/**
  * The sidebar's repository tree partitioned by computer (#2108 / #2126): each computer with live agents gets its own
- * section, kept in the hub's machine order; repositories within each computer sort alphabetically by name.
+ * section, kept in the hub's machine order; repositories within each computer sort alphabetically by name. Every live
+ * agent is under the repository its cwd names, that repository's working trees under it: a tree's main checkout comes
+ * first, the rest by name, and agents inside a tree keep the sidebar's own order (needs-you first).
  */
 export function buildRepoMachineTree(all: Session[], machines: Machine[]): RepoMachine[] {
   const online = new Set(machines.filter((m) => m.online).map((m) => m.id));

@@ -160,6 +160,37 @@ func SpaceOf(path string) string {
 	return ""
 }
 
+// InHealthSpace: path is a health space's directory, of any manager, or a directory inside one. A conversation's
+// directory is where it started; a hook's or a card's is where the model's last `cd` left its shell (#2368), which
+// may be a subfolder of it (health/reports). This is for hiding and confirming only, where counting a subfolder as
+// the space can only hide or ask more: it never decides what a conversation is (SpaceOf and IsAssistantDirOf stay
+// exact). A path part named health elsewhere (assistant/.claude/skills/health, /tmp/health) is not one.
+func InHealthSpace(path string) bool {
+	if path == "" {
+		return false
+	}
+	for p := filepath.Clean(path); ; {
+		if isManagerStateDir(p, SpaceHealth) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
+// CardCwd is the directory a card (an interaction) of a conversation is placed in: the conversation's own directory
+// home, where it started, rather than where the hook ran (here, after the model's `cd`s). A hook directory inside a
+// health space a home outside it does not have wins, so a mix-up can only hide more. "" home: here.
+func CardCwd(home, here string) string {
+	if home == "" || InHealthSpace(here) && !InHealthSpace(home) {
+		return here
+	}
+	return home
+}
+
 // isManagerStateDir: path is the directory base, or base-<id> (IsManagerDirName), in the state directory.
 func isManagerStateDir(path, base string) bool {
 	name := filepath.Base(filepath.Clean(path))

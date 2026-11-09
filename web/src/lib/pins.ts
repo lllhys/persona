@@ -39,11 +39,6 @@ export function toggleSpacePin(machineId: string, spaceName: string, p: AgentPin
   return { ...p, spaces: toggled(p.spaces, spaceKey(machineId, spaceName)) };
 }
 
-/** A space was renamed: its pin (or mute: same shape) follows the new name. */
-export function renameSpaceIn<T extends { spaces: string[] }>(p: T, from: string, to: string): T {
-  return { ...p, spaces: p.spaces.map((k) => (k === from ? to : k)) };
-}
-
 /** The pinned agents among `sessions`, in pin order (the newest pin first). */
 export function pinnedSessions(sessions: Session[], p: AgentPins): Session[] {
   if (!p.sessions.length) return [];

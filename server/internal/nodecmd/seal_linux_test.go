@@ -12,10 +12,14 @@ import (
 	"github.com/nwverse/persona/server/internal/osproc/osproctest"
 )
 
-// TestMain lets the test binary be the node of TestNodeSealsInherited (nodeEntryEnv).
+// TestMain lets the test binary be the node of TestNodeSealsInherited (nodeEntryEnv) and the commands of
+// TestNodeCapsProcs (procsEntryEnv).
 func TestMain(m *testing.M) {
 	if arg := os.Getenv(nodeEntryEnv); arg != "" {
 		os.Exit(nodeEntry(arg))
+	}
+	if args := os.Getenv(procsEntryEnv); args != "" {
+		os.Exit(procsEntry(args))
 	}
 	os.Exit(m.Run())
 }

@@ -45,6 +45,10 @@ type ExtensionDetail struct {
 	// another host deletes its key, docs/extensions/extensions.md "Built-in voice extension"; a line in Warnings says so too). An
 	// error answer carries it too when they went before the configuration could not be saved.
 	SecretsCleared []string `json:"secrets_cleared,omitempty"`
+	// DataDir is its data directory on the manager's machine, the one its program is given there (an attached package
+	// keeps it): for the master token over loopback and the admin UI only, never a device; none for one installed from
+	// remote:, one from hub.json or manager.json, or one with no program on the manager.
+	DataDir string `json:"data_dir,omitempty"`
 }
 
 // ExtensionSecretView is a declared secret and whether it has a value (never the value).
@@ -65,6 +69,10 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 		Contributions: ps.contributionViews(p), Depends: ps.reg.DependenciesContext(ctx, m), ExtensionPack: m.ExtensionPack}
 	if d.Permissions == nil {
 		d.Permissions = []extension.PermissionLine{}
+	}
+	if who := principalOf(ctx); (who.Owner || who.Admin) && p.Legacy == nil && m.Runtime != nil &&
+		(p.Record.Remote == nil || p.Record.AttachedPackage()) {
+		d.DataDir = ps.reg.DataDir(p.Record.ID)
 	}
 	if m.NodeProgram() != nil { // not cua / ego / imessage: built in, their machines show as they always did
 		d.NodeMachines = m.Node.Machines

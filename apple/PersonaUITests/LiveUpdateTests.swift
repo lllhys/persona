@@ -146,7 +146,7 @@ final class LiveUpdateTests: XCTestCase {
         // Below the cards that need you, out of sight and not built yet (#836).
         app.bringAboveTabBar(row)
         row.press(forDuration: 1.2)
-        // 「重命名…」 By Project, 「重命名 Agent…」 By Repository (the default list: its menu renames the worktree too).
+        // "Rename…" By Project, "Rename Agent…" By Repository (the default list: its menu renames the worktree too).
         let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '重命名'")).firstMatch
         XCTAssertTrue(rename.waitForExistence(timeout: 5), "the long-press menu opened")
         let y = rename.frame.minY

@@ -36,7 +36,7 @@ func TestCodexContinuationHasOneIdentityAndCurrentTranscript(t *testing.T) {
 	n := remoteTestNode(t)
 	now := time.Now()
 	writeRollout(t, n.home, remoteRaw, "/project", now, now.Add(-time.Hour))
-	home := filepath.Join(n.home, ".codex")
+	home := canonicalCodexHome(filepath.Join(n.home, ".codex"), n.home) // the default home, as the node spells it
 	original := rolloutPath(home, remoteRaw)
 	old, err := os.ReadFile(original)
 	if err != nil {
@@ -83,6 +83,31 @@ func TestCodexContinuationHasOneIdentityAndCurrentTranscript(t *testing.T) {
 	}
 }
 
+// A node whose home is behind a link (a linked /home; macOS's /var for test homes) configures Codex when it starts,
+// before ~/.codex exists: once Codex is used, the default home's sessions keep their raw thread IDs.
+func TestCodexDefaultHomeMadeLaterBehindALink(t *testing.T) {
+	n := remoteTestNode(t)
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(n.home, link); err != nil {
+		t.Fatal(err)
+	}
+	n.home = link
+	n.codices = newCodexRegistry()
+	n.codices.scan = func() []codexProcess { return nil }
+	n.configureCodex(proto.CodexConfig{}) // at start: no ~/.codex yet
+	now := time.Now()
+	writeRollout(t, link, remoteRaw, "/project", now, now)
+	n.configureCodex(proto.CodexConfig{})
+	rows := n.codexSessions(map[string]bool{})
+	var ids []string
+	for _, r := range rows {
+		ids = append(ids, r.SessionID)
+	}
+	if len(ids) != 1 || ids[0] != remoteRaw {
+		t.Fatalf("the default home's sessions: %q, want [%q]", ids, remoteRaw)
+	}
+}
+
 func TestCodexContinuationWaitsForHeaderAndKeepsRealSubagents(t *testing.T) {
 	home := filepath.Join(t.TempDir(), ".codex")
 	now := time.Now()
@@ -122,7 +147,7 @@ func TestOldCodexContinuationLookup(t *testing.T) {
 		base := t.TempDir()
 		old := time.Now().Add(-2 * codexWindow)
 		writeRollout(t, base, remoteRaw, "/project", old, old)
-		home := filepath.Join(base, ".codex")
+		home := canonicalCodexHome(filepath.Join(base, ".codex"), n.home) // as the node spells it
 		original := rolloutPath(home, remoteRaw)
 		path := strings.TrimSuffix(original, ".jsonl") + "_" + continuationSegment + ".jsonl"
 		if archived {

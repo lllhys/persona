@@ -16,7 +16,6 @@ dependencies {
     implementation(project(":core:navigation"))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
-    implementation(libs.compose.icons)
     implementation(libs.androidx.lifecycle.compose)
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:${libs.versions.lifecycle.get()}")
     implementation(libs.androidx.navigation3.runtime)

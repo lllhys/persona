@@ -2125,6 +2125,17 @@ nonisolated struct QuietHours: Codable, Equatable, Sendable {
         guard let tz, !tz.isEmpty, let zone = TimeZone(identifier: tz), zone.identifier != here.identifier else { return nil }
         return zone.localizedName(for: .generic, locale: locale) ?? zone.identifier
     }
+
+    /// Whether `date` is inside the window, read in `tz` or else in `fallback` (the hub's `activeAt`, quiethours.go):
+    /// what a Mac's own banners follow while the hub sends it no pushes.
+    func active(at date: Date, fallback: TimeZone = .current) -> Bool {
+        guard enabled, let from = Self.minutes(start), let until = Self.minutes(end), from != until else { return false }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = tz.flatMap { $0.isEmpty ? nil : TimeZone(identifier: $0) } ?? fallback
+        let c = calendar.dateComponents([.hour, .minute], from: date)
+        let now = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        return from < until ? (from..<until).contains(now) : now >= from || now < until
+    }
 }
 
 nonisolated struct NotifyPrefs: Codable, Equatable, Sendable {

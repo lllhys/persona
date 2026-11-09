@@ -41,15 +41,15 @@ func newCodexRegistry() *codexRegistry {
 	return &codexRegistry{threads: map[string]codexSource{}, remotes: map[string]*codexRemote{}, scan: scanCodexProcesses, checked: scanCodexProcessesChecked, kick: make(chan struct{}, 1)}
 }
 
+// canonicalCodexHome is home absolute, with its links resolved as far as it exists: a home that does not exist yet
+// (Codex not used yet when the node starts) canonicalizes the same as it will once it does, so LegacyHome, fixed on
+// the first configure, still equals that home in Homes later under a linked ancestor (macOS's /var, a linked /home).
 func canonicalCodexHome(home, base string) string {
 	p := proto.ExpandHome(home, base)
 	if !filepath.IsAbs(p) {
 		return ""
 	}
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return filepath.Clean(real)
-	}
-	return filepath.Clean(p)
+	return realPath(filepath.Clean(p))
 }
 
 func codexSourceID(home, raw, legacy string) string {

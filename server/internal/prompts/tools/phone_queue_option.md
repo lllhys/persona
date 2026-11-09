@@ -1,0 +1,1 @@
+Opt in to durable queuing when no connected phone provides this write tool. Returns a receipt immediately; the user still confirms on the phone when it connects. Defaults to false. Do not use to retry a write whose outcome is uncertain.

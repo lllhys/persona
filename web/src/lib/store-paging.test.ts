@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyCompleteSessions, connect, getSession, getState, rememberSessionRow, reset, upsertSession } from "./store";
 import { runtimeSessions } from "./runtime-list";
 import { isWaiting } from "./agent-groups";
-import { backgroundCount, backgroundRunning, workflowShortLine } from "./workflows";
+import { backgroundCount, workflowShortLine } from "./workflows";
 import { t } from "../i18n";
 import type { Session } from "./types";
 
@@ -108,7 +108,7 @@ describe("negotiated bounded runtime lists", () => {
     upsertSession({ ...getState().sessionSummaries[0], title: "Optimistic title" });
     upsertSession(session("s0", { waiting: undefined, background: [{ id: "bg", kind: "shell" }] }));
     expect(getSession("demo", "s0")?.waiting).toBeUndefined();
-    expect(backgroundRunning(getSession("demo", "s0"))).toBe(true);
+    expect(backgroundCount(getSession("demo", "s0"))).toBe(1);
   });
 
   it("recovers a resumed socket's expired revision with a bounded baseline", async () => {
@@ -169,7 +169,5 @@ describe("summary-aware background state", () => {
     const s = session("s", { waiting: true, background_count: 2, running_workflows: 1, running_subagents: 1 });
     expect(backgroundCount(s)).toBe(2);
     expect(workflowShortLine(s)).toBe(t("lib-workflows.running_in_background"));
-    expect(backgroundRunning(s)).toBe(true);
-    expect(backgroundRunning(session("s", { waiting: true, running_subagents: 1 }))).toBe(true);
   });
 });

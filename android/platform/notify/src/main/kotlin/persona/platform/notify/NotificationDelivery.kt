@@ -15,7 +15,8 @@ internal class NotificationDelivery(
     private val interactions: InteractionCenter,
     private val sessions: SessionsRepository,
     private val suppressed: (SessionKey) -> Boolean,
-    private val postInteraction: (Interaction) -> Unit,
+    /** The card, and whether it comes inside this device's quiet hours (the event's `quiet`: without a sound). */
+    private val postInteraction: (Interaction, Boolean) -> Unit,
     private val postNotify: (NotifyEvent) -> Unit,
     private val retract: (String) -> Unit,
     private val preferences: suspend () -> DeviceNotificationPreferences? = { DeviceNotificationPreferences() },
@@ -40,7 +41,7 @@ internal class NotificationDelivery(
                     val key = SessionKey(event.machineId, event.sessionId)
                     val ix = interactions.pending.value.firstOrNull { it.id == id && it.sessionKey == key } ?: return
                     if (NotificationPolicy.expired(ix)) { retract(id); return }
-                    if (session == null || !suppressed(session)) postInteraction(ix)
+                    if (session == null || !suppressed(session)) postInteraction(ix, event.quiet)
                 } else if (session == null || !suppressed(session)) postNotify(event)
             }
             else -> Unit

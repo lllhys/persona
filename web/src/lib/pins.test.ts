@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { agentHandoffText } from "./agent-handoff";
 import { buildSpaces } from "./agent-groups";
-import { isPinned, isSpacePinned, pinnedSessions, pinsOf, renameSpaceIn, togglePin, toggleSpacePin } from "./pins";
+import { isPinned, isSpacePinned, pinnedSessions, pinsOf, togglePin, toggleSpacePin } from "./pins";
 import type { Session } from "./types";
 
 const session = (id: string, patch: Partial<Session> = {}): Session => ({
@@ -26,10 +26,6 @@ describe("置顶（/pins，iOS PinsStore）", () => {
     expect(isSpacePinned("m", "天气", p)).toBe(true);
     expect(isSpacePinned("m", undefined, p)).toBe(false);
     expect(toggleSpacePin("m", "天气", p).spaces).toEqual([]);
-  });
-
-  it("空间改名后置顶跟着走", () => {
-    expect(renameSpaceIn({ spaces: ["m/旧", "m/别的"], sessions: ["m/x"] }, "m/旧", "m/新")).toEqual({ spaces: ["m/新", "m/别的"], sessions: ["m/x"] });
   });
 
   it("置顶的 Agent 按置顶顺序（最新的在前）", () => {

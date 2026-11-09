@@ -102,8 +102,8 @@ func (h *Manager) assistantToolsNow() []proto.Tool {
 
 // inHealth: an assistant conversation working in cwd is in the health space. What it says leaves the space only with
 // the user knowing (docs/assistant/health.md "Outbound"): its writes are confirmed on the phone each time, whatever the gate rules
-// allow.
-func inHealth(cwd string) bool { return cwd != "" && identity.SpaceOf(cwd) == identity.SpaceHealth }
+// allow. A directory inside the space counts too (identity.InHealthSpace, #2368): this can only ask more.
+func inHealth(cwd string) bool { return cwd != "" && identity.InHealthSpace(cwd) }
 
 // askerCwd is the directory of the conversation by is ("" when it names none or its machine does not list it).
 func (h *Manager) askerCwd(by asker) string {

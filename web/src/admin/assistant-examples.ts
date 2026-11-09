@@ -62,12 +62,6 @@ function actionOf(raw: Record<string, unknown>, actionId: string): Record<string
   return null;
 }
 
-/** The words an action of the card would send to the assistant (its reply), "" when it has none. */
-export function replyOf(raw: Record<string, unknown>, actionId: string): string {
-  const a = actionOf(raw, actionId);
-  return typeof a?.reply === "string" ? a.reply : "";
-}
-
 export function previewAction(raw: Record<string, unknown>, actionId: string): { sends: boolean; text: string } | null {
   const a = actionOf(raw, actionId);
   if (!a) return null;

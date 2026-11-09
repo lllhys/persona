@@ -15,7 +15,6 @@ dependencies {
     // MathImages plugs inline formulas into the Markdown renderer's images.
     implementation(libs.markdown)
     api(libs.compose.material3)
-    implementation(libs.compose.icons)
     api(libs.haze)
     implementation(libs.haze.blur)
     implementation(libs.haze.glass)

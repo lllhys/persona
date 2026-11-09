@@ -224,6 +224,96 @@ func TestAttachedPackageKeepsItsPackageAndGetsAScopedToken(t *testing.T) {
 	}
 }
 
+// The details say where an extension's data is on the manager's machine, the directory its program is given there, to
+// the master token over loopback and to the admin UI, and still while its package is attached; never to a device or to
+// the master token from another machine, and not for one the manager never gives one: installed from remote:, from
+// hub.json, or with no program.
+func TestExtensionDetailsDataDirForTheOwnerOnly(t *testing.T) {
+	shortHostTimings(t)
+	h := newTestManager(t)
+	h.store = newExtensionStore()
+	startTestExtensions(t, h, ExtensionConfig{ID: "voice", Name: "Voice", Kind: "voice", Socket: "/nonexistent/data-dir-test.sock"})
+	mux := adminRoutes(h)
+	master := h.cfg.Token
+	manifest := installAttachable(t, h, mux)
+	ready := func(attached bool) {
+		t.Helper()
+		waitLong(t, fmt.Sprintf("running (attached %v)", attached), func() bool {
+			hp := h.extensions.get("scoped")
+			return hp != nil && hp.proc != nil && hp.proc.Ready() && hp.proc.Spec().Attached == attached
+		})
+	}
+	ready(false)
+	want := h.extensions.reg.DataDir("scoped")
+	if !slices.Contains(h.extensions.get("scoped").proc.Spec().Env, "PERSONA_PLUGIN_DATA="+want) {
+		t.Fatalf("its program is given another directory than %s: %v", want, h.extensions.get("scoped").proc.Spec().Env)
+	}
+	dataDir := func(code int, out map[string]any) any {
+		t.Helper()
+		if code != 200 {
+			t.Fatalf("details: %d %v", code, out)
+		}
+		return out["data_dir"]
+	}
+	const details = "/api/v1/extensions/scoped/-/"
+	if got := dataDir(call(t, mux, "GET", details, master, "")); got != want {
+		t.Fatalf("the master token over loopback: %v, want %s", got, want)
+	}
+	if got := dataDir(adminCall(t, mux, "GET", "/api/v1/admin/extensions/scoped", "")); got != want {
+		t.Fatalf("the admin UI: %v, want %s", got, want)
+	}
+	if got := dataDir(call(t, mux, "GET", details, deviceToken("dev_phone", roleFull), "")); got != nil {
+		t.Fatalf("a phone: %v", got)
+	}
+	if got := dataDir(callFrom(t, mux, "GET", details, master, "", "[fd00::10]:1234")); got != nil {
+		t.Fatalf("the master token from another machine: %v", got)
+	}
+
+	dir, err := os.MkdirTemp("/tmp", "att-") // a unix socket path stays short
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	rpcSock, httpSock, _, _ := startAttached(t, dir, manifest, "1.0.0")
+	if code, out := call(t, mux, "POST", "/api/v1/extensions/scoped/-/attach", master, `{"source": "remote:rpc=`+rpcSock+`,http=`+httpSock+`"}`); code != 200 {
+		t.Fatalf("attach: %d %v", code, out)
+	}
+	ready(true)
+	if got := dataDir(call(t, mux, "GET", details, master, "")); got != want {
+		t.Fatalf("attached: %v, want %s", got, want)
+	}
+
+	reg := h.extensions.reg
+	remote, err := extension.Parse([]byte(fmt.Sprintf(`{"manifest_version":1,"id":"example-remote","name":"Example remote","version":"1.0.0","engines":{"extension_protocol":1},"runtime":{"command":{%q:"bin/remote"}},"activation_events":["on_startup"],"contributes":{"providers":[{"id":"remote-provider","name":"Example","base_url":"https://provider.example.com"}]}}`, runtime.GOOS+"-"+runtime.GOARCH)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.RemoteManifest = func(context.Context, extension.Remote) (*extension.Manifest, error) { return remote, nil }
+	pv, err := reg.Preview(t.Context(), "remote:rpc="+filepath.Join(dir, "remote.sock"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reg.Install(t.Context(), pv.ID, pv.Digest, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := dataDir(call(t, mux, "GET", "/api/v1/extensions/example-remote/-/", master, "")); got != nil {
+		t.Fatalf("installed from remote: %v", got)
+	}
+
+	if got := dataDir(call(t, mux, "GET", "/api/v1/extensions/voice/-/", master, "")); got != nil {
+		t.Fatalf("hub.json's: %v", got)
+	}
+	declarative := t.TempDir()
+	if err := os.WriteFile(filepath.Join(declarative, extension.ManifestFile), []byte(`{"manifest_version": 1, "id": "example-models", "name": "Example Models", "version": "1.0.0",
+		"contributes": {"providers": [{"id": "fast", "name": "Fast", "base_url": "https://fast.example.com"}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installForTest(t, h, declarative)
+	if got := dataDir(call(t, mux, "GET", "/api/v1/extensions/example-models/-/", master, "")); got != nil {
+		t.Fatalf("no program: %v", got)
+	}
+}
+
 // installAttachable installs attachablePackage from the app.
 func installAttachable(t *testing.T, h *Manager, mux http.Handler) []byte {
 	t.Helper()

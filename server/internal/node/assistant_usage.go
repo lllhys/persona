@@ -1,9 +1,11 @@
 package node
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,41 +54,92 @@ type usageFix struct {
 	tokens int
 }
 
-// implausibleUsage finds the conversation's replies (not a subagent's) whose usage cannot be one request's, in data:
-// the transcript from offset base on, size bytes in all.
-func implausibleUsage(data []byte, base, size int64) []usageFix {
+// usageReadSize is how much of the transcript implausibleUsage reads at a time. A process's first check reads a long
+// conversation's transcript, tens of MB, from the start; holding all of it grew the node's heap by its size.
+const usageReadSize = 256 << 10
+
+// usageHintSpan is more than the longest hint in a transcript's compact JSON (`"cache_creation_input_tokens":` and
+// six digits are 36 bytes): in a line longer than the read buffer, a hint split between two reads is found in this
+// much of either.
+const usageHintSpan = 64
+
+// implausibleUsage finds the conversation's replies (not a subagent's) whose usage cannot be one request's in the
+// transcript f of size bytes, from offset from (a line start) on, and where the last complete line ends: a line still
+// being written is left for the next check. It reads a buffer at a time and keeps only the lines to fix; a line longer
+// than the buffer is read whole only when it has a hint.
+func implausibleUsage(f io.ReaderAt, from, size int64) ([]usageFix, int64, error) {
+	// A turn's check reads only what the turn added: no buffer larger than that, nor smaller than a hint's span.
+	br := bufio.NewReaderSize(io.NewSectionReader(f, from, size-from), int(min(usageReadSize, max(size-from, 4<<10))))
 	var out []usageFix
-	for off := 0; off < len(data); {
-		end := bytes.IndexByte(data[off:], '\n')
-		next := len(data)
-		if end >= 0 {
-			next = off + end + 1
-		} else {
-			end = len(data) - off
-		}
-		line := data[off : off+end]
-		if usageHintRe.Match(line) {
-			var e struct {
-				Type        string `json:"type"`
-				IsSidechain bool   `json:"isSidechain"`
-				Message     struct {
-					Usage *struct {
-						Input       int `json:"input_tokens"`
-						CacheRead   int `json:"cache_read_input_tokens"`
-						CacheCreate int `json:"cache_creation_input_tokens"`
-					} `json:"usage"`
-				} `json:"message"`
-			}
-			if json.Unmarshal(line, &e) == nil && e.Type == "assistant" && !e.IsSidechain && e.Message.Usage != nil {
-				u := e.Message.Usage
-				if tokens := u.Input + u.CacheRead + u.CacheCreate; !transcript.PlausibleContext(tokens, size) {
-					out = append(out, usageFix{off: base + int64(off), line: line, tokens: tokens})
+	for off := from; ; {
+		line, err := br.ReadSlice('\n')
+		n, hinted := int64(len(line)), usageHintRe.Match(line)
+		if err == bufio.ErrBufferFull {
+			n, hinted, err = skimLine(br, line)
+			if err == nil && hinted {
+				line = make([]byte, n)
+				if _, err := f.ReadAt(line, off); err != nil {
+					return nil, from, err
 				}
 			}
 		}
-		off = next
+		switch {
+		case err == io.EOF && off+n < size:
+			return nil, from, io.ErrUnexpectedEOF // cut short while it was read
+		case err == io.EOF:
+			return out, off, nil // the end, or a line still being written
+		case err != nil:
+			return nil, from, err
+		}
+		if hinted {
+			if fx, ok := implausibleLine(bytes.TrimSuffix(line, []byte("\n")), off, size); ok {
+				out = append(out, fx)
+			}
+		}
+		off += n
 	}
-	return out
+}
+
+// skimLine reads on to the end of a line longer than the read buffer, first being what was read of it, holding no more
+// than a buffer of it: the line's length, whether a usage hint is in it, and the last read's error (nil: the line is
+// complete).
+func skimLine(br *bufio.Reader, first []byte) (int64, bool, error) {
+	var edge [2 * usageHintSpan]byte // the end of one read and the start of the next: a hint split between them
+	chunk, err := first, bufio.ErrBufferFull
+	n, hinted := int64(len(first)), usageHintRe.Match(first)
+	for err == bufio.ErrBufferFull {
+		k := copy(edge[:], chunk[len(chunk)-min(len(chunk), usageHintSpan):])
+		chunk, err = br.ReadSlice('\n')
+		k += copy(edge[k:], chunk)
+		n += int64(len(chunk))
+		hinted = hinted || usageHintRe.Match(edge[:k]) || usageHintRe.Match(chunk)
+	}
+	return n, hinted, err
+}
+
+// implausibleLine is the fix for line, at off in a transcript of size bytes, when it is a reply of the conversation's
+// whose usage cannot be one request's. line is only borrowed: the fix keeps a copy.
+func implausibleLine(line []byte, off, size int64) (usageFix, bool) {
+	var e struct {
+		Type        string `json:"type"`
+		IsSidechain bool   `json:"isSidechain"`
+		Message     struct {
+			Usage *struct {
+				Input       int `json:"input_tokens"`
+				CacheRead   int `json:"cache_read_input_tokens"`
+				CacheCreate int `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &e) != nil || e.Type != "assistant" || e.IsSidechain || e.Message.Usage == nil {
+		return usageFix{}, false
+	}
+	u := e.Message.Usage
+	tokens := u.Input + u.CacheRead + u.CacheCreate
+	if transcript.PlausibleContext(tokens, size) {
+		return usageFix{}, false
+	}
+	return usageFix{off: off, line: bytes.Clone(line), tokens: tokens}, true
 }
 
 // zeroUsage is line with every usage count set to 0, padded with spaces to the same length; ok false when the result
@@ -133,15 +186,11 @@ func repairUsage(path string, from int64) (usageRepair, error) {
 			from = 0
 		}
 	}
-	data := make([]byte, size-from)
-	if _, err := f.ReadAt(data, from); err != nil {
+	fixes, end, err := implausibleUsage(f, from, size)
+	if err != nil {
 		return usageRepair{}, err
 	}
-	r := usageRepair{end: size}
-	if i := bytes.LastIndexByte(data, '\n'); i+1 < len(data) { // a line still being written: read again next time
-		data, r.end = data[:i+1], from+int64(i+1)
-	}
-	fixes := implausibleUsage(data, from, size)
+	r := usageRepair{end: end}
 	if len(fixes) == 0 {
 		return r, nil
 	}
@@ -163,17 +212,23 @@ func repairUsage(path string, from int64) (usageRepair, error) {
 	return r, nil
 }
 
-// backupCopy writes the first size bytes of src to a new file at path (0600: a transcript is private).
+// backupCopy writes the first size bytes of src to a new file at path (0600: a transcript is private). A copy that
+// failed, on a full disk for one, is removed: it is no backup, and it holds space.
 func backupCopy(src *os.File, path string, size int64) error {
 	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(dst, io.NewSectionReader(src, 0, size)); err != nil {
-		dst.Close()
-		return err
+	_, err = io.Copy(dst, io.NewSectionReader(src, 0, size))
+	if cerr := dst.Close(); err == nil {
+		err = cerr
 	}
-	return dst.Close()
+	if err != nil {
+		if rerr := os.Remove(path); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+	}
+	return err
 }
 
 // promptTooLong: a turn's result is Claude Code refusing the message as over the context window.

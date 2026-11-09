@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hubCount, hubLabel, hubOf, machineWithHub, routeText } from "./mesh";
+import { hubCount, hubLabel, machineWithHub, routeText } from "./mesh";
 import type { Machine } from "./types";
 
 const m = (id: string, hub?: [string, string], route?: Machine["route"]): Machine => ({
@@ -25,8 +25,6 @@ describe("mesh labels", () => {
     const two = [m("a", ["h1", "家里"]), m("b", ["h2", "公司"], { via: "peer", hops: 1, rtt_ms: 24 })];
     expect(hubCount(two)).toBe(2);
     expect(hubLabel(two[1], two)).toBe("公司");
-    expect(hubOf("a", two)).toBe("家里");
-    expect(hubOf("missing", two)).toBe("");
     expect(machineWithHub("b", two)).toBe("公司 · B");
     expect(routeText(two[1], two)).toBe("经互联 · 1 跳 · 24 ms");
   });

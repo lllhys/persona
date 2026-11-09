@@ -340,9 +340,7 @@ final class MacInboxState {
     /// The agent's chat (the assistant's in Persona), where the question / plan / approval waits.
     func open(_ ix: Interaction, model: AppModel) {
         if model.session(ix.sessionKey)?.assistant == true {
-            model.selectHub(ix.group)
-            model.assistantCurrent = ix.sessionKey
-            model.selectedTab = .assistant
+            model.openAssistantConversation(ix.sessionKey)
         } else {
             model.openChat = ix.sessionKey
             model.selectedTab = .chats

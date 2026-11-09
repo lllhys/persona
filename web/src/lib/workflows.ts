@@ -34,12 +34,6 @@ export function backgroundCount(s: Session | undefined): number {
   return otherBackground(s).length + runningWorkflows(s).length;
 }
 
-/** Something still runs in its background (a command, subagent, Monitor or workflow): it is not done. */
-export function backgroundRunning(s: Session | undefined): boolean {
-  if (typeof s?.waiting === "boolean") return (s.background_count ?? 0) > 0 || (s.running_workflows ?? 0) > 0 || (s.running_subagents ?? 0) > 0;
-  return backgroundCount(s) > 0 || Boolean(s?.subagents?.some((a) => a.running));
-}
-
 export function workflowName(w: Workflow): string {
   return w.name?.trim() || w.summary?.trim() || t("lib-workflows.untitled");
 }

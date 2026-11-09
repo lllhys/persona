@@ -11,7 +11,6 @@ import {
   decodeBase64,
   decodeShortcuts,
   encodeKey,
-  fitGrid,
   fontLoadQuery,
   historyAnchor,
   keyDecision,
@@ -201,9 +200,7 @@ describe("input", () => {
     expect(w.add(0, 0, 16, 30)).toBe(0);
   });
 
-  it("fits a grid to the panel and drives only a usable one", () => {
-    expect(fitGrid(800, 480, 7.8, 16)).toEqual({ cols: 102, rows: 30 });
-    expect(fitGrid(800, 480, 0, 16)).toBeNull();
+  it("drives only a usable grid", () => {
     expect(usableGrid({ cols: 102, rows: 30 })).toBe(true);
     expect(usableGrid({ cols: 9, rows: 30 })).toBe(false);
     expect(usableGrid({ cols: 40, rows: 3 })).toBe(false);

@@ -17,7 +17,6 @@ dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.lifecycle.compose)
     implementation(libs.compose.material3)
-    implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     implementation(libs.coroutines.android)
     implementation(libs.datastore.preferences)
