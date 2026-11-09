@@ -52,14 +52,15 @@ describe("a supervised task", () => {
     expect(html).toContain("派活时没写验收标准");
   });
 
-  it("draws an agent's report to Persona in the conversation, with its evidence", () => {
+  it("draws an agent's report body to Persona in the conversation without a separate evidence list", () => {
     const item: FeedItem = { id: "f2", conversation: "main", at: "2026-11-05T09:00:00Z", kind: "report", ref: "todo_1",
       body: { kind: "question", text: "A 先灰度还是 B 直接全量？", evidence: ["https://github.com/o/r/pull/902"] } };
     const html = renderToStaticMarkup(<FeedLineView item={item} />);
     expect(html).toContain('data-testid="report-line"');
     expect(html).toContain("向 Persona 汇报");
     expect(html).toContain("问 Persona：A 先灰度还是 B 直接全量？");
-    expect(html).toContain("pull/902");
+    expect(html).not.toContain("pull/902");
+    expect(html).not.toContain("<ul");
   });
 
   it("marks a question that can wait, and draws it quietly", () => {

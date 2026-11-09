@@ -38,6 +38,7 @@ func New(cfg Config, hubURL, hubToken string, logger *log.Logger) *Plugin {
 	c := cfg
 	pl := &Plugin{cfg: c, cat: &catalog{cfg: &c, now: time.Now}, hub: newHubClient(hubURL, hubToken), logger: logger}
 	pl.link = newHubLink(pl.hub, pl.logf)
+	pl.cat.logf = pl.logf
 	return pl
 }
 

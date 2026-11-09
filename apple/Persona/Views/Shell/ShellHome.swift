@@ -21,6 +21,8 @@ struct ShellHome: View {
     var send: (String, [ImagePayload]) -> Void
     @State private var room = NeedsRoom()
     @State private var route: ReadinessRoute?
+    /// The composer's @ list is open (#2319): Needs You steps aside for it.
+    @State private var mentionOpen = false
 
     /// How far the welcome fades out over Needs You and the composer, rather than being cut off at their edge.
     fileprivate static let fade = Theme.Space.xl
@@ -78,12 +80,13 @@ struct ShellHome: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room.card = $0 }
                         .onDisappear { room.card = 0 }
                 }
-                if pending == nil {
+                if pending == nil, !mentionOpen {
                     ShellNeedsYou(maxHeight: room.needs(withError: shownError != nil, top: AssistantTopBar.room(railEdge)), openInbox: openInbox).shellScaled()
                 }
                 StarterComposer(disabled: pending != nil, shell: StarterComposer.ShellModes(launcher: $launcher, mode: $mode, effort: $effort),
                                 gate: model.readinessGate(route: $route), send: send)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room.composerAtRest($0, typeSize: typeSize) }
+                    .onPreferenceChange(MentionMenuOpen.self) { open in withAnimation(Theme.Motion.standard) { mentionOpen = open } }
             }
             .padding(.horizontal, Theme.Space.m)
             .padding(.bottom, Theme.Space.s)

@@ -59,8 +59,9 @@ func (u *updater) routes(api *http.ServeMux) {
 			return
 		}
 		var body struct {
-			Auto           *bool `json:"auto"`
-			AutoNoticeSeen *bool `json:"auto_notice_seen"`
+			Auto            *bool `json:"auto"`
+			AutoNoticeSeen  *bool `json:"auto_notice_seen"`
+			AutoUpdateNodes *bool `json:"auto_update_nodes"`
 		}
 		if err := decodeJSONBody(w, r, &body, 4<<10); err != nil {
 			writeBodyErr(w, err, err)
@@ -73,6 +74,10 @@ func (u *updater) routes(api *http.ServeMux) {
 			return
 		}
 		prev := u.settings
+		if body.AutoUpdateNodes != nil {
+			enabled := *body.AutoUpdateNodes
+			u.settings.AutoUpdateNodes = &enabled
+		}
 		if body.Auto != nil {
 			a := *body.Auto
 			u.settings.Auto = &a
@@ -90,6 +95,9 @@ func (u *updater) routes(api *http.ServeMux) {
 		if err != nil {
 			writeErr(w, http.StatusServiceUnavailable, i18n.Err("http-status.unavailable"))
 			return
+		}
+		if body.AutoUpdateNodes != nil {
+			u.h.queueDevicesConfig(*body.AutoUpdateNodes)
 		}
 		writeJSON(w, u.viewIn(u.h.requestLang(r)))
 	})

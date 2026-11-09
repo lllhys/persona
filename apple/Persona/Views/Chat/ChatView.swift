@@ -4196,6 +4196,43 @@ struct Composer: View, Equatable {
         focused = true
     }
 
+    /// The `@word` before the caret, for the @ list (`ComposerMentionMenu`, #2319): in the shell's composer while it has
+    /// the keyboard, an agent's chat and Persona's alike, as on the web.
+    private var mentionToken: MentionToken? {
+        guard usesShellComposer, focused else { return nil }
+        #if os(iOS) || os(visionOS)
+        if TypedText.composingFocused { return nil } // Pinyin still marked: the list waits for the confirmed words
+        #endif
+        return MentionToken.at(text, selection: selection)
+    }
+
+    /// What the @ list offers here: this chat's files and its session's folder, then the other sessions.
+    private var mentionSource: MentionSource {
+        MentionSource(machine: key.machineRef, cwd: model.session(key)?.cwd,
+                      files: { MentionRows.usedPaths(model.chat(key).items) }, except: key)
+    }
+
+    /// The + menu's Mention: `@` at the caret, which opens the @ list (the web's @ button beside +).
+    private var mentionMenuItem: some View {
+        Button { typeMention() } label: { Label("Mention a File or Session", systemImage: Theme.Icon.mention).lineLimit(1) }
+            .accessibilityIdentifier("composer-menu-mention")
+    }
+
+    private func typeMention() {
+        // An unfocused field's selection is stale (`PathInsert.edit`): then at the end.
+        let caret = focused ? PathInsert.range(selection, in: text)?.lowerBound : nil
+        let r = MentionToken.typing(in: text, caret: caret ?? text.utf16.count)
+        text = r.text
+        selection = .cursor(utf16: r.caret)
+        focused = true
+    }
+
+    /// A session picked in the @ list: quoted over the box, once.
+    private func quoteMention(_ ref: ContextRef) {
+        guard !contexts.wrappedValue.contains(where: { $0.url == ref.url }) else { return }
+        contexts.wrappedValue.append(ref)
+    }
+
     /// Effort and permission mode can change: Claude Code and the assistant (`SessionModeBar` shows them for the same).
     private var setsModes: Bool {
         guard let s = model.session(key) else { return false }
@@ -4314,6 +4351,10 @@ struct Composer: View, Equatable {
                     SlashMenu(rows: slash, pick: pickSlash)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                if let token = mentionToken {
+                    ComposerMentionMenu(token: token, text: textBinding, selection: $selection, source: mentionSource, quote: quoteMention)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             // A call that ended by itself: 「语音已结束 · 继续」 over the box, until the page goes (docs/assistant/voice.md 1.2 L).
             if let call, call.isOver, case .ended(let end) = call.phase, let note = VoiceEndNote.make(end, extensionID: call.extensionID) {
@@ -4345,6 +4386,7 @@ struct Composer: View, Equatable {
                         Button { showGlasses = true } label: { Label("Glasses Photo", systemImage: Theme.Icon.glasses).lineLimit(1) }
                     }
                     Button { showFiles = true } label: { Label("Files", systemImage: Theme.Icon.file) }
+                    mentionMenuItem
                     voiceMenuItem
                     extensionPrompts
                     if !shellChat { quickCommands } // an agent's, as its composer offered them before the shell's
@@ -4454,6 +4496,13 @@ struct Composer: View, Equatable {
             try? await Task.sleep(for: .seconds(4))
             text = "/"
         }
+        .task { // `-openMentionMenu @Sources/`: that draft ("@" for any other value) with the keyboard up and its @ list open (#2319, screenshots)
+            guard let draft = UserDefaults.standard.string(forKey: "openMentionMenu") else { return }
+            try? await Task.sleep(for: .seconds(4))
+            text = draft.hasPrefix("@") ? draft : "@"
+            selection = .cursor(utf16: text.utf16.count)
+            focused = true
+        }
         .task { // `-showLoopDraft "/loop 10m check CI"`: that draft in the box, with its line (#2601, screenshots)
             guard let draft = UserDefaults.standard.string(forKey: "showLoopDraft") else { return }
             try? await Task.sleep(for: .seconds(4))
@@ -4469,6 +4518,7 @@ struct Composer: View, Equatable {
         #endif
         .animation(Theme.Motion.standard, value: suggestion)
         .animation(Theme.Motion.standard, value: slashRows.isEmpty)
+        .animation(Theme.Motion.standard, value: mentionToken == nil)
         .onChange(of: focused) { _, f in onFocus?(f) }
         .onDisappear { if focused { onFocus?(false) } } // gone with the keyboard (a subagent opened, another pane)
         .modifier(CompactionTracking(key: key))

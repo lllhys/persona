@@ -206,7 +206,8 @@ func (s *Service) laterRows(ctx context.Context, l i18n.Lang, web string, now ti
 			}
 		}
 		rows = append(rows, boardRow{waited: boardWaited(now, a.AskedAt), id: a.ID, summary: clip(oneLine(a.Text), laterSummaryRunes),
-			from: s.boardFrom(l, a.MachineID, a.SessionID, title), link: sessionLink(web, a.MachineID, a.SessionID, false)})
+			from: s.boardFrom(l, a.MachineID, a.SessionID, title), link: sessionLink(web, a.MachineID, a.SessionID, false),
+			machine: a.MachineID, session: a.SessionID})
 	}
 	return rows, len(open)
 }

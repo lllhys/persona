@@ -18,6 +18,11 @@ describe("shownLive", () => {
     expect(shownLive(entry, true, 1000 + LIVE_STALE_MS)).toBeNull();
   });
 
+  it("keeps the last line, however old, while the hub is out of reach", () => {
+    expect(shownLive(entry, true, 1000 + 10 * LIVE_STALE_MS, false)).toEqual(entry.live);
+    expect(shownLive(entry, false, 1000, false)).toBeNull();
+  });
+
   it("shows nothing without a line", () => {
     expect(shownLive(undefined, true, 1000)).toBeNull();
   });

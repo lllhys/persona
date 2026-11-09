@@ -266,6 +266,9 @@ type boardRow struct {
 	from     string
 	link     string
 	nudged   bool // the bot nudged under its card in the chat (feishu_nudge.go, #6084)
+	// machine and session are the chat a card or a question that can wait came from, empty when it came from none; the
+	// apps open it from the brief item (briefing_feed.go).
+	machine, session string
 	// asked is when the "Please verify" ask of a to-do waiting to be verified was made (its card, if it has one, went out then) (zero: the row is not one); id is the to-do.
 	asked time.Time
 }
@@ -283,7 +286,8 @@ func (s *Service) boardRows(ctx context.Context, l i18n.Lang, web string, now ti
 			link = sessionLink(web, ix.MachineID, ix.SessionID, s.sessionAssistantLocal(ix.MachineID, ix.SessionID))
 		}
 		rows = append(rows, boardRow{blocking: true, waited: boardWaited(now, ix.CreatedAt), id: ix.ID,
-			summary: boardSummary(l, ix), from: s.boardFrom(l, ix.MachineID, ix.SessionID, ix.SessionTitle), link: link, nudged: s.cardNudged(ix.ID)})
+			summary: boardSummary(l, ix), from: s.boardFrom(l, ix.MachineID, ix.SessionID, ix.SessionTitle), link: link, nudged: s.cardNudged(ix.ID),
+			machine: ix.MachineID, session: ix.SessionID})
 	}
 	for _, a := range s.awaitingAcceptance(ctx) {
 		summary := i18n.T(l, "assistant-feishu_cards.board_verify", i18n.Args{"title": clip(oneLine(a.title), 40)})

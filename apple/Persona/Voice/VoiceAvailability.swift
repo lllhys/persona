@@ -161,18 +161,23 @@ nonisolated struct VoiceVoices: Decodable, Equatable, Sendable {
 
     var voices: [Voice]
     var `default`: String?
+    /// The hub could not read the service's list just now: this is the last good one, or the dialect's built-in one
+    /// (#2411). Shown all the same, and asked for again the next time a picker opens.
+    var stale: Bool
 
-    private enum CodingKeys: String, CodingKey { case voices, `default` }
+    private enum CodingKeys: String, CodingKey { case voices, `default`, stale }
 
-    init(voices: [Voice] = [], default: String? = nil) {
+    init(voices: [Voice] = [], default: String? = nil, stale: Bool = false) {
         self.voices = voices
         self.default = `default`
+        self.stale = stale
     }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         voices = (try? c.decodeIfPresent([Voice].self, forKey: .voices)) ?? []
         `default` = try? c.decodeIfPresent(String.self, forKey: .default)
+        stale = (try? c.decodeIfPresent(Bool.self, forKey: .stale)) ?? false
     }
 }
 

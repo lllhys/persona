@@ -87,9 +87,10 @@ type devicesState struct {
 	assignRead   bool
 	assignFailed bool // ownership read failed: dedicated local machines must not fall back to the carrier
 	// moving keeps moves one at a time: each writes the whole of assign, from the one before it (moveMachine).
-	moving  sync.Mutex
-	due     bool
-	started bool
+	moving        sync.Mutex
+	due           bool
+	nodeUpdateDue bool // an explicit policy write also requests a fresh package check
+	started       bool
 	// reqs are the nodes' requests being answered (devices.request) by the manager's key; reqEnded the keys whose
 	// devices.request_end came before the request did (an event is read at once, a call in its own goroutine).
 	reqs     map[string]context.CancelFunc

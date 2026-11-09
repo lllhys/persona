@@ -982,7 +982,8 @@ Reject (ii), "add realtime type to model providers": it would need a new API ret
 ### 5.7 Model and voice
 
 - **Model**: purpose `plugin.<id>`; App sends `effective.model` as `start.model` (matching Android `resolveVoiceModel`). Change in call "⋯" with `.modelConfigurationSheet(isPresented:purposeID:)`.
-- **Voice**: read `/voices?model=`, select in "⋯", remembered locally. Changing voice restarts the call (resume).
+- **Voice**: read `/voices?model=`, select in the call's "⋯" or outside a call on the voice extension's settings page (6.7), remembered on the device per group of hubs and extension (`VoiceTimbre`) and sent as `start.voice`. Changing it during a call keeps the call: a new connection picks it up where it was (resume), and the new name shows at once.
+- **The list when the service's cannot be read** (#2411): `catalog.voices` (`server/internal/voice/models.go`) answers with the last good list for that model, else the dialect's built-in one (the public GPT-Live voices, Codex's for codex), with `"stale": true`, never 502. Good lists are kept 10 minutes; a failure is never kept as an answer, so the next request asks the service again. A service that has no list (404 / 405 / 501) gets the built-in one as its list (not stale, kept). With no model named and the service's model list unreadable (no default model to find), it answers with the last good list of any of the first upstream's models, else the built-in one, stale. The last good model list also stands in for `/models` and a call's default model. Each failing list is logged once until it reads again, with the status or the network error only (never the credential, the key command's output, the service's answer or its address). Only an unknown provider (404), no upstream (503 `no_upstream`) and a malformed model id (400) are errors.
 
 ### 5.8 Migration and rollback
 
@@ -993,7 +994,8 @@ Reject (ii), "add realtime type to model providers": it would need a new API ret
 ### 5.9 Clients
 
 - **Phase one**: with built-in schema/secrets, generic **Settings › Extensions › Realtime Voice** details on iOS / Mac, Android, web can configure address, protocol, models, Key, enabled state; admin `/admin` has switch too. Satisfies decision 3.
-- **Phase two**: dedicated realtime-voice settings (connection test, model/voice selectors); configure multiple upstreams in App once object arrays are supported.
+- **Voice row (#2411, iOS)**: the voice extension's page has a "Voice Chat" section with the voice this device's calls speak with (6.7), drawn by the app, not the extension's form.
+- **Phase two**: dedicated realtime-voice settings (connection test, model selector); configure multiple upstreams in App once object arrays are supported.
 
 ## 6. iOS design
 
@@ -1054,6 +1056,7 @@ Reject (ii), "add realtime type to model providers": it would need a new API ret
 - **Thread tail**: `VoiceThreadTail(key:held:)` reads `VoiceCalls` itself; ChatView only places it at the newest end (next to the sentinel): at most 6 captions under "Voice · This call only", in the order they were said (a caption with `before` is put in front of that row, #5673). Bottom-pinning: `VoiceTailFollow`, written like `ChatStreamFollow`, calls `contentArrived` when the shown rows change (a new caption, appended or put before another) or the last grows by 40 characters; while the user reads history (`frozen`) the tail stays as it was (`held`). Full text in `VoiceTranscriptSheet`.
 - **During call**: main-chat footer hides TaskDock and RouteChip, restores on end.
 - **"⋯"**: type an utterance (`text` frame), full captions, voice, model.
+  Voice (#2411) is the voices of the call's model with the current one named under it (picked on this device, else the model's default). The list (`VoiceVoicesLoader`, shared with the settings row) is asked for when the bar shows, again 2, 5 and 15 seconds after a failure, whenever the menu opens without a list or with a stale one (at most once per 2 seconds, so a menu redrawn as the state changes cannot ask in a loop), and on Retry. While it is asked for the item says "Loading voices…" (disabled); after a failure "Couldn't load · Retry" (a tap asks again; short enough for one line in a menu in every language); a model with no voices "None for this model". A stale list is shown as it is and asked for again on the next open.
 - **Cards**: unchanged `PendingCards`, resolved through `model.resolve`; the asked card shows "Asking by Voice" in its title row (`VoiceAskMark` after `InteractionPanel`'s title, from the `ask` frame; an icon alone where the row is short, so it never widens the card and the page). New cards play haptic/tone.
 - **Ended by itself** (1.2 L): the composer comes back with a row over it, "Voice ended · <why>", with "Continue" (endings that may just pass: the background, a phone call, a lost connection, idle) or "Retry" (failures), plus "Open Settings" and "Details" (`VoiceEndNote` / `VoiceEndedStrip`). The why maps `VoiceEnd` and `error.code` to localized words; the extension's or upstream's own words are only under "Details". The user's own endings (End, leaving the page, another call) leave nothing.
 
@@ -1152,7 +1155,8 @@ struct VoiceDeps { var api: () -> APIClient?                 // Refetch each con
 
 - Phase one generic **Settings › Extensions › Realtime Voice** details: address, name, protocol, model list, sample rate, write-only Key, enabled state.
 - Changed address host shows Key cleared.
-- Model/voice in call "⋯"; dedicated settings phase two.
+- **Voice outside a call** (#2411, `VoiceTimbreSection`): on that page, while the extension is on and running, on a device with calls (iPhone, iPad, Apple Vision Pro) and for the default manager's copy (calls talk to that one), a "Voice Chat" section with a Voice row: the voices of the model the use `plugin.<id>` picks (`VoiceConversation.resolveModel`, its default when that cannot be used) and the current one. A pick is stored per group of hubs and extension (`VoiceTimbre`, the same key the call's "⋯" writes), so the next call starts with it, and a call going on with this extension takes it up at once (`change(voice:)`). States as in the call's menu: "Loading voices…", "Couldn't load voices" with Retry, "None for this model". It is the app's own section: the extension's form, secrets and switch are unchanged, and other extensions' pages have nothing new. Voice Chat's "Open Settings" (the "+" menu's explanation, 6.1) already lands on this page.
+- Model in call "⋯"; a dedicated model selector is phase two.
 
 ### 6.8 DEBUG and screenshots
 
@@ -1165,6 +1169,7 @@ struct VoiceDeps { var api: () -> APIClient?                 // Refetch each con
     #5673: the answer to the question is a late caption: the fast layer's `a3` begins, then the user's `u3` with `before: "a3"`, then the rest of `a3`;
     #3508: only a `start` with `protocol: 2` and a `target` gets this script; any other start (Android) is handed to mock_hub.py's protocol 1 script unchanged. The instruction is written into that conversation as a user message and the conversation turns working; the question is a real card (`interaction` push), answered "by voice" at 21 s unless tapped first; `resend` takes a refused run through sending → working again. `MOCK_VOICE=setup` is an extension that needs setup, `MOCK_VOICE=p1` an old one whose `/info` is 404, `MOCK_VOICE_PACE=0.1` runs the script ten times as fast, and `GET /mock/voice2` shows what the app sent.
   - new scripts/mock/test_voice_mock.py.
+  - #2411: `GET …/voice/-/` is the extension's settings page (the Voice row's screenshots); `/voices` fails, waits or says stale on demand: `MOCK_VOICE_VOICES=fail|slow|flaky|stale` (`slow` waits `MOCK_VOICE_VOICES_DELAY` seconds, default 6; `flaky` fails the first two asks), the same per request with `?mock=…`, or for the rest of the run with `GET /mock/voice2?voices=fail|slow|flaky|stale|ok`; `/mock/voice2` counts the asks (`voices`).
 - **Screenshots**: UI tests `launchPinned()`. Matrix: main/Agent chat × dark/light × Glass/BeautifulUI × standard/AX large text.
   #3508: `PersonaUITests/VoiceModeTests` (`TEST_RUNNER_PERSONA_VOICE_HUB` pointing at a `MOCK_VOICE=1` mock, `TEST_RUNNER_PERSONA_SHOTS` for the images): four matrix cases (Agent / main × standard / AX XL) each shoot ten samples; `testOpenVoiceWalksTheScript` walks the mock's script with `-openVoice silent` (connected → handed over → working → paused → asked → refused, Clear and Send → result read out → End), then checks that the background leaves "Continue" and that going back closes the socket.
 
@@ -1190,6 +1195,7 @@ struct VoiceDeps { var api: () -> APIClient?                 // Refetch each con
   - "Return as feedback" calls resolve with feedback (#3508 App `model.resolve`, not call);
   - idle timer disabled on start, restored on end.
 - **#3508**: `VoiceBarLineTests` (every second-line case and its buttons, the first row and the orb), `VoiceNotesTests` (the "+" explanations, the ended row), `VoiceModeTests` (`isOver` changes only as a call ends or picks up, `VoiceCalls.isLive`, Never Mind, the plan feedback body, Clear and Send returns `clearable`, the cue tones' rate, length and gain).
+- **#2411**: `VoiceVoicesLoaderTests` (the list asked for once per model, the retries after 2, 5 and 15 s and none after, an open or Retry asking at once but not twice within 2 s, a stale list kept while asked for again, a late answer dropped after the picker went, the current voice's name, where the settings row shows); hub: `catalog_test.go` (last good list, built-in list, a service without a list, no default model, the endpoint's 200 `stale` and a log without the credential).
 - **#5029**: `VoiceCaptureTests` (`VoiceCapture.plan`: no permission or no input ends before the probe, a device uses voice processing without one, the simulator records plain only once the probe started; a probe that has not come back is not started again until it does); `VoiceConversationTests` (a start that finds no input ends as `audioFailed`, a refused recording as `permissionDenied`).
 
 ### 6.11 The web client (#2273)

@@ -42,9 +42,10 @@ export function liveEntry(mid: string, sid: string): LiveEntry | undefined {
   return entries.get(key(mid, sid));
 }
 
-/** What to show: nothing once the session no longer works, or when the line is stale. */
-export function shownLive(entry: LiveEntry | undefined, working: boolean, now: number): SessionLive | null {
-  if (!entry || !working || now - entry.at >= LIVE_STALE_MS) return null;
+/** What to show: nothing once the session no longer works, or when the line is stale. With the hub out of reach
+ *  (`online` false) no line can arrive, so silence says nothing: the last one stays, as the last state known. */
+export function shownLive(entry: LiveEntry | undefined, working: boolean, now: number, online = true): SessionLive | null {
+  if (!entry || !working || (online && now - entry.at >= LIVE_STALE_MS)) return null;
   return entry.live;
 }
 
@@ -69,6 +70,7 @@ export function useSessionLive(mid: string, sid: string): SessionLive | null {
     const s = getSession(mid, sid);
     return Boolean(s && stateOf(s) === "working");
   });
+  const online = useStore((s) => s.conn === "online");
   const entry = useSyncExternalStore(subscribe, () => liveEntry(mid, sid), () => undefined);
   // re-render when it goes stale
   const [, setTick] = useState(0);
@@ -77,7 +79,7 @@ export function useSessionLive(mid: string, sid: string): SessionLive | null {
     const t = window.setTimeout(() => setTick((n) => n + 1), Math.max(0, entry.at + LIVE_STALE_MS - Date.now()) + 10);
     return () => clearTimeout(t);
   }, [entry]);
-  return shownLive(entry, working, Date.now());
+  return shownLive(entry, working, Date.now(), online);
 }
 
 /** Tests: forget every line. */

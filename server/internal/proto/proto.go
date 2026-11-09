@@ -15,6 +15,7 @@ const (
 // clients that need to know before they try (docs/protocol/protocol.md).
 var Features = []string{
 	nodeproto.PersonaContracts, // bidirectional pre-cutover runtime identities
+	"look_uploads",             // POST /api/v1/looks/uploads, DELETE /api/v1/looks/uploads/{id}: avatars made from an uploaded image
 	"locale",                   // Accept-Language, client_hello.locale and a device's locale pick the language of text for people (docs/protocol/i18n.md)
 	"assistant_compact",        // POST /api/v1/assistant/conversations/{id}/compact, session.compaction
 	"assistant_main_new",       // POST /api/v1/assistant/main/new: archive the main conversation, the next message starts one

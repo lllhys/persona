@@ -99,7 +99,7 @@ The Gateway (from D3) asks for `GUILDS`, `GUILD_MESSAGES` and `MESSAGE_CONTENT` 
   Edits and deletions are not synced in the first version (item 3 of "Decided by the user").
 - **No people records** (item 2 of "Decided by the user"; Discord's developer policy forbids profiling users): messages carry only the sender's name, **no `sender_id` and no `sender_handles`**.
   The knowledge base only creates people and records identity hints when a message has `sender_id` (`notePerson` in `server/internal/kb/archive.go`), and person notes during compaction only cover people already in the conversation
-  (`notePersonNote` in `server/internal/kb/compress.go`), so the hub needs no change; the extension's tests guard that no message carries either field.
+  (`notePersonNote` in `server/internal/kb/people.go`), so the hub needs no change; the extension's tests guard that no message carries either field.
 - **Attachments** (D4): `archive.media` refs are message and attachment ids, and the file is fetched fresh when the hub asks (Discord's attachment links are signed and expire). They apply to messages archived from D4 on: the knowledge base keeps the first archived version of a message.
 - **"Send to Persona" messages** go into the knowledge base too: into the conversation of their channel, `discord-<channel id>` (also for DMs and channels the bot can't see; such conversations contain only the messages the user clicked),
   named from the channel info in the interaction. Until the hub fetches them, they're kept in the extension's own data directory (`PERSONA_EXTENSION_DATA`), so an extension restart loses nothing.

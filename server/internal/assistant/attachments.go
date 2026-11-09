@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -31,7 +32,7 @@ var appUploadName = lazyre.New(`-\d{8}-\d{6}(-[0-9a-f]{4})?(\.[A-Za-z0-9]+)*$`)
 
 // textPath is an absolute path in a prompt or a message: after a space, a quote, a bracket or a colon (Chinese ones
 // too), up to the next of them.
-var textPath = lazyre.New(`(?:^|[\s"'“‘(（：:，,、])(~?/[^\s"'“”‘’()（）<>，。；、,;]+)`)
+var textPath = lazyre.New(`(?:^|[\s"'“‘(（：:，,、])(~?/[^\s"'“”‘’()（）<>，。；、,;]+)`) // i18n-ignore: match literal path delimiters in user messages, including Chinese punctuation.
 
 // cleanAttachments trims the paths, drops repeats and empties, and refuses more than attachmentsMost or one that is not
 // absolute (~/ is the home of the assistant's computer).
@@ -195,7 +196,7 @@ func (s *Service) handAttachments(ctx context.Context, from, to string, named, m
 		at, picture, err := s.copyAttachment(ctx, from, to, p)
 		if err != nil {
 			if i < len(named) {
-				h.Missing = append(h.Missing, p+"（"+err.Error()+"）")
+				h.Missing = append(h.Missing, i18n.T(s.lang(ctx), "assistant-attachments.missing_detail", i18n.Args{"path": p, "error": err.Error()}))
 			}
 			continue
 		}

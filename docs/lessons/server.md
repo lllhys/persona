@@ -1,5 +1,19 @@
 # Lessons: hub / node and networking
 
+## Runtime policy and publisher-owned node packages (#2566)
+
+A persisted node-update choice must override startup configuration everywhere:
+API readback, manager handshakes, downloads and busy checks. Preserve an explicit
+false with a nullable stored value; publish a changed choice only after the
+database accepts it. Package activation is not consumer notification. A repeated
+explicit enable can request the existing package-check RPC after configuration,
+without pretending that a deployment has finished.
+
+Treat a node binary directory symlink as publisher-owned. Swapping files or
+removing version markers through it corrupts the immutable release manifest.
+Protect both enabled installs and disabled-policy cleanup, and let the publisher
+activate its verified directory after Hub health confirmation.
+
 ## Durable storage receipts do not extend authority (#1187)
 
 Check current declared keys and queue/blob flags before replay lookup, including

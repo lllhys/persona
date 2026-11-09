@@ -551,6 +551,9 @@ struct FeedLine: View {
             }
         case .today:
             if let body = item.today { TodayCard(item: item, body: body) }
+        case .brief:
+            // A routine's facts (#2320); a body this build can't read leaves the card out, never the feed around it.
+            if let brief = item.brief { BriefCard(brief: brief, group: group) }
         case .message:
             if let id = item.ref, !store.laterMessages.contains(id) { MessageCard(item: item, itemID: id) }
         case .answered: AnsweredLine(item: item, taskTitle: taskTitle)

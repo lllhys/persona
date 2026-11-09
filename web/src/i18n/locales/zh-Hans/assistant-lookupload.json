@@ -1,0 +1,19 @@
+{
+  "title": "用图片做形象",
+  "choose": "选择图片",
+  "choose_hint": "PNG、JPEG、WebP 或 GIF，也可以直接拖进来",
+  "change": "换一张",
+  "crop_label": "裁剪形象：拖动调整位置，滚轮或双指缩放；也可以用方向键移动，用 + 和 − 缩放",
+  "crop_hint": "拖动调整位置，滚轮或双指缩放",
+  "zoom": "缩放",
+  "name": "名字",
+  "subtitle": "描述（可选）",
+  "upload": "上传",
+  "progress": "上传进度",
+  "uploading": "正在上传 {percent}%",
+  "preparing": "正在处理图片…",
+  "making": "正在生成形象…",
+  "not_image": "读不了这个文件，请用 PNG、JPEG、WebP 或 GIF 图片",
+  "too_small": "图片太小了：每边至少要 {px} 像素",
+  "export_failed": "没能处理这张图片：{error}"
+}

@@ -11,5 +11,14 @@
   "missing": "选中的形象现在不在 hub 上，先用默认形象；回来后会自动换回。",
   "none": "hub 上还没有别的形象。到{extensions}装一个带形象的扩展。",
   "none_extensions": "设置 › 扩展",
-  "from_extension": "来自 {name}"
+  "from_extension": "来自 {name}",
+  "uploaded": "你上传的图片",
+  "upload": "上传图片",
+  "upload_sub": "用自己的图片",
+  "upload_label": "上传图片做形象",
+  "delete": "删除",
+  "delete_label": "删除「{name}」",
+  "delete_title": "删除「{name}」？",
+  "delete_body": "这个形象会从 hub 和你的所有设备上删除。",
+  "delete_body_current": "这个形象会从 hub 和你的所有设备上删除。它正在使用中，删除后 Persona 会换回默认形象。"
 }

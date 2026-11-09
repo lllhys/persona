@@ -19,7 +19,16 @@ struct VoiceBar: View {
     @State private var typed = ""
     @State private var showCaptions = false
     @State private var showModel = false
-    @State private var voices: VoiceVoices?
+    /// ⋯ › Voice: the voices of the call's model, asked again after a failure and when the menu opens without them.
+    @State private var voices: VoiceVoicesLoader
+
+    init(call: VoiceConversation, key: SessionKey, label: String) {
+        self.call = call
+        self.key = key
+        self.label = label
+        let group = key.group
+        _voices = State(initialValue: VoiceVoicesLoader(extensionID: call.extensionID, api: { AppModel.shared.api(group) }))
+    }
 
     var body: some View {
         let session = model.session(key)
@@ -64,14 +73,14 @@ struct VoiceBar: View {
         } message: {
             Text("Same as saying it; the voice handles it.")
         }
-        .task(id: call.model ?? "") {
-            guard let api = model.api(key.group) else { return }
-            voices = try? await api.voiceVoices(call.extensionID, model: call.model)
-        }
+        .task(id: call.model ?? "") { voices.show(model: call.model) }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
             if abs(VoiceBarRoom.shared.height - h) >= 1 { VoiceBarRoom.shared.height = h }
         }
-        .onDisappear { VoiceBarRoom.shared.height = 0 }
+        .onDisappear {
+            VoiceBarRoom.shared.height = 0
+            voices.stop()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("voice-bar")
     }
@@ -280,23 +289,60 @@ struct VoiceBar: View {
         .accessibilityIdentifier("voice-more")
     }
 
-    /// Voice: the extension's voices for the call's model; picking one keeps it on this device and picks the call up
-    /// with it.
+    /// Voice: the extension's voices for the call's model, the current one named (picked on this device, else the
+    /// model's default); picking one keeps it on this device and picks the call up with it. While the list is asked
+    /// for it says so; when it could not be read, a tap asks again (and it asks by itself a little later, and when the
+    /// menu opens again: `VoiceVoicesLoader`).
     @ViewBuilder private var voicePicker: some View {
-        let list = voices?.voices ?? []
-        if list.isEmpty {
-            Label("Voice", systemImage: Theme.Icon.voiceTimbre)
-        } else {
-            Picker(selection: Binding(get: { call.voice ?? voices?.default ?? "" }, set: { picked in
-                VoiceTimbre.choose(picked, group: key.group, extensionID: call.extensionID)
-                call.change(voice: picked)
-            })) {
-                ForEach(list, id: \.id) { v in Text(v.name ?? v.id).tag(v.id) }
-            } label: {
-                Label("Voice", systemImage: Theme.Icon.voiceTimbre)
+        Group {
+            switch voices.state {
+            case .loaded(let list) where !list.voices.isEmpty:
+                let current = call.voice ?? list.default ?? ""
+                Picker(selection: Binding(get: { current }, set: { picked in
+                    VoiceTimbre.choose(picked, group: key.group, extensionID: call.extensionID)
+                    call.change(voice: picked)
+                })) {
+                    ForEach(list.voices, id: \.id) { v in Text(v.name ?? v.id).tag(v.id) }
+                    // A voice kept from another model still shows as the current one.
+                    if !current.isEmpty, !list.voices.contains(where: { $0.id == current }) { Text(current).tag(current) }
+                } label: {
+                    // In the title: a submenu shows no second line.
+                    if let name = VoiceTimbreName.current(chosen: call.voice, in: list) {
+                        Label { Text("Voice: \(name)") } icon: { ThemedIcon(Theme.Icon.voiceTimbre) }
+                    } else {
+                        Label { Text("Voice") } icon: { ThemedIcon(Theme.Icon.voiceTimbre) }
+                    }
+                }
+                .pickerStyle(.menu)
+            // A menu item's second line comes only from a second Text right in its label (docs/lessons/ios.md, #1307).
+            case .loaded:
+                Button {} label: {
+                    Text("Voice")
+                    Text("None for this model")
+                    Theme.Icon.image(Theme.Icon.voiceTimbre)
+                }
+                .disabled(true)
+            case .idle, .loading:
+                Button {} label: {
+                    Text("Voice")
+                    Text("Loading voices…")
+                    Theme.Icon.image(Theme.Icon.voiceTimbre)
+                }
+                .disabled(true)
+            case .failed:
+                Button {
+                    Haptics.tap()
+                    voices.retry()
+                } label: {
+                    Text("Voice")
+                    Text("Couldn't load · Retry")
+                    Theme.Icon.image(Theme.Icon.voiceTimbre)
+                }
             }
-            .pickerStyle(.menu)
         }
+        .accessibilityIdentifier("voice-timbre")
+        // Drawn when the menu opens: no list (or a stale one) asks again right away.
+        .onAppear { voices.opened() }
     }
 
     private func title(_ action: VoiceBarLine.Action) -> String {

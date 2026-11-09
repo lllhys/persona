@@ -102,7 +102,10 @@ function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const { list, mid, error, reload } = useHealthConversations();
   const [seed, setSeed] = useState(0);
 
+  // one conversation per message: the box empties at once (Composer), so a second send would start a second one
+  const [starting, setStarting] = useState(false);
   const start = async (out: Outgoing): Promise<boolean> => {
+    setStarting(true);
     try {
       const r = await startHealthConversation({ prompt: out.text, images: out.images.length ? out.images : undefined });
       noteConversation(r.session.session_id, undefined);
@@ -112,6 +115,8 @@ function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     } catch (e) {
       toast(t("health.start_failed", { error: errorText(e) }), "error");
       return false;
+    } finally {
+      setStarting(false);
     }
   };
   // "Upload a checkup report": picked files go to reports/ and their conversation starts by itself
@@ -153,7 +158,7 @@ function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             <p className="mt-1.5 max-w-[520px] text-[13px] leading-relaxed text-ink-2">{t("health.hero_body")}</p>
           </div>
 
-          <Composer key={seed} draftKey="health-new" placeholder={t("health.ask_placeholder")} machineId={mid} uploadDest={HEALTH_SPACE} onSend={start} autoFocus commands={[]} />
+          <Composer key={seed} draftKey="health-new" placeholder={t("health.ask_placeholder")} machineId={mid} uploadDest={HEALTH_SPACE} onSend={start} disabled={starting} autoFocus commands={[]} />
           <input ref={picker} type="file" multiple hidden accept={REPORT_FILES} data-testid="health-report-input" onChange={(e) => void upload(Array.from(e.target.files ?? [])).finally(() => (e.target.value = ""))} />
           <button type="button" disabled={uploading || !mid} onClick={() => picker.current?.click()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-control bg-surface px-3 py-2.5 text-[13px] font-medium whitespace-nowrap text-ink shadow-btn transition-colors hover:bg-hover disabled:opacity-60">
             <Icon name="upload" size={14} className="shrink-0" />

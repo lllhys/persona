@@ -19,6 +19,7 @@ An avatar's color scheme is only used when the theme color is set to **Match Ava
 - **Hub built-in avatars**: avatar packs compiled into personad (`server/internal/hub/personas/<id>/`), present on every hub with no manual install; the phone downloads and caches one when it's selected.
   Currently there is only **Milk Frog** (id `nwverse`): a tiered avatar whose look changes with the user's level on the NWVERSE contribution board, see "Tiered avatars" below.
 - **Other avatars**: placed in `~/.persona/personas/<id>/` on the hub machine; the phone downloads and caches one when it's selected. When the id matches a built-in avatar, the directory wins (to try new artwork on one hub first).
+- **Uploaded avatars** (#2404): made in the apps from an image of the user's own, see "Uploading an image" below. No terminal needed.
 - **Extension avatars** (#3200): an extension declares them in its manifest's `looks`, and the hub serves them as avatar packs (also listed in `/api/v1/personas`); see [extensions.md](../extensions/extensions.md) ("Avatars").
 - **The selected avatar is stored on the hub and synced across platforms** (#3200): `GET /api/v1/looks` is the unified list of built-in avatars, avatar packs, and extension avatars plus the current choice; `PUT /api/v1/looks/current` changes it and broadcasts `look`.
   The per-platform local keys mentioned below (`persona.id`, `AppStyleStore.personaId`, `persona.persona`) become caches, migrated up the first time a new hub is connected; rules in extensions.md ("Avatars").
@@ -36,6 +37,17 @@ Avatars are often third-party characters found online (sometimes with another pl
 - **Working directory for generation**: keep it outside the repo (or in the uncommitted `.lane/`).
 - **Release checks run as usual**: `check_bundle_privacy.py` and the privacy hooks run as normal.
 - **To change this later**: to put another avatar into the repo or the App, confirm the rights first, then update this section.
+
+## Uploading an image (#2404)
+
+The quickest way to a custom avatar, without a terminal: the **Upload** card at the end of the avatar picker, on the web in **Settings › Persona › Avatar** and on the profile page (iPhone, iPad and Mac: #2405; Android: #2407). Pick an image, crop it square with a circular preview, give it a name, and the hub makes a package of it (`POST /api/v1/looks/uploads`, `docs/protocol/protocol.md`). The apps offer it only when the hub lists the `look_uploads` feature.
+
+- **What the hub makes** (`server/internal/hub/look_uploads.go`): `personas/u-<8 hex>/` in its own data directory, written beside the others under a dot name and moved into place in one step, then checked like any package. The avatar at 64, 128, 256 and 512 px (square: the apps crop it to a circle), and one **still frame per dot state** at 144 px, drawn from the image the way frame 0 of a generated package marks the state: a thought bubble with the first dot lit (thinking), an orange arc from twelve o'clock along the rim (working), the red ring (needs you), gray with z's rising to the top right (offline). The marks are drawn at 3× and scaled down; the z's sit on a light halo so they read on a dark picture. No animation (a still frame is also what Reduce Motion shows of any package), no `colors` (so **Match Avatar** is not offered for it), `app_icon_fallback` is Mochi.
+- **Owned by the hub**: the packages are files in the hub's own directory and the choice is the hub's setting, so these are routes of the hub's own (`hub_routes_allowed.txt`), not a manager's: a manager may run on another computer and could not write there.
+- **Marked as uploaded**: the manifest's `source.kind` is `upload`, and `GET /api/v1/looks` lists them with `"uploaded": true`. Only these can be deleted from the apps (`DELETE /api/v1/looks/uploads/{id}`); a package placed by hand, a built-in one and an extension's are refused. Deleting the chosen one brings the default back on every device.
+- **Bounds**: images up to 8 MB and 40 million pixels, at least 64 px a side; PNG, JPEG, WebP or the first frame of a GIF; names 1–40 characters; at most 50 uploaded avatars. The apps scale the crop down before sending (1024 px is plenty: the largest size kept is 512).
+- **Privacy**: the image goes only to your own hub, like any package there (see "Why avatars live on the hub" above). The original is not kept: only the sizes and frames made from it.
+- **Web** (`web/src/views/assistant/LookUpload.tsx`, details in [web.md](../web/web.md) "Avatar from an image"): the browser decodes the image upright (EXIF orientation applied, a GIF's first frame) and sends the crop drawn at its own size, at most 1024 px, as a PNG, so what the crop box showed is what the hub gets. The request goes over XHR to show the bytes sent. Deleting asks first, in a dialog that says when the look is the current one; Delete sits in the uploaded look's corner, on hover and keyboard focus, always on touch screens.
 
 ## Pack format (format 1)
 

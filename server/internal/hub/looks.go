@@ -52,6 +52,8 @@ type lookView struct {
 	Rev           string          `json:"rev,omitempty"`
 	Bytes         int64           `json:"bytes,omitempty"`
 	Manifest      json.RawMessage `json:"manifest,omitempty"`
+	// Uploaded: the hub made it from an image the user uploaded (look_uploads.go); only these can be deleted.
+	Uploaded bool `json:"uploaded,omitempty"`
 }
 
 // lookChoice is the setting: the look the user chose and when.
@@ -219,7 +221,7 @@ func (h *Hub) looks() []lookView {
 		}
 		_ = json.Unmarshal(info.Manifest, &m)
 		v := lookView{ID: p.id, Source: "hub", Name: m.Name, Names: m.Names, Subtitle: m.Subtitle, Subtitles: m.Subtitles,
-			AppIcon: extension.DefaultLook, Rev: info.Rev, Bytes: info.Bytes, Manifest: info.Manifest}
+			AppIcon: extension.DefaultLook, Rev: info.Rev, Bytes: info.Bytes, Manifest: info.Manifest, Uploaded: isUploadedManifest(p.raw)}
 		if s := p.source; s != nil {
 			v.Source, v.Extension, v.ExtensionName, v.AppIcon = "extension", s.extension, s.name, s.appIcon
 		}

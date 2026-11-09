@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const hub = vi.hoisted(() => ({ listeners: new Map<string, (() => void)[]>(), answers: [] as (() => Promise<unknown>)[] }));
+const hub = vi.hoisted(() => ({ listeners: new Map<string, (() => void)[]>(), answers: [] as (() => Promise<unknown>)[], started: 0 }));
 vi.mock("../../lib/api", async (orig) => ({
   ...(await orig<typeof import("../../lib/api")>()),
   api: (path: string) => (path.startsWith("/assistant?space=health") && hub.answers.length ? hub.answers.shift()!() : Promise.resolve({})),
@@ -17,9 +17,14 @@ vi.mock("../../lib/store", async (orig) => ({
     return () => hub.listeners.set(type, (hub.listeners.get(type) ?? []).filter((x) => x !== l));
   },
 }));
+vi.mock("./reports", async (orig) => ({
+  ...(await orig<typeof import("./reports")>()),
+  startHealthConversation: () => (hub.started++, new Promise(() => {})),
+}));
 vi.mock("../chat/ChatView", () => ({ ChatView: ({ mid, sid }: { mid: string; sid: string }) => <p data-chat>{`${mid}/${sid}`}</p> }));
 
 import { Health } from "./Health";
+import { t } from "../../i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +47,20 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+});
+
+describe("the health page's box", () => {
+  it("takes no second message while a conversation is starting", async () => {
+    hub.answers.push(listed);
+    localStorage.setItem("draft:health-new", "first question");
+    act(() => root.render(<Health onToggleSidebar={() => {}} />));
+    await flush();
+    const send = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("chat-composer.send")}"]`)!;
+    await act(async () => send.click());
+    await flush();
+    expect(hub.started).toBe(1);
+    expect(host.querySelector("textarea")!.disabled).toBe(true);
+  });
 });
 
 describe("a health conversation", () => {

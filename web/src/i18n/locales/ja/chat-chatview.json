@@ -18,6 +18,7 @@
   "loading_chat": "チャットを読み込み中",
   "retry": "再試行",
   "delivering": "送信中",
+  "waiting_for_hub": "ハブの復帰を待っています",
   "view_only": "このセッションは閲覧のみです",
   "ask_placeholder": "{name}に質問…",
   "resume_placeholder": "メッセージを送るとコンピューターでこのセッションが再開されます…",
@@ -79,5 +80,9 @@
   "refresh_failed": "更新できませんでした",
   "preview": "プレビュー",
   "archived_notice": "このエージェントはアーカイブ済みです。復元するとエージェント一覧に戻ります。新しいメッセージを送っても戻ります。",
-  "restore": "復元"
+  "restore": "復元",
+  "connecting": "接続中…",
+  "connecting_placeholder": "接続中…先に入力できます",
+  "session_gone": "利用不可",
+  "session_gone_placeholder": "この会話は利用できなくなりました"
 }

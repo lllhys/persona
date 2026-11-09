@@ -49,7 +49,7 @@ MCP tool descriptions and parameter explanations shown to models are also prompt
 | `inbox/handling/*.md` | Program messages to handling chats: new messages (`new_messages`), sent (`sent`), Agent started (`agent_started`), handed back (`handback`), rejected (`rejected`), user instruction (`instructed`), handled (`closed`) | `assistant/inbox_handle.go` |
 | `inbox/handoff.md`, `handoff_note.md` | Hand to AI with write-back: the `<persona-context>` naming the item before the user's words in the main chat, and the wrapper around a handling note told to a chat the item was handed to, whose head the hub recognizes to show the apps one line (`prompts.ParseInjected`; `docs/assistant/inbox.md`, "Item actions") | `assistant/inbox_handoff.go` |
 | `kb/compress.md`, `compress_input.md` | Chat compression + tagging | `kb/compress.go` |
-| `kb/project.md`, `project_input.md` | Rewrite project profiles | Same as above |
+| `kb/project.md`, `project_input.md` | Rewrite project profiles | `kb/project_refresh.go` |
 | `kb/items.md`, `items_input.md` | Tag documents / meetings / calendar events | `kb/items.go` |
 | `kb/recording.md`, `recording_input.md` | Summary, title, and tags for recording transcripts (purpose `kb.compress`) | `kb/recordings.go` |
 | `kb/known_projects.md` | "Known projects" list (names, aliases, one-liners), shared by compression and tagging | Same as above |

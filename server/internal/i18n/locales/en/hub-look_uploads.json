@@ -1,0 +1,13 @@
+{
+  "no_name": "Give the avatar a name",
+  "bad_name": "The name can be up to {max} characters, without control characters",
+  "bad_subtitle": "The description can be up to {max} characters, without control characters",
+  "no_image": "Choose an image for the avatar",
+  "not_image": "This file isn't an image Persona can read. Use a PNG, JPEG, WebP or GIF",
+  "too_small": "The image is too small. Use one at least {px} pixels on each side",
+  "too_large": "The image is too large. Use one under {mb} MB",
+  "too_many_pixels": "The image has too many pixels. Use a smaller one",
+  "too_many": "There are already {max} uploaded avatars. Delete one first",
+  "not_found": "This avatar is no longer on the hub",
+  "not_uploaded": "Only avatars made from an uploaded image can be deleted here"
+}

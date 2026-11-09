@@ -184,6 +184,7 @@ private fun FeedLine(item: FeedItem, host: AssistantTaskHost) {
         "answered" -> AnsweredLine(item, title, todos.firstOrNull { it.id == item.ref }?.let { todo -> { openTask(host, todo) } })
         "receipt" -> ReceiptCard(item, host, todos)
         "review" -> ReviewLine(item, title, todos.firstOrNull { it.id == item.ref }?.let { todo -> { openTask(host, todo) } })
+        "report" -> ReportCard(item, title, todos.firstOrNull { it.id == item.ref }?.let { todo -> { openTask(host, todo) } })
         "routed" -> Column(Modifier.fillMaxWidth().padding(start = Tokens.Space.xxxl), horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
             Text(stringResource(R.string.chat_tasks_routed_to, title), style = PersonaTheme.type.caption, color = PersonaTheme.palette.accent, maxLines = 1)
@@ -234,6 +235,22 @@ internal fun AnsweredLine(item: FeedItem, title: String, onOpenTask: (() -> Unit
                         if (qa.answer.isNotEmpty()) Text(qa.answer, style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** An agent's report to Persona keeps its full text and inline links, without a separate evidence list. */
+@Composable
+private fun ReportCard(item: FeedItem, title: String, onOpenTask: (() -> Unit)?) {
+    JCard(Modifier.testTag("report-card"), padding = Tokens.Space.m) {
+        Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+            Text(title, (if (onOpenTask != null) Modifier.clickable(onClickLabel = stringResource(R.string.chat_tasks_open_task),
+                onClick = onOpenTask) else Modifier), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            SelectionContainer {
+                Text(messageLinkAnnotations(item.field("text").orEmpty()), Modifier.testTag("report-body"),
+                    style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink)
             }
         }
     }

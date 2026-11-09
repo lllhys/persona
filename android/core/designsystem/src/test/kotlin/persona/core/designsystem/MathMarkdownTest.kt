@@ -7,11 +7,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.graphics.Color
 import com.mikepenz.markdown.model.ImageWidth
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.designsystem.MarkdownRenderer.Kind
+import java.io.File
 
 /** The same cases as iOS `MathMarkdownTests`, plus the fence and placeholder parts the Android renderer adds. */
 class MathMarkdownTest {
@@ -59,6 +61,16 @@ class MathMarkdownTest {
         assertNull(renderedFence(""))
         assertEquals(Fence("mermaid", "graph TD\n  A --> B"), Fence.of("```mermaid\ngraph TD\n  A --> B\n```"))
         assertEquals(Fence("math", "x"), Fence.of("~~~ math\nx")) // not closed yet (streaming)
+    }
+
+    @Test fun mermaidLoadsWithTheFirstDiagramOnly() {
+        val render = generateSequence(File("").absoluteFile) { it.parentFile }
+            .map { File(it, "core/designsystem/src/main/assets/render") }.first { it.isDirectory }
+        // Formulas never wait for its 5.5 MB: the page has no script tag for it, renderMermaid adds one before drawing.
+        assertFalse(Regex("<script[^>]*mermaid").containsMatchIn(File(render, "render.html").readText()))
+        val js = File(render, "render.js").readText()
+        assertTrue(js.contains("script.src = \"mermaid.min.js\""))
+        assertTrue(Regex("renderMermaid = async [^{]*\\{\\s*await loadMermaid\\(\\);").containsMatchIn(js))
     }
 
     @Test fun pictureKeys() {

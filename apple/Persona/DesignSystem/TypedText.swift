@@ -23,5 +23,12 @@ enum TypedText {
               let shown = view.text(in: all), shown != text.wrappedValue else { return }
         text.wrappedValue = shown
     }
+
+    /// The focused text view still holds marked text (Pinyin's letters before a candidate is picked): what reads the
+    /// draft as typed waits, and nothing writes it, which would confirm the composition early (the @ list, #2319).
+    @MainActor static var composingFocused: Bool { composing(FirstResponder.current as? UITextInput) }
+
+    /// `composingFocused` for a given view (tests).
+    @MainActor static func composing(_ view: UITextInput?) -> Bool { view?.markedTextRange != nil }
 }
 #endif

@@ -68,10 +68,11 @@ type updateRecord struct {
 
 // updateSettings are kept in Postgres (settings hub_update).
 type updateSettings struct {
-	Auto           *bool          `json:"auto,omitempty"` // nil: on (the default)
-	AutoNoticeSeen bool           `json:"auto_notice_seen"`
-	Bad            []int64        `json:"bad,omitempty"` // builds that went back: not installed automatically again
-	History        []updateRecord `json:"history,omitempty"`
+	AutoUpdateNodes *bool          `json:"auto_update_nodes,omitempty"` // nil: use the startup configuration
+	Auto            *bool          `json:"auto,omitempty"`              // nil: on (the default)
+	AutoNoticeSeen  bool           `json:"auto_notice_seen"`
+	Bad             []int64        `json:"bad,omitempty"` // builds that went back: not installed automatically again
+	History         []updateRecord `json:"history,omitempty"`
 }
 
 func (s updateSettings) auto() bool { return s.Auto == nil || *s.Auto }
@@ -479,8 +480,17 @@ func (u *updater) rollback(p update.Pending, reason string) {
 // and has the manager redeploy each connected machine whose node is not this build, one at a time. With node updates
 // off, the hub moved on from version from alone: the builds of that version it leaves in bin/nodes go aside.
 func (u *updater) updateNodes(ctx context.Context, staged, from string) {
+	dir := identity.NodeBinaryDir()
+	info, err := os.Lstat(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		u.h.logf("update: inspect node binary directory: %v", err)
+		return
+	}
+	// A release publisher owns this pointer and both immutable release trees.
+	// Only it may activate packages after the hub is confirmed healthy.
+	managed := info != nil && info.Mode()&os.ModeSymlink != 0
 	if !u.nodesEnabled() {
-		if from != "" && from != u.h.version {
+		if !managed && from != "" && from != u.h.version {
 			if moved := setAsideOldNodes(identity.NodeBinaryDir()); len(moved) > 0 {
 				u.h.logf("update: node builds of %s set aside (node updates are off, Redeploy fetches %s): %s",
 					from, u.h.version, strings.Join(moved, ", "))
@@ -488,7 +498,7 @@ func (u *updater) updateNodes(ctx context.Context, staged, from string) {
 		}
 		return
 	}
-	if staged != "" {
+	if staged != "" && !managed {
 		files, _ := filepath.Glob(filepath.Join(staged, "personad-*"))
 		legacy, _ := filepath.Glob(filepath.Join(staged, compat.DaemonBinary+"-*"))
 		files = append(files, legacy...)
@@ -568,21 +578,22 @@ func (u *updater) set(state, progress, errText string) {
 
 // updateView is GET /api/v1/hub/update.
 type updateView struct {
-	Version    string      `json:"version"`
-	Build      int64       `json:"build"`
-	Channel    string      `json:"channel"`
-	CanUpdate  bool        `json:"can_update"`
-	Why        string      `json:"why_not,omitempty"`
-	Latest     *latestView `json:"latest,omitempty"`
-	State      string      `json:"state"`
-	Progress   string      `json:"progress,omitempty"`
-	Busy       []busyItem  `json:"busy"`
-	Error      string      `json:"error,omitempty"`
-	Auto       bool        `json:"auto"`
-	AutoNotice bool        `json:"auto_notice"`
-	LastCheck  *time.Time  `json:"last_check,omitempty"`
-	Confirmed  bool        `json:"confirmed"`
-	Image      *imageView  `json:"image,omitempty"` // a Docker hub's image
+	Version         string      `json:"version"`
+	Build           int64       `json:"build"`
+	Channel         string      `json:"channel"`
+	CanUpdate       bool        `json:"can_update"`
+	Why             string      `json:"why_not,omitempty"`
+	Latest          *latestView `json:"latest,omitempty"`
+	State           string      `json:"state"`
+	Progress        string      `json:"progress,omitempty"`
+	Busy            []busyItem  `json:"busy"`
+	Error           string      `json:"error,omitempty"`
+	Auto            bool        `json:"auto"`
+	AutoUpdateNodes bool        `json:"auto_update_nodes"`
+	AutoNotice      bool        `json:"auto_notice"`
+	LastCheck       *time.Time  `json:"last_check,omitempty"`
+	Confirmed       bool        `json:"confirmed"`
+	Image           *imageView  `json:"image,omitempty"` // a Docker hub's image
 }
 
 type latestView struct {
@@ -605,7 +616,8 @@ func (u *updater) viewIn(l i18n.Lang) updateView {
 	defer u.mu.Unlock()
 	v := updateView{Version: u.h.version, Build: u.h.build.Number, Channel: u.h.build.Channel, CanUpdate: u.h.build.SelfUpdates(),
 		State: u.state, Progress: u.progress, Busy: u.busy, Error: u.errText, Auto: u.settings.auto() && u.h.build.SelfUpdates(),
-		AutoNotice: u.h.build.SelfUpdates() && !u.settings.AutoNoticeSeen, Confirmed: u.confirmed}
+		AutoNotice: u.h.build.SelfUpdates() && !u.settings.AutoNoticeSeen, Confirmed: u.confirmed,
+		AutoUpdateNodes: u.nodesEnabledLocked()}
 	if v.Busy == nil {
 		v.Busy = []busyItem{}
 	}

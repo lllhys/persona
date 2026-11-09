@@ -381,6 +381,16 @@ func TestTaskRetryFailsAgain(t *testing.T) {
 		t.Fatalf("%d receipts", n)
 	}
 	// It can be retried again after the check recovers; a finished retry is not still marked as starting.
+	// The second failure is within the automatic recheck's throttle window.
+	// Exercise the supported explicit health check instead of waiting for a
+	// second automatic probe that the policy deliberately does not schedule.
+	r := todoRequest("POST", "/api/v1/launchers/health/check?machine=box&launcher=claude", nil)
+	r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explicit recovery check: %d %s", w.Code, w.Body)
+	}
 	waitForTaskLauncherRecovery(t, h)
 	if w := retryReq(h, mux, todo.ID); w.Code != http.StatusOK {
 		t.Fatalf("retry again: %d %s", w.Code, w.Body)

@@ -56,7 +56,7 @@ nonisolated struct TaskPlan: Codable, Hashable, Identifiable, Sendable {
 /// An item the hub inserted into an assistant conversation; drawn among the transcript's lines by `at`.
 nonisolated struct FeedItem: Codable, Hashable, Identifiable, Sendable {
     enum Kind: String, Codable, Sendable {
-        case plan, task, answered, receipt, routed, today, message, view, notice, review, report, unknown
+        case plan, task, answered, receipt, routed, today, message, view, notice, review, report, brief, unknown
         init(from decoder: Decoder) throws {
             self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
         }
@@ -663,6 +663,26 @@ nonisolated extension APIClient {
 
     func dismissPlan(_ id: String) async throws -> TaskPlan {
         try await post("/api/v1/task-plans/\(id)/dismiss", as: PlanResponse.self).plan
+    }
+
+    /// The Accept button of a `brief` item's to-do to verify (#2320; the to-do rows' one too, #2056): `askedAt` is the round's
+    /// ask as the hub sent it. A 409 means that round is over (asked again since, or already verified).
+    func acceptTodo(_ id: String, askedAt: String) async throws {
+        struct Body: Encodable {
+            var askedAt: String
+            enum CodingKeys: String, CodingKey { case askedAt = "asked_at" }
+        }
+        _ = try await post("/api/v1/todos/\(Self.pathPart(id))/accept", body: Body(askedAt: askedAt))
+    }
+
+    /// The Handled button of a question that can wait (a `brief` item's `later` row). A 409 means it is not in the queue any
+    /// more (handled before, its to-do ended, or 7 days).
+    func laterHandled(_ id: String) async throws {
+        _ = try await post("/api/v1/later/\(Self.pathPart(id))/handled")
+    }
+
+    private static func pathPart(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))) ?? id
     }
 
     /// The conversation's Today card for the user's day (made on the first call of the day).

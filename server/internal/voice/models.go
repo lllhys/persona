@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,9 @@ type VoiceChoice struct {
 type voiceList struct {
 	Voices  []VoiceChoice `json:"voices"`
 	Default string        `json:"default,omitempty"`
+	// Stale: the service's list could not be read just now; this is the last one it gave, or the dialect's built-in
+	// list when it never gave one (#2411). The app asks again later.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // The voices Codex offers gpt-live-1-codex (codex-rs RealtimeVoicesList v3), cove its default.
@@ -39,13 +43,16 @@ var liveVoices = []string{"alloy", "ash", "ballad", "beacon", "bossa", "brise", 
 	"flitz", "gleam", "harema", "juni", "marin", "meridian", "nira", "noeul", "nuri", "quartz", "ripple", "sage", "shida",
 	"shimmer", "sillage", "stone", "tempo", "verse", "vesper", "willow"}
 
-// catalog lists models and voices across the providers; the services' own lists are kept 10 minutes.
+// catalog lists models and voices across the providers; the services' own lists are kept 10 minutes, and the last
+// good one stays as the answer while a service's list cannot be read (#2411).
 type catalog struct {
-	cfg *Config
-	now func() time.Time
+	cfg  *Config
+	now  func() time.Time
+	logf func(string, ...any) // nil: say nothing
 
-	mu    sync.Mutex
-	cache map[string]cached
+	mu      sync.Mutex
+	cache   map[string]cached
+	failing map[string]bool // keys whose last read failed: logged once, until one succeeds again
 }
 
 type cached struct {
@@ -55,24 +62,61 @@ type cached struct {
 
 const catalogTTL = 10 * time.Minute
 
-func (c *catalog) get(key string, load func() (any, error)) (any, error) {
+func (c *catalog) clock() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+// getOrLast is key's value, loaded again once it is 10 minutes old. When loading fails it falls back to the last good
+// value: (that value, true, the error); with none, the error alone. Only good values are kept, and a failure is logged
+// once until a load succeeds again.
+func (c *catalog) getOrLast(key string, load func() (any, error)) (v any, old bool, err error) {
 	c.mu.Lock()
 	hit, ok := c.cache[key]
 	c.mu.Unlock()
-	if ok && c.now().Sub(hit.at) < catalogTTL {
-		return hit.value, nil
+	if ok && c.clock().Sub(hit.at) < catalogTTL {
+		return hit.value, false, nil
 	}
-	v, err := load()
-	if err != nil {
-		return nil, err
-	}
+	v, err = load()
 	c.mu.Lock()
+	if err != nil {
+		first := !c.failing[key]
+		if first {
+			if c.failing == nil {
+				c.failing = map[string]bool{}
+			}
+			c.failing[key] = true
+		}
+		c.mu.Unlock()
+		if first && c.logf != nil {
+			instead := ""
+			if ok {
+				instead = "; the last good list stands in"
+			}
+			c.logf("voice catalog: reading %s failed: %s%s (logged once until it reads again)", key, fetchFailure(err), instead)
+		}
+		if ok {
+			return hit.value, true, err
+		}
+		return nil, false, err
+	}
+	delete(c.failing, key)
 	if c.cache == nil {
 		c.cache = map[string]cached{}
 	}
-	c.cache[key] = cached{at: c.now(), value: v}
+	c.cache[key] = cached{at: c.clock(), value: v}
 	c.mu.Unlock()
-	return v, nil
+	return v, false, nil
+}
+
+// last is the last good value kept under key, however old.
+func (c *catalog) last(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	hit, ok := c.cache[key]
+	return hit.value, ok
 }
 
 func (c *catalog) provider(id string) *Provider {
@@ -102,7 +146,8 @@ func (c *catalog) providerModels(ctx context.Context, p *Provider) (providerMode
 		}
 		return out, nil
 	}
-	v, err := c.get("models:"+p.ID, func() (any, error) {
+	// The last good list while the service's cannot be read: a call (and /voices) still finds its default model.
+	v, _, err := c.getOrLast("models:"+p.ID, func() (any, error) {
 		var res struct {
 			Models []struct {
 				ID          string `json:"id"`
@@ -147,7 +192,7 @@ func (c *catalog) models(ctx context.Context, logf func(string, ...any)) ([]Mode
 		p := &c.cfg.Providers[i]
 		pm, err := c.providerModels(ctx, p)
 		if err != nil {
-			logf("models: %s: %v", p.ID, err)
+			logf("models: %s: %s", p.ID, fetchFailure(err))
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", p.name(), err)
 			}
@@ -204,34 +249,43 @@ func (c *catalog) resolve(ctx context.Context, id string) (*Provider, string, er
 }
 
 // voices is GET /voices?model=: the service's list (live dialect, GET <url>/voices), else the dialect's built-in one.
+// While the service's list cannot be read it answers with the last good one for that model, else the built-in one,
+// marked Stale (#2411): a call can still pick a voice, and the app asks again later. Only a model id that names no
+// provider, or no upstream at all, is an error.
 func (c *catalog) voices(ctx context.Context, id string) (voiceList, error) {
 	p, model, err := c.resolve(ctx, id)
 	if err != nil {
-		return voiceList{}, err
-	}
-	builtin := func(ids []string, def string) voiceList {
-		out := voiceList{Default: def}
-		for _, v := range ids {
-			out.Voices = append(out.Voices, VoiceChoice{ID: v, Name: strings.ToUpper(v[:1]) + v[1:]})
+		if id != "" || errors.Is(err, errNoUpstream) || errors.Is(err, errNoProvider) {
+			return voiceList{}, err
 		}
-		return out
+		// The default model could not be found (the service's model list was never read): the first upstream's voices
+		// all the same, the last good list of any of its models, else its dialect's.
+		p = &c.cfg.Providers[0]
+		if v, ok := c.last(lastVoicesKey(p.ID)); ok {
+			return stale(v.(voiceList)), nil
+		}
+		return stale(builtinVoices(p.Dialect)), nil
 	}
 	switch p.Dialect {
-	case DialectCodex:
-		return builtin(codexVoices, "cove"), nil
-	case DialectFake:
-		return voiceList{Voices: []VoiceChoice{}}, nil // it speaks no audio
+	case DialectCodex, DialectFake:
+		return builtinVoices(p.Dialect), nil
 	}
-	v, err := c.get("voices:"+p.ID+"/"+model, func() (any, error) {
+	key := "voices:" + p.ID + "/" + model
+	v, wasStale, err := c.getOrLast(key, func() (any, error) {
 		var res struct {
 			Voices       []VoiceChoice `json:"voices"`
 			DefaultVoice string        `json:"defaultVoice"`
 			Default      string        `json:"default_voice"`
 		}
 		if err := getJSON(ctx, p, "/voices", url.Values{"model": {model}}, &res); err != nil {
+			var status *httpStatusError
+			if errors.As(err, &status) && status.noSuchEndpoint() {
+				// A service without a voices list: the public API's built-in voices, as good as any list it gives.
+				return builtinVoices(p.Dialect), nil
+			}
 			return nil, err
 		}
-		out := voiceList{Default: firstNonEmpty(res.DefaultVoice, res.Default)}
+		out := voiceList{Default: firstNonEmpty(res.DefaultVoice, res.Default), Voices: []VoiceChoice{}}
 		for _, v := range res.Voices {
 			if voicePattern.MatchString(v.ID) {
 				out.Voices = append(out.Voices, v)
@@ -239,25 +293,96 @@ func (c *catalog) voices(ctx context.Context, id string) (voiceList, error) {
 		}
 		return out, nil
 	})
-	if err != nil {
-		// A service without a voices list: the public API's built-in voices.
-		return builtin(liveVoices, "marin"), nil
+	if err != nil && v == nil {
+		return stale(builtinVoices(p.Dialect)), nil
 	}
-	return v.(voiceList), nil
+	list := v.(voiceList)
+	if wasStale {
+		return stale(list), nil
+	}
+	c.mu.Lock()
+	if c.cache == nil {
+		c.cache = map[string]cached{}
+	}
+	c.cache[lastVoicesKey(p.ID)] = cached{at: c.clock(), value: list} // for when its default model cannot be found
+	c.mu.Unlock()
+	return list, nil
+}
+
+// lastVoicesKey keeps the latest list a provider gave for any of its models.
+func lastVoicesKey(provider string) string { return "voices-latest:" + provider }
+
+// builtinVoices is a dialect's own list: Codex's voices for gpt-live-1-codex (cove), none for the fake one (it speaks
+// no audio), else the public GPT-Live API's (marin).
+func builtinVoices(dialect string) voiceList {
+	ids, def := liveVoices, "marin"
+	switch dialect {
+	case DialectCodex:
+		ids, def = codexVoices, "cove"
+	case DialectFake:
+		return voiceList{Voices: []VoiceChoice{}}
+	}
+	out := voiceList{Default: def, Voices: make([]VoiceChoice, 0, len(ids))}
+	for _, v := range ids {
+		out.Voices = append(out.Voices, VoiceChoice{ID: v, Name: strings.ToUpper(v[:1]) + v[1:]})
+	}
+	return out
+}
+
+func stale(v voiceList) voiceList {
+	v.Stale = true
+	return v
+}
+
+// httpStatusError is a service's answer other than 200 to a GET.
+type httpStatusError struct {
+	path   string
+	status int
+	body   string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("GET %s: HTTP %d %s", e.path, e.status, e.body)
+}
+
+// noSuchEndpoint: the service has no such list (not a passing failure).
+func (e *httpStatusError) noSuchEndpoint() bool {
+	return e.status == http.StatusNotFound || e.status == http.StatusMethodNotAllowed || e.status == http.StatusNotImplemented
+}
+
+// errCredential: the provider's key_file or key_command gave no credential.
+var errCredential = errors.New("no credential")
+
+// fetchFailure says why a list could not be read, for the log: never the credential, the key command's output, the
+// service's answer or its address (which may carry a key).
+func fetchFailure(err error) string {
+	var status *httpStatusError
+	var uerr *url.Error
+	switch {
+	case errors.As(err, &status):
+		return fmt.Sprintf("HTTP %d", status.status)
+	case errors.Is(err, errCredential):
+		return "its credential could not be read (key_file / key_command)"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed out"
+	case errors.As(err, &uerr):
+		return uerr.Op + ": " + clipRunes(uerr.Err.Error(), 200)
+	}
+	return clipRunes(err.Error(), 200)
 }
 
 // getJSON GETs <the provider's url>/<path> over HTTPS with its credential.
 func getJSON(ctx context.Context, p *Provider, path string, q url.Values, out any) error {
 	u, err := url.Parse(p.URL)
 	if err != nil {
-		return err
+		return errors.New("the service address does not parse")
 	}
 	u.Scheme = strings.Replace(strings.Replace(u.Scheme, "wss", "https", 1), "ws", "http", 1)
 	u.Path = strings.TrimRight(u.Path, "/") + path
 	u.RawQuery = q.Encode()
 	key, err := p.credential(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errCredential, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -275,7 +400,7 @@ func getJSON(ctx context.Context, p *Provider, path string, q url.Values, out an
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d %s", u.Path, res.StatusCode, clipRunes(string(raw), 200))
+		return &httpStatusError{path: u.Path, status: res.StatusCode, body: clipRunes(string(raw), 200)}
 	}
 	return json.Unmarshal(raw, out)
 }

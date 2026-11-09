@@ -55,6 +55,7 @@ extensions.call:{id} /api/v1/extensions/{id}/
 inbox.write          DELETE /api/v1/inbox/mutes/{id}
 inbox.write          DELETE /api/v1/inbox/policies/{id}
 -                    DELETE /api/v1/launchers/{name}
+-                    DELETE /api/v1/looks/uploads/{id}
 -                    DELETE /api/v1/machines/{mid}/browser/cookies
 -                    DELETE /api/v1/machines/{mid}/computer/apps/revoke/{bundle}
 -                    DELETE /api/v1/machines/{mid}/computer/apps/{bundle}
@@ -362,6 +363,7 @@ agents.control       POST /api/v1/interactions/{id}/resolve
 -                    POST /api/v1/launchers/test
 -                    POST /api/v1/launchers/{name}/check
 -                    POST /api/v1/launchers/{name}/restore
+-                    POST /api/v1/looks/uploads
 -                    POST /api/v1/machines/{id}/confirm
 -                    POST /api/v1/machines/{id}/reject
 -                    POST /api/v1/machines/{mid}/browser/cookies

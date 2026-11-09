@@ -1,0 +1,19 @@
+{
+  "title": "New avatar from an image",
+  "choose": "Choose image",
+  "choose_hint": "PNG, JPEG, WebP or GIF. You can also drop one here.",
+  "change": "Change image",
+  "crop_label": "Crop the avatar: drag to move, scroll or pinch to zoom; or use the arrow keys to move and + and − to zoom",
+  "crop_hint": "Drag to move, scroll or pinch to zoom",
+  "zoom": "Zoom",
+  "name": "Name",
+  "subtitle": "Description (optional)",
+  "upload": "Upload",
+  "progress": "Upload progress",
+  "uploading": "Uploading {percent}%",
+  "preparing": "Preparing the image…",
+  "making": "Making the avatar…",
+  "not_image": "Persona can't read this file. Use a PNG, JPEG, WebP or GIF image.",
+  "too_small": "This image is too small: it needs at least {px} pixels on each side.",
+  "export_failed": "Couldn't prepare the image: {error}"
+}

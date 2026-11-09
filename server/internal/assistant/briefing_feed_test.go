@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // The `brief` item of a routine's conversation (briefing_feed.go): the apps' copy of the card, written whether or not the
@@ -57,6 +59,49 @@ func TestBriefItemIsWrittenWithoutLark(t *testing.T) {
 	for _, key := range []string{`"done":[]`, `"failed":[]`} { // lists, never null: the apps read them as lists
 		if !strings.Contains(raw, key) {
 			t.Errorf("the body lacks %s: %s", key, raw)
+		}
+	}
+}
+
+// The waiting cards and the questions that can wait name the chat they came from, for the apps to open (#2320). A card from
+// no chat names none, and the tasks to verify open their to-do instead: the fields are left out there, as a hub from before
+// leaves them out everywhere.
+func TestBriefRowsNameTheChatTheyCameFrom(t *testing.T) {
+	e := newBriefRunEnvWith(t, true, func(e *briefRunEnv) {
+		e.later("1", "todo_a", "新接口用 snake_case 还是 camelCase？", time.Hour)
+		e.s.fleet.mu.Lock()
+		e.s.fleet.interactions["ix_bare"] = &pending{ix: proto.Interaction{ID: "ix_bare", Kind: proto.IxQuestion,
+			Questions: []proto.Question{{Question: "不在哪个会话里的问题"}}, CreatedAt: time.Now().Add(-time.Minute)}}
+		e.s.fleet.mu.Unlock()
+	})
+	items := e.briefItems()
+	var b briefBody
+	if len(items) != 1 || json.Unmarshal(items[0].Body, &b) != nil {
+		t.Fatalf("items: %+v", items)
+	}
+	chats := map[string][2]string{}
+	for _, r := range b.Waiting {
+		chats[r.ID] = [2]string{r.MachineID, r.SessionID}
+	}
+	if len(chats) != 3 || chats["ix_old"] != [2]string{"server", "ag_ix_old"} || chats["ix_new"] != [2]string{"server", "ag_ix_new"} ||
+		chats["ix_bare"] != [2]string{} {
+		t.Errorf("waiting: %+v", b.Waiting)
+	}
+	if len(b.Later) != 1 || b.Later[0].MachineID != "server" || b.Later[0].SessionID != "ag_1" {
+		t.Errorf("later: %+v", b.Later)
+	}
+	var raw struct{ Waiting, Accept []map[string]any }
+	if err := json.Unmarshal(items[0].Body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range append(raw.Waiting, raw.Accept...) {
+		if r["id"] != "ix_bare" && r["id"] != "todo_v1" {
+			continue
+		}
+		for _, key := range []string{"machine_id", "session_id"} {
+			if _, ok := r[key]; ok {
+				t.Errorf("%v has %s: %v", r["id"], key, r)
+			}
 		}
 	}
 }

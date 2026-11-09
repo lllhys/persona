@@ -40,6 +40,20 @@ class TasksContractTest {
         assertEquals("accepted", item.field("verdict"))
     }
 
+    /** Reports retain their original body and evidence metadata; presentation does not alter the wire record. */
+    @Test fun aReportKeepsItsBodyAndEvidence() {
+        val raw = """{"id":"report1","conversation":"main","kind":"report","ref":"task1","body":{
+            "kind":"progress","text":"Verified the change.\nSee https://example.com/results and /tmp/example-check.log.",
+            "evidence":["https://example.com/metadata-only","/tmp/example-evidence.png"]}}"""
+        val item = JsonCodec.decodeFromString<FeedItem>(raw)
+        assertEquals("report", item.kind)
+        assertEquals("Verified the change.\nSee https://example.com/results and /tmp/example-check.log.", item.field("text"))
+        assertEquals(JsonCodec.parseToJsonElement(raw).let { (it as kotlinx.serialization.json.JsonObject)["body"] }, item.body)
+        val event = ServerEvent.decode("""{"type":"assistant_feed","conversation":"main","item":$raw}""") as AssistantFeedEvent
+        assertEquals(item, event.item)
+        assertEquals(item, JsonCodec.decodeFromString<FeedItem>(JsonCodec.encodeToString(FeedItem.serializer(), item)))
+    }
+
     @Test fun unknownKindsAndTodosDecode() {
         val res = JsonCodec.decodeFromString<FeedResponse>("""{"items":[{"id":"f","conversation":"c","at":"2026-11-03T10:00:00Z","kind":"new_kind"}],
             "plans":{"p":{"id":"p","state":"started","tasks":[]}}}""")

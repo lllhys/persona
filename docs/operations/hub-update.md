@@ -558,15 +558,48 @@ Download → Verify → Prepare → Wait for idle → Replace → Restart → Co
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/v1/hub/update` | `{version, build, channel, can_update, latest?{version, build, released, notes, bad}, state, progress, busy[]{machine, session, title}, error, auto, auto_notice, last_check}` |
+| GET | `/api/v1/hub/update` | `{version, build, channel, can_update, latest?{version, build, released, notes, bad}, state, progress, busy[]{machine, session, title}, error, auto, auto_update_nodes, auto_notice, last_check}` |
 | POST | `/api/v1/hub/update/check` | Check immediately |
 | POST | `/api/v1/hub/update` | Start update (409 with a reason for non-release builds); `{"now": true}` is **Update Now** after the second confirmation, skipping the idle wait |
-| PUT | `/api/v1/hub/update/settings` | `{auto}`; `{auto_notice_seen: true}` |
+| PUT | `/api/v1/hub/update/settings` | `{auto}`; `{auto_notice_seen: true}`; `{auto_update_nodes: true\|false}` |
 | GET | `/api/v1/hub/update/history` | Update history, newest first |
 | GET | `/api/v1/skills` | Skills on the machine running the assistant: `[{name, description, source: user\|builtin}]` |
 | WS event | `hub_update` | Push to open Apps when state or progress changes |
 
 `state`: `idle` / `checking` / `available` / `downloading` / `waiting_idle` / `restarting` / `confirming` / `updated` / `rolled_back` / `failed`.
+
+### Runtime node update policy
+
+`PUT /api/v1/hub/update/settings` accepts `{"auto_update_nodes": true}` or
+`false`. The choice is persisted in Postgres under `hub_update`, independently
+of `auto` (Hub self-updates). An omitted or null field preserves the choice;
+until a choice has been saved, `hub.json`'s `auto_update_nodes` is the fallback
+(default false). GET and the successful PUT response always include the
+effective boolean, including false. A failed read returns 503; a failed save
+does not change the running choice or notify managers.
+
+After a successful choice, existing `devices.config` broadcasts and reconnect
+handshakes carry the same effective policy to managers without changing machine
+ownership. An explicit true PUT also requests `devices.update_nodes` after the
+configuration is sent, even when the value is unchanged. This requests a package
+check; it is not an installation receipt. Matching Hub versions, usable packages,
+busy checks, ownership, installation health and rollback still govern deployment.
+An offline manager receives the policy on its next handshake; node reconnects
+retain the existing automatic update path.
+
+If `bin/nodes` is a symlink, the Hub updater never swaps binaries, removes version
+markers or sets aside old binaries through it. The release publisher owns the
+immutable package directories and activates the pointer only after confirming
+Hub health. Pointer activation alone has no file-watch notification: after
+activation, repeat the authenticated true PUT to request a fresh package check
+on connected managers. Repeating false never requests deployment. Publication
+and node confirmation must be reported separately.
+
+This policy updates node executables, not an independently installed manager.
+The latter still needs its own fixed candidate, original manager/unit/config
+identity, complete activity evidence, transaction lock, guardian, health
+confirmation and rollback. A node capability or a staged manager binary alone
+does not satisfy that contract.
 
 ## 13. Tests
 

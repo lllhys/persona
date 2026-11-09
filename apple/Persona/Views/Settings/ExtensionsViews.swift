@@ -312,11 +312,16 @@ struct ExtensionDetailView: View {
 
     private func hasConfiguration(_ d: HubExtensionDetail) -> Bool {
         auth != nil || !d.ui.isEmpty || !connectorInbox.connectors.isEmpty || d.readOnly || !d.form.isEmpty || !d.secrets.isEmpty
+            || VoiceTimbreSection.shows(d.plugin, manager: page.manager)
     }
 
     @ViewBuilder private func configuration(_ d: HubExtensionDetail) -> some View {
         if let auth {
             ExtensionAuthSection(auth: auth, enabled: d.plugin.enabled ?? true, model: signIn)
+        }
+        // The voice extension: the voice this device's calls speak with (#2411), whoever's settings the rest are.
+        if VoiceTimbreSection.shows(d.plugin, manager: page.manager) {
+            VoiceTimbreSection(extensionID: d.plugin.id, group: AppModel.shared.api?.group ?? "")
         }
         if d.readOnly {
             Section {

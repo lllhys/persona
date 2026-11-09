@@ -81,6 +81,8 @@ export interface LookView {
   rev?: string;
   bytes?: number;
   manifest?: PersonaManifest;
+  /** The hub made it from an image the user uploaded (#2404): the only looks that can be deleted from the apps. */
+  uploaded?: boolean;
 }
 
 /** GET /looks's current: the chosen look (null: never chosen on this hub) and the one to show. */

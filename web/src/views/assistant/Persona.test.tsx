@@ -42,7 +42,12 @@ vi.mock("../../lib/api", async (orig) => {
     }),
   };
 });
-vi.mock("../../lib/store", () => ({ onHubEvent: (type: string, l: (m: Record<string, unknown>) => void) => hub.listeners.set(type, l) }));
+vi.mock("../../lib/store", () => ({
+  onHubEvent: (type: string, l: (m: Record<string, unknown>) => void) => hub.listeners.set(type, l),
+  // a hub without uploads (#2404): the picker offers none
+  hubHas: (features: string[], feature: string) => features.includes(feature),
+  useStore: <T,>(select: (s: { features: string[] }) => T) => select({ features: [] }),
+}));
 vi.stubGlobal("Image", class { onload: (() => void) | null = null; onerror: (() => void) | null = null; set src(_: string) { queueMicrotask(() => this.onerror?.()); } });
 
 const aurora: LookView = {

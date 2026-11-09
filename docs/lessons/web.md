@@ -1,6 +1,10 @@
 # Lessons: web UI and interactions
 
 
+## Report evidence is separate from report prose (#2554)
+
+The supervision feed's `body.evidence` is a separate array, not part of `body.text`. Hide that array only in the report renderer: preserve authored links and newlines in the body, as well as review-checklist evidence. The server also carries report evidence into its supervision prompt and uses it to validate completion handoffs; removing the wire field would change supervision behavior and break compatibility. Check the actual feed renderer, including expanded progress reports, rather than filtering URL-shaped text.
+
 ## Extension lifecycle controls use manager metadata, not configuration (#2355)
 
 - `source: installed` does not grant a full-rights web client owner-only management of local or attached installations. Market lifecycle actions follow the manager-owned `origin` and the existing endpoint policy; a manifest field or arbitrary URL cannot grant that capability. Keep unavailable controls visible with a reason rather than inventing an API request.
@@ -645,3 +649,7 @@ A saved credential and an empty input are different from explicitly removing tha
 ## Pairing fallback needs an unsupported-route response (#1916)
 
 A successful token check does not prove the subsequent device-token exchange succeeded: a redeemed pairing code can still read during its grace period. Keep the legacy credential only when the exchange returns 404 for an old hub. Authentication refusal, server failure and transport failure must reject sign-in without replacing browser credentials. Both opened and pasted links should classify a 401 by status, not by the exact error sentence returned by the hub.
+
+## An op receipt keeps the hub's answer and the digest covers the body (#2459)
+
+A write under an op id can be repeated only unchanged: the hub replays the answer it kept for that id (a refusal included) and answers `409 op_id_reused` when the body changed. So a retry after a gap keeps the id and the request as they were, which means a start that may have reached the hub cannot reopen its form; a retry after a refusal needs a new id. Another request of the same flow, such as the Codex start with a prompt, has its own id. A repeat can also come back `202 {"state":"pending"}` or `{"state":"unknown"}`, which `res.ok` reads as success, so a caller that needs the real answer has to look at `state`.

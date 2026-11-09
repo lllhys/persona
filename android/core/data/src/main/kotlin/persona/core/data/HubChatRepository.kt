@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Owns continuity for one pairing. Retains at most 64 session entries in access-order LRU;
@@ -39,6 +40,8 @@ class HubChatRepository(
         val lock = Mutex()
         val requests = Mutex()
         val saving = Mutex()
+        /** An items event's save is waiting for [saving]; later events ride on it (it reads the state once it starts). */
+        val persistPending = AtomicBoolean(false)
         val ready = CompletableDeferred<Unit>()
         val state = MutableStateFlow(ChatSnapshot(verified = false))
         var subscribed = false
@@ -81,7 +84,7 @@ class HubChatRepository(
                             entry.sync.settle(gap)
                         }
                         dispatch(entry, actions)
-                        entry.scope.launch { persist(entry) }
+                        if (entry.persistPending.compareAndSet(false, true)) entry.scope.launch { persist(entry) }
                     }
                     is DeltaEvent -> update(SessionKey(event.machineId, event.sessionId)) { entry ->
                         entry.realtime.delta(event, entry.reducer.items)
@@ -498,6 +501,8 @@ class HubChatRepository(
     }
 
     private suspend fun persist(entry: Entry) = entry.saving.withLock {
+        // From here an event's change may be missing from the snapshot below, so the next event starts another save.
+        entry.persistPending.set(false)
         quietly {
             val snapshot = entry.lock.withLock { CachedChat(entry.reducer.items, entry.reducer.history,
                 entry.reducer.covered, entry.reducer.hasMore) }

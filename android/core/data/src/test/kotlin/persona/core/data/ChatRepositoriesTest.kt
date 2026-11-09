@@ -201,6 +201,28 @@ class ChatRepositoriesTest {
         assertEquals(2, queries.count { it == ItemsQuery() })
     }
 
+    @Test fun aBurstOfItemsEventsSavesOnceMoreWithTheLatestState() = runTest {
+        val connection = Connection()
+        val transport = Transport().apply { fetch = { ItemsResponse(listOf(item(1)), history = "h", toSeq = 1) } }
+        val cache = SlowCache()
+        val repository = HubChatRepository(transport, connection, cache, Sessions(), backgroundScope)
+        var snapshot = ChatSnapshot()
+        backgroundScope.launch { repository.observe(key).collect { snapshot = it } }
+        runCurrent()
+        val opened = cache.saves.size
+        val disk = CompletableDeferred<Unit>().also { cache.disk = it }
+        for (seq in 2..11) {
+            connection.events.emit(ItemsEvent(key.machineId, key.sessionId, listOf(item(seq)), "h", seq - 1, seq))
+            runCurrent() // the first event's save starts and waits for the disk
+        }
+        disk.complete(Unit)
+        runCurrent()
+        // The save already writing, then one that reads the state once it starts: not one an event.
+        assertEquals(2, cache.saves.size - opened)
+        assertEquals((1..11).toList(), cache.saves.last().items.map { it.seq })
+        assertEquals(snapshot.items.map { it.id }, cache.saves.last().items.map { it.id })
+    }
+
     @Test fun localDiscardSurvivesReplayReconnectAndRestoredHistoryWithoutSending() = runTest {
         val disk = ListSnapshotStore(temporary.newFolder())
         val connection = Connection()
@@ -651,6 +673,14 @@ class ChatRepositoriesTest {
         var saved = cached
         override suspend fun load(session: SessionKey) = cached
         override suspend fun save(session: SessionKey, snapshot: CachedChat) { saved = snapshot }
+    }
+
+    /** Records each save as it starts, then waits for [disk] when one is set. */
+    private class SlowCache : ChatItemsCache {
+        val saves = mutableListOf<CachedChat>()
+        var disk: CompletableDeferred<Unit>? = null
+        override suspend fun load(session: SessionKey) = CachedChat()
+        override suspend fun save(session: SessionKey, snapshot: CachedChat) { saves += snapshot; disk?.await() }
     }
 
     private class Transport : ChatTransport {

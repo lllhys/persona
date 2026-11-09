@@ -9,6 +9,7 @@ import type { Item } from "../../lib/types";
 import { ChatContext } from "./chat-context";
 import { ChatLineView } from "./Lines";
 import { ReportLine } from "../assistant/Supervision";
+import { reportLine } from "../../lib/supervision";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -148,13 +149,44 @@ describe("quiet supervision rendering", () => {
 });
 
 describe("progress reports", () => {
-  it("defaults to a quiet line and preserves the full report and evidence on expansion", () => {
+  it("defaults to a quiet line and preserves the full progress body without the separate evidence list on expansion", () => {
     const item = { id: "fictional-report", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind: "progress", text: "Fictional progress details", step: 1, steps: 3, evidence: ["https://example.com/evidence"] } };
     act(() => root.render(<ReportLine item={item} title="Example task" />));
     expect(host.textContent).toBe("进度更新 · Example task");
     expect(host.querySelector('[data-testid="report-line"]')).toBeNull();
     act(() => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
     expect(host.textContent).toContain("Fictional progress details");
-    expect(host.textContent).toContain("https://example.com/evidence");
+    expect(host.textContent).not.toContain("https://example.com/evidence");
+    expect(host.querySelector("ul")).toBeNull();
+  });
+});
+
+describe("report bodies", () => {
+  it.each(["done", "blocked", "question", "progress"])("keeps the %s body verbatim, including authored links, while hiding all evidence rows", (kind) => {
+    const text = "Checks passed.\nPR: https://example.com/body-pr\nKeep this final line.";
+    const evidence = [
+      "https://example.com/evidence-pr",
+      "https://example.com/evidence-commit",
+      "https://example.com/evidence-comment",
+      "https://example.com/evidence-run",
+      "/tmp/example-results.xcresult",
+    ];
+    const item = { id: "fictional-report-body", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind, text, evidence } };
+    act(() => root.render(<ReportLine item={item} title="Example task" />));
+    if (kind === "progress") act(() => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
+    expect(host.querySelector('[data-testid="report-line"] .whitespace-pre-wrap')?.textContent).toBe(reportLine(kind, text));
+    for (const entry of evidence) expect(host.textContent).not.toContain(entry);
+    expect(host.querySelector("ul")).toBeNull();
+    expect(item.body.evidence).toEqual(evidence);
+  });
+
+  it("retains can-wait status and the task link without showing evidence", () => {
+    const onOpenTask = vi.fn();
+    const item = { id: "fictional-later-report", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind: "question", text: "A question that can wait", later: true, evidence: ["https://example.com/evidence"] } };
+    act(() => root.render(<ReportLine item={item} title="Example task" onOpenTask={onOpenTask} />));
+    expect(host.querySelector('[data-testid="report-later"]')).not.toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(onOpenTask).toHaveBeenCalledOnce();
+    expect(host.textContent).not.toContain("https://example.com/evidence");
   });
 });

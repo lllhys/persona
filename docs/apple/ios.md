@@ -203,13 +203,25 @@ Chat page:
 - Input: **assistant and Agent chats in the new shell share `ShellComposerBar`** (#1091, every style). `ChatView`’s `Composer` formerly checked only
   `shellChat` (set only by `AssistantView`), so Agents-pushed chats used `ComposerRow` / `PromptComposer` and looked different;
   now `shellChat || shell != nil` (`usesShellComposer`). Agent + menus additionally have Shortcuts (including /clear);
-  BeautifulUI Agents therefore lose Prompt Bar @ and / menus (shortcuts in +).
+  BeautifulUI Agents therefore lost the Prompt Bar's @ and / menus (shortcuts in +); both came back for every style, / as `SlashMenu` (#2747), @ as `ComposerMentionMenu` (#2319).
 - **Typing / opens commands** (#2747, matches web `AGENT_COMMANDS`): both non-Prompt-Bar composers (`ShellComposerBar`, `ComposerRow`, all styles),
   Agent drafts consisting of / plus a word show `SlashMenu` above input: /继续 (continue), /提交 (commit), /汇报 (report), /compact, /context, /model when selectable, /clear when allowed,
   same web ordering; command and description per row, quick-message original text right; further typing filters command prefixes/descriptions. Tap fills input, does not send
   (/clear uses existing confirmation); an exact inserted command such as /context does not reopen the list until draft changes. Beyond 5½ rows scroll internally.
   Assistant chats have none, like web. In `Composer` VStack, not overlay, because the composer's own hosting controller makes out-of-bounds overlays untappable (#518).
   + Shortcuts unchanged; `-openSlashMenu YES` screenshots, `PersonaUITests/SlashMenuTests` both layouts.
+- **Typing @ offers files, folders and sessions** (#2319, matches web `MentionMenu` / `lib/mentions.ts`): in `ShellComposerBar` (Agent and assistant chats, and the shell's
+  new conversation, `StarterComposer`), an `@word` before the caret, at the start or after whitespace (an e-mail address opens nothing) and not while the keyboard still
+  has marked text (Pinyin; `TypedText.composingFocused`), shows `ComposerMentionMenu` above the input where `SlashMenu` sits: the files this chat's tools read or wrote
+  (at most 12, newest first, read once per opening), the session folder's entries (at most 12, folders first; `listDir`, the web's `/fs`, cached while the list is open),
+  then other agents' sessions (at most 8, most recently active first), 40 rows at most, scrolling past 5½. Typing filters: names that start with it first, hidden
+  entries only for a query starting with ".". A query with a slash browses that folder on the session's computer (`@src/`; absolute and `~/` paths too).
+  A file types `@path ` (relative to the session's folder) with the caret after it; a folder types `@dir/` and keeps browsing; a session takes the token out and adds its
+  quote over the box (`PromptItems.quote`, sent as `<persona-context>` like any quote). The + menu's Mention a File or Session types `@` at the caret (the web's @
+  button beside +; the iOS row has no room for another button). A new conversation has no files or folder: it offers sessions, and what a typed absolute or `~/` path
+  lists on the assistant's machine, as the web's does. Workspaces in Persona's conversations are not offered yet (#2599). Logic in `Views/Chat/MentionMenu.swift`
+  (`MentionToken`, `MentionRows`, `PersonaTests/MentionMenuTests`); `-openMentionMenu YES` (or a draft such as `@Sources/`) screenshots;
+  `PersonaUITests/MentionMenuTests` against the mock hub (the weather agent's files and folder).
 - **iPad regular width (also open Duo) shares `ShellComposerBar`** (#2779): outside new shell (`RootView.usesShell` compact-only),
   no `shell` environment previously fell back to `ComposerRow`, differing from iPhone. `ChatComposerKind.padCard` (regular-width iOS) now makes Agent, assistant chats
   (`shellChat`) and assistant new chats (`AssistantHome` → `StarterComposer(shell:)`, mode chips in model menu) use it, centered within `ChatView.readableWidth`.
@@ -1111,6 +1123,38 @@ Apple clients do not draw them as user bubbles or show the model's instructions:
 - Watch: a small centered line (icon plus `line`), no bubble (screenshots: mock `MOCK_INJECTED_WATCH=1`, watch `-openWatchItem session`).
 - Chat-list previews use the assistant's words (`last_text`), which already exclude these messages.
 - `ChatCache` bumped to v9: old cached items lack `injected`.
+
+## Briefing card (#2320)
+
+A morning or evening routine with `facts` on writes a `brief` item into its own conversation (`docs/extensions/bots.md`
+("Morning and evening briefings")). iOS and iPadOS draw it as `BriefCard` (`Persona/Views/Assistant/Tasks/BriefCard.swift`)
+with the web's sections, order and totals: waiting for you, the last hours (failed, then done, then "and N more"), to verify,
+and can wait and in progress when there are any.
+
+- **Reading**: `FeedItem.brief` decodes `BriefBody` (`Shared/Brief.swift`) when the card is drawn, as `today` is. Every
+  section and field is optional (hubs since 2026-11-07 wrote different shapes), a row without an id is left out on its own,
+  a total never counts fewer than the rows listed, and `outcome` and `stage` stay strings: an outcome this build doesn't
+  know gets Got It, a stage it doesn't know shows the hub's word. A body that can't be read leaves out that card only.
+  Builds before this one decode the kind as `unknown` and skip it.
+- **Folding**: in compact width the done and failed rows fold into the heading's totals until it is tapped. Regular width
+  (iPad, and the frozen Mac app through the shared view) shows them, as the web does.
+- **Buttons** (`BriefActions`, one for the app, keyed by row and round: a card drawn again, or the same round in another
+  briefing, keeps what happened): Accept / Got It / Take Recommendation post the row's `asked_at` exactly as the hub sent it
+  (`APIClient.acceptTodo`, for #2056 to reuse), Handled posts the question's id (`APIClient.laterHandled`). Taken, they
+  say Accepted, Noted, Recommendation taken or Marked as handled; a 409 says Already handled; a 404 (a hub rolled back past
+  the routes) puts "The hub is too old for this button" in the button's place; any other failure (a 502 for a
+  recommendation that didn't reach its Agent, a 503) shows the hub's message as a toast and leaves the button usable. A tap
+  while a request is out does nothing. A decision with nothing recommended has no button, and a row without `asked_at` has
+  it disabled.
+- **Opening**: rows to verify, rows in progress and done rows open the to-do (`TasksStore.detailTask`). A waiting card or a
+  question opens the chat it came from (`machine_id` / `session_id`, which the hub adds from #2320). From an older hub, a
+  waiting card the app still has among its pending cards opens its chat, and otherwise the row has no Open. Failed rows open
+  nothing, as on the web.
+- **Not drawn**: the watch reads only assistant view cards from the feed, so it gets nothing.
+- **Tests**: `BriefCardTests` (the first, the current and a newer body; a feed with unreadable bodies; opening; every answer
+  the buttons can get, with `FakeHub`) and `BriefCardUITests` against the mock's `brief` item (`MOCK_TASKS=1
+  MOCK_TASKS_NO_ASKS=1`; `TEST_RUNNER_PERSONA_SHOTS` / `TEST_RUNNER_PERSONA_SHOTS_APPEARANCE` save it folded, unfolded and
+  answered).
 
 ## Quiet supervision rounds (#2092)
 

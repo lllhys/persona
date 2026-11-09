@@ -228,30 +228,65 @@ func clipMiddle(s string, n int) string {
 // judgeTaskDone asks the judge model whether t's work is finished. An error: no model, or no answer to go by.
 func (s *Service) judgeTaskDone(ctx context.Context, t Todo) (taskDoneCheck, error) {
 	replies, sideTurnBlocked := s.taskReplies(ctx, t)
-	c := taskDoneCheck{Replies: len(replies), Signals: doneSignals(replies)}
+	if c, ok := taskDoneWithoutModel(replies, sideTurnBlocked); ok {
+		if sideTurnBlocked {
+			s.logf("task %s: side-conversation reply without current task completion evidence: left open", t.ID)
+		}
+		return c, nil
+	}
+	in := taskDoneInput{Owner: s.owner(ctx), Delivery: s.doneNeedsDelivery(ctx), Title: t.Title, Notes: t.Notes, Replies: replies}
+	if t.Supervision != nil {
+		in.Criteria = t.Supervision.DoneWhen
+	}
+	return judgeTaskDoneWith(ctx, s.purposeModel("inbox.judge"), in)
+}
+
+// jsonModel is the one call the done judge makes: a system and a user text in, a JSON answer decoded into out.
+// *ai.Client is the real one; tests and behaviour checks give their own.
+type jsonModel interface {
+	JSON(ctx context.Context, system, user string, out any) error
+}
+
+// taskDoneInput is everything the done judge decides on, read from the todo, its agents and the assistant's
+// settings (judgeTaskDone) or written out by a test.
+type taskDoneInput struct {
+	Owner    string                  // how the prompt names the user
+	Delivery bool                    // assistant.done_needs_delivery
+	Title    string                  // the todo's title
+	Notes    string                  // what it was handed out with (clipped here)
+	Criteria []string                // a supervised task's done_when
+	Replies  []prompts.TaskDoneReply // its agents' last replies
+}
+
+// taskDoneWithoutModel is the verdict given before any model is asked: a reply from a side conversation with no
+// evidence for this task, no reply at all, or a turn the model service cut off. ok false: the model decides.
+func taskDoneWithoutModel(replies []prompts.TaskDoneReply, sideTurnBlocked bool) (c taskDoneCheck, ok bool) {
+	c = taskDoneCheck{Replies: len(replies), Signals: doneSignals(replies)}
 	if sideTurnBlocked {
 		c.Verdict, c.Reason = verdictNotDone, verdictWords[verdictNotDone]
-		s.logf("task %s: side-conversation reply without current task completion evidence: left open", t.ID)
-		return c, nil
+		return c, true
 	}
 	if len(replies) == 0 {
 		c.Verdict, c.Reason = verdictUnsure, "没读到 Agent 的回复"
-		return c, nil
+		return c, true
 	}
 	for _, r := range replies {
 		if cutOff(r.Text) { // its turn was cut off by the model service: not finished, whatever came before (#1516)
 			c.Verdict, c.Reason = verdictNotDone, interruptedSummary
-			return c, nil
+			return c, true
 		}
 	}
-	delivery := s.doneNeedsDelivery(ctx)
-	system := prompts.RenderTaskDone(prompts.TaskDone{Owner: s.owner(ctx), Delivery: delivery})
-	var criteria []string
-	if t.Supervision != nil {
-		criteria = t.Supervision.DoneWhen
-	}
-	input := prompts.RenderTaskDoneInput(prompts.TaskDoneInput{Title: t.Title, Prompt: clipMiddle(strings.TrimSpace(t.Notes), 1500), Criteria: criteria,
-		Replies: replies, MergedPR: c.Signals.MergedPR, Build: c.Signals.Build})
+	return c, false
+}
+
+// judgeTaskDoneWith asks m about in and applies the hub's own rules to what it answers: a verdict it made up is
+// unsure, the reason is one short line, and while delivery is judged, done with the work not out yet is undelivered.
+// It reads nothing else, so a behaviour check can run it on written-out cases.
+func judgeTaskDoneWith(ctx context.Context, m jsonModel, in taskDoneInput) (taskDoneCheck, error) {
+	c := taskDoneCheck{Replies: len(in.Replies), Signals: doneSignals(in.Replies)}
+	system := prompts.RenderTaskDone(prompts.TaskDone{Owner: in.Owner, Delivery: in.Delivery})
+	input := prompts.RenderTaskDoneInput(prompts.TaskDoneInput{Title: in.Title, Prompt: clipMiddle(strings.TrimSpace(in.Notes), 1500),
+		Criteria: in.Criteria, Replies: in.Replies, MergedPR: c.Signals.MergedPR, Build: c.Signals.Build})
 	var out struct {
 		Verdict  string `json:"verdict"`
 		Reason   string `json:"reason"`
@@ -259,7 +294,7 @@ func (s *Service) judgeTaskDone(ctx context.Context, t Todo) (taskDoneCheck, err
 		Gate     string `json:"gate"`
 		Unblock  string `json:"unblock"`
 	}
-	if err := s.purposeModel("inbox.judge").JSON(ctx, system, input, &out); err != nil {
+	if err := m.JSON(ctx, system, input, &out); err != nil {
 		return c, err
 	}
 	switch v := strings.ToLower(strings.TrimSpace(out.Verdict)); v {
@@ -270,8 +305,8 @@ func (s *Service) judgeTaskDone(ctx context.Context, t Todo) (taskDoneCheck, err
 	}
 	c.Reason = clip(oneLine(out.Reason), 40)
 	c.WouldClose = c.Verdict == verdictDone
-	if delivery {
-		d := judgedDelivery(out.Delivery, out.Gate, out.Unblock, replies)
+	if in.Delivery {
+		d := judgedDelivery(out.Delivery, out.Gate, out.Unblock, in.Replies)
 		d.At = time.Now()
 		c.Delivery = &d
 		if c.Verdict == verdictDone && !deliveryClosable(d.State) {

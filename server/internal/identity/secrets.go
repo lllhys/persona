@@ -9,8 +9,9 @@ package identity
 // differ.
 
 import (
-	"regexp"
 	"strings"
+
+	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
 // DataSecrets are the credential files in the data directory by the start of their name, so a backup beside one is
@@ -24,8 +25,8 @@ var DataSecrets = []string{"hub.json", "link.json", "tailcat.json", "tailcat-hub
 // sandbox-exec's read the same way.
 const DataCredentialPattern = `\.(key|p8|pem|crt|token|secret|password)([.~-][^/]*)?$`
 
-// credentialExt is DataCredentialPattern compiled once; names checked here are short, so the stdlib compiler is enough.
-var credentialExt = regexp.MustCompile(DataCredentialPattern)
+// credentialExt compiles the shared pattern when a name first needs matching.
+var credentialExt = lazyre.New(DataCredentialPattern)
 
 // DataSecretName says whether name, a file directly in a data directory (or in a manager's folder), is one of its
 // credential files: a known one by the start of its name (a backup beside it included), or any file whose name ends

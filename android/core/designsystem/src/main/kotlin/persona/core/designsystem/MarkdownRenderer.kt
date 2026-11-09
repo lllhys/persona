@@ -43,7 +43,9 @@ import kotlin.math.roundToInt
  * fonts; every other request is answered empty), draws one thing at a time and is captured into a bitmap. What to draw
  * goes in as an argument of `renderMath` / `renderMermaid`, never as markup. Pictures are kept by (kind, source,
  * dark, size) in memory and in the cache directory. Formulas are drawn black on transparent and tinted by the caller
- * (one picture for light and dark); diagrams are drawn once per appearance with Mermaid's own themes.
+ * (one picture for light and dark); diagrams are drawn once per appearance with Mermaid's own themes. The page loads
+ * KaTeX with itself and Mermaid (5.5 MB) only on the first diagram (`render.js` `loadMermaid`), so drawing formulas
+ * never waits for it; when it cannot load, that diagram fails with Mermaid's missing-name error as before.
  */
 object MarkdownRenderer {
     enum class Kind { InlineMath, DisplayMath, Mermaid }

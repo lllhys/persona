@@ -3037,6 +3037,7 @@ Selectable models (`name` optional, id shown if absent); `default` is the extens
 ```
 
 Voices available for this model (different models may have different sets; omitted `model` uses the default model). The app stores the selected model and voice locally and sends them at conversation start.
+Optional `"stale": true` (#2411): the extension could not read its service's list just now and answered with the last good one, or a built-in one; the list is usable, and the app asks again later. The built-in voice extension answers this way instead of 502 (`docs/assistant/voice.md` 5.7).
 
 ### `GET /ws` (WebSocket)
 

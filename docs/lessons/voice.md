@@ -377,6 +377,27 @@ Other values: allowing 450 tokens per append (500-token limit, rejection observe
   page (a plan card in BeautifulUI at the standard size): another loop. Now it uses only values the cards do not move: the page height, the open
   header, the bar's own measured height (`VoiceBarRoom`) and the count's. The rule: what sizes an area must not take inputs the area itself moves.
 
+## Choosing the voice (#2411, 2026-11-09)
+
+- **Every call went out with no voice, and nobody could tell**: the app asked for the voice list once, as the call started, and ignored a failure
+  (`try?`); the menu item then stayed a bare "Voice" with nothing in it for the whole call. On a real hub that first request came back 502 twice.
+  A list request that fails must have a visible state and a way back (Retry, a retry by itself, asking again when the menu opens), or it reads as
+  "not supported".
+- **Where a 502 came from**: the app sends `model=` empty while the use `plugin.<id>` names no model. The extension then looks for the default
+  model, which for a form upstream without `default_model` means reading the service's `/models`; when that read failed, `/voices` failed with it,
+  although the voice list itself has a built-in fallback. Now the last good model list stands in, and with none the voices still come (the last
+  good list of any of the upstream's models, else the built-in one), marked `stale`.
+- **A SwiftUI submenu in a menu shows no second line**: neither a menu-style `Picker`'s label nor a nested `Menu`'s label with `Text` + `Text`
+  draws the subtitle (iOS 27 simulator), so the current voice goes into the title ("Voice: Marin"). Buttons do draw one, but only from a second
+  `Text` right in the label (docs/lessons/ios.md, #1307).
+- **A SwiftUI `Menu`'s items appear when it opens**: `onAppear` on an item is the cue to ask again for a list that is missing. A menu drawn again as
+  the state changes (loading → failed) must not turn that into a loop: an open asks only 2 s after the last ask began (`VoiceVoicesLoader.reopenGap`).
+  Checked with a failure slower than the gap (the mock's `slowfail`, 3 s): with the menu closed the asks followed 2, 5, 15 s only; with it open
+  for 25 s, one ask on opening and then the same backoff, no loop.
+- **A menu item's second line wraps instead of truncating**: "Couldn't load voices · Retry" took two lines in English and Japanese
+  (「声の一覧を読み込めませんでした · 再試行」) in the iPhone 17 Pro's ⋯ menu, and `.lineLimit` does not reach a menu. The words have to be short in
+  every language ("Couldn't load · Retry", 「読み込めません · 再試行」); look at the menu in all three languages, not only the one the tests run in.
+
 ## The web voice mode (#2273, 2026-11-09)
 
 - **Chrome's fake microphone still waits on macOS's permission**: with `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream`

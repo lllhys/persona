@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Persona
 
@@ -96,6 +97,48 @@ struct SupervisionTests {
         #expect(report.reportKind == "question" && report.text == "A 先灰度\n还是 B 全量？" && report.step == 2 && report.steps == 5)
         #expect(report.evidence == ["https://github.com/o/r/pull/902"])
         #expect(res.items[2].interrupted && !res.items[3].interrupted && !review.interrupted)
+    }
+
+    @Test func reportBodyAndEvidenceRemainSeparate() throws {
+        let report = try JSON.decoder.decode(FeedItem.self, from: Data(#"""
+        {"id":"report","conversation":"main","at":"2026-11-05T09:01:00Z","kind":"report","ref":"todo_1",
+         "body":{"kind":"progress","text":"Summary unchanged.\nSee https://example.com/body-link",
+                 "evidence":["https://example.com/pull/1","https://example.com/commit/abc","https://example.com/issues/1#comment",
+                             "https://example.com/actions/runs/1","/tmp/report-check.xcresult"]}}
+        """#.utf8))
+        let body = "Summary unchanged.\nSee https://example.com/body-link"
+        #expect(report.text == body)
+        #expect(ReviewText.reportLine(kind: report.reportKind ?? "", text: report.text ?? "") == body)
+        #expect(report.evidence.count == 5)
+        #expect(report.evidence.last == "/tmp/report-check.xcresult")
+    }
+
+    /// Evidence must not change the rendered card's size or pixels, in either appearance or report state.
+    @MainActor @Test func reportCardRenderingIgnoresEvidence() throws {
+        func render(_ report: FeedItem, _ appearance: ColorScheme) throws -> (width: Int, height: Int, pixels: Data) {
+            let renderer = ImageRenderer(content: ReportFeedLine(item: report, taskTitle: "Example task")
+                .frame(width: 480)
+                .environment(\.colorScheme, appearance))
+            let image = try #require(renderer.cgImage)
+            let pixels = try #require(image.dataProvider?.data)
+            return (image.width, image.height, pixels as Data)
+        }
+        for kind in ["progress", "done", "blocked", "question"] {
+            let body: [String: JSONValue] = ["kind": .string(kind), "text": .string("Summary unchanged.\nhttps://example.com/body-link")]
+            let plain = FeedItem(id: "render-report", conversation: "main", at: .distantPast, kind: .report, body: .object(body))
+            var withEvidence = plain
+            withEvidence.body = .object(body.merging(["evidence": .array([
+                .string("https://example.com/pull/1"), .string("https://example.com/commit/abc"),
+                .string("https://example.com/issues/1#comment"), .string("https://example.com/actions/runs/1"),
+                .string("/tmp/report-check.xcresult"),
+            ])]) { _, added in added })
+            for appearance in [ColorScheme.light, .dark] {
+                let expected = try render(plain, appearance)
+                let actual = try render(withEvidence, appearance)
+                #expect(actual.width == expected.width && actual.height == expected.height)
+                #expect(actual.pixels == expected.pixels)
+            }
+        }
     }
 
     // MARK: The chip

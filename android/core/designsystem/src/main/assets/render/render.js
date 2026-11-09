@@ -52,7 +52,24 @@ window.renderMath = async (tex, display, points) => {
   return size(out);
 };
 
+// Mermaid (5.5 MB) is loaded on the first diagram, so a page that draws only formulas never parses it. A failed load
+// leaves `mermaid` undefined and the call below fails as it did when the page loaded it up front. Android's copy only:
+// apple/Persona/Resources/Render still loads it with the page.
+let mermaidLoaded = null;
+function loadMermaid() {
+  if (!mermaidLoaded) {
+    mermaidLoaded = new Promise((done) => {
+      const script = document.createElement("script");
+      script.src = "mermaid.min.js";
+      script.onload = script.onerror = () => done();
+      document.head.appendChild(script);
+    });
+  }
+  return mermaidLoaded;
+}
+
 window.renderMermaid = async (source, dark, points) => {
+  await loadMermaid();
   const out = document.getElementById("out");
   out.className = "block";
   out.style.fontSize = points + "px";

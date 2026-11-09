@@ -761,11 +761,13 @@ struct StarterComposer: View {
     @State private var uploads = FileUploads()
     @State private var videos = VideoAttachments()
     @State private var selection: TextSelection?
+    /// Sessions picked in the @ list (#2319), quoted at the top of the shell's composer.
+    @State private var quotes: [ContextRef] = []
     @FocusState private var focused: Bool
 
     private var canSend: Bool {
         !disabled && !videos.busy
-            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !videos.ready.isEmpty)
+            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !videos.ready.isEmpty || !quotes.isEmpty)
     }
 
     private func submit() {
@@ -773,15 +775,38 @@ struct StarterComposer: View {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = videos.ready
         // Nothing to send: a second ⏎ on the Mac before the field redraws (#785) would start an empty conversation.
-        guard !videos.busy, !t.isEmpty || !images.isEmpty || !files.isEmpty else { return }
-        let body = AttachedFile.message(t.isEmpty ? (images.isEmpty ? String(localized: "Please look at the image [Assistant View a3e0a0]") : String(localized: "Please look at the image [Assistant View 5ad878]")) : t, files: files)
+        guard !videos.busy, !t.isEmpty || !images.isEmpty || !files.isEmpty || !quotes.isEmpty else { return }
+        let body = AttachedFile.message(t.isEmpty ? (images.isEmpty ? (files.isEmpty ? String(localized: "See the context above.") : String(localized: "Please look at the image [Assistant View a3e0a0]")) : String(localized: "Please look at the image [Assistant View 5ad878]")) : t, files: files)
         // The keyboard goes down with the send: the conversation that takes over has a field of its own, and the keyboard
         // coming back up and going down again on the way moved the first message up and down with it (#1911).
         focused = false
-        send(body, images.map(\.1))
+        // Quoted sessions ride along as <persona-context> tags before what was typed, as in a chat.
+        send(quotes.isEmpty ? body : quotes.map(\.xml).joined(separator: "\n") + "\n\n" + body, images.map(\.1))
         text = ""
         images = []
         videos.sent()
+        quotes = []
+    }
+
+    /// The `@word` before the caret, for the @ list (#2319): the shell's composer only, while it has the keyboard.
+    private var mentionToken: MentionToken? {
+        guard shell != nil, focused, !disabled else { return nil }
+        #if os(iOS) || os(visionOS)
+        if TypedText.composingFocused { return nil } // Pinyin still marked: the list waits for the confirmed words
+        #endif
+        return MentionToken.at(text, selection: selection)
+    }
+
+    /// A new conversation has no files or folder yet: the other sessions, and what a typed absolute or ~ path lists on the
+    /// assistant's machine (the web's new conversation offers the same).
+    private var mentionSource: MentionSource { MentionSource(machine: machine) }
+
+    private func typeMention() {
+        let caret = focused ? PathInsert.range(selection, in: text)?.lowerBound : nil // an unfocused field's is stale
+        let r = MentionToken.typing(in: text, caret: caret ?? text.utf16.count)
+        text = r.text
+        selection = .cursor(utf16: r.caret)
+        focused = true
     }
 
     /// The assistant's machine (the hub's unless set otherwise): files and videos go to its temp directory.
@@ -791,6 +816,10 @@ struct StarterComposer: View {
     @ViewBuilder private var attachments: some View {
         Button { showPhotos = true } label: { Label("Photos", systemImage: Theme.Icon.photos) }
         Button { showFiles = true } label: { Label("Files", systemImage: Theme.Icon.file) }
+        if shell != nil { // the @ list is the shell composer's (#2319)
+            Button { typeMention() } label: { Label("Mention a File or Session", systemImage: Theme.Icon.mention).lineLimit(1) }
+                .accessibilityIdentifier("composer-menu-mention")
+        }
     }
 
     var body: some View {
@@ -807,11 +836,17 @@ struct StarterComposer: View {
             }
             #endif
             if !images.isEmpty { ComposerImages(images: $images) }
+            if let token = mentionToken {
+                ComposerMentionMenu(token: token, text: $text, selection: $selection, source: mentionSource) { ref in
+                    if !quotes.contains(where: { $0.url == ref.url }) { quotes.append(ref) }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             if let shell {
                 ShellComposerBar(placeholder: String(localized: "Ask \(model.persona.name)"), text: $text, selection: $selection, focused: $focused,
-                                 canSend: canSend, hasAttachments: !images.isEmpty || !videos.items.isEmpty,
+                                 canSend: canSend, hasAttachments: !images.isEmpty || !videos.items.isEmpty || !quotes.isEmpty,
                                  modesTitle: StarterModesMenu.title(modes: shell, launchers: launchers, model: model),
-                                 history: "assistant.new", gate: gate, send: submit) {
+                                 quotes: $quotes, history: "assistant.new", gate: gate, send: submit) {
                     attachments
                 } modes: {
                     StarterModesMenu(modes: shell, launchers: launchers)
@@ -857,6 +892,17 @@ struct StarterComposer: View {
                 picks = []
             }
         }
+        .animation(Theme.Motion.standard, value: mentionToken == nil)
+        .preference(key: MentionMenuOpen.self, value: mentionToken != nil)
+        #if DEBUG
+        .task { // `-openMentionMenu YES`: "@" with the keyboard up and its list open (#2319, screenshots)
+            guard shell != nil, let draft = UserDefaults.standard.string(forKey: "openMentionMenu") else { return }
+            try? await Task.sleep(for: .seconds(4))
+            text = draft.hasPrefix("@") ? draft : "@"
+            selection = .cursor(utf16: text.utf16.count)
+            focused = true
+        }
+        #endif
     }
 }
 

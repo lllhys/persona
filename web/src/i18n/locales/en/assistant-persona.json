@@ -11,5 +11,14 @@
   "missing": "The chosen avatar isn't on the hub right now, so the default is shown. It switches back automatically when it returns.",
   "none": "No other avatars on the hub yet. Install an extension that comes with avatars in {extensions}.",
   "none_extensions": "Settings › Extensions",
-  "from_extension": "From {name}"
+  "from_extension": "From {name}",
+  "uploaded": "Your image",
+  "upload": "Upload",
+  "upload_sub": "Use your own image",
+  "upload_label": "Upload an image as an avatar",
+  "delete": "Delete",
+  "delete_label": "Delete {name}",
+  "delete_title": "Delete “{name}”?",
+  "delete_body": "This avatar will be removed from the hub and from all your devices.",
+  "delete_body_current": "This avatar will be removed from the hub and from all your devices. It's the current avatar, so Persona goes back to the default one."
 }

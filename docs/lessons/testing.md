@@ -1,5 +1,7 @@
 # Lessons: testing and validation
 
+- A second failed start inside the automatic launcher-health throttle does not schedule another probe (#2600). A retry fixture that models recovery must invoke the supported explicit health check and observe its passing record; polling the record alone cannot create recovery. Keep the production throttle, terminal-only failure rules, and retry assertions unchanged.
+
 - On Linux, replacing a running executable requires a new file and rename; direct writes fail with `ETXTBSY`. Use a ready handshake and reap the fixture process to test the real overlap.
 
 - Run standalone release-worker tests on the oldest supported Python, including receipt verification and verified-artifact retries (#1077). Python 3.9 has no `hashlib.file_digest`; bounded reads into `hashlib.sha256` keep hashing portable without loading an APK into memory. Cover empty files and binary inputs spanning multiple chunks.

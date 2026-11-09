@@ -11,9 +11,11 @@ import {
   personaFiles, usablePersonas, withChosenReady, type LookCurrent, type LookView, type PersonaInfo, type PersonaState,
 } from "../../lib/persona";
 import { isResumed } from "../../lib/reconnect";
-import { onHubEvent } from "../../lib/store";
-import { Button, cx } from "../../ui/atoms";
+import { hubHas, onHubEvent, useStore } from "../../lib/store";
+import { deleteUploadedLook, LOOK_UPLOADS_FEATURE, refusalText, type UploadAnswer } from "../../lib/look-upload";
+import { Button, cx, Dialog, IconButton } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
+import { LookUploadDialog } from "./LookUpload";
 import { MochiFace } from "./MochiFace";
 import { useReducedMotion } from "./face-motion";
 import { personaAccent, setPersonaAccent } from "../../ui/look";
@@ -44,6 +46,8 @@ let synced = false;
 let choices = 0;
 /** A choice made before the hub was known to keep it (no /looks answer yet): it is sent once one comes. */
 let unsent = false;
+/** Counts the looks uploaded and deleted from this page: a list read that left before one is older than what it shows. */
+let edits = 0;
 
 function readChosen() {
   try {
@@ -106,6 +110,9 @@ export function refreshPersonas(): Promise<void> {
   if (loading) return loading;
   // the hub's `current` is its choice when the request left: one made since (here, or another device's push) stays
   const asked = choices;
+  // a look uploaded or deleted here while this read is on its way: what it lists is older, and another read follows
+  const edited = edits;
+  let again = false;
   loading = api<{ looks: LookView[]; current: LookCurrent }>("/looks")
     .then(async (r) => {
       synced = true;
@@ -124,6 +131,10 @@ export function refreshPersonas(): Promise<void> {
       const shown = ps.list.find((p) => p.id === chosen);
       const ready = !next || !shown || next.rev === shown.rev || (await preload(next));
       const now = pick(); // chosen again while the files loaded: that one was not waited for, it shows as it comes
+      if (edits !== edited) {
+        again = true;
+        return;
+      }
       if (now === answered) saveChosen(now);
       setPS({ list: withChosenReady(list, ps.list, now, now === chosen ? ready : true), looks, chosen: now, loaded: true, error: "" });
       // chosen before the hub was known to keep the choice: it goes now
@@ -135,8 +146,16 @@ export function refreshPersonas(): Promise<void> {
     .catch((e) => setPS({ loaded: true, error: e instanceof ApiError && e.status === 404 ? t("assistant-persona.hub_unsupported") : t("assistant-persona.load_failed", { error: errorText(e) }) }))
     .finally(() => {
       loading = null;
+      if (again) void refreshPersonas();
     });
   return loading;
+}
+
+/** A read that leaves after now: one already on its way left before, so another follows it. */
+function readPersonasAgain() {
+  const again = () => void refreshPersonas();
+  if (loading) loading.then(again, again);
+  else again();
 }
 
 /** Every file of the package in the browser's cache before it is shown; false when one did not come. */
@@ -162,9 +181,7 @@ onHubEvent("personas", () => void refreshPersonas());
 // A read already on its way left before the drop: another one follows it.
 onHubEvent("hello", (msg) => {
   if (isResumed(msg) || !ps.loaded) return;
-  const again = () => void refreshPersonas();
-  if (loading) loading.then(again, again);
-  else again();
+  readPersonasAgain();
 });
 // Another device chose a look (or the hub went back to the default when its extension went).
 onHubEvent("look", (m) => {
@@ -187,6 +204,59 @@ export function choosePersona(choice: string) {
   setPS({ chosen: id });
   if (synced) void api("/looks/current", { method: "PUT", json: { id } }).catch(() => undefined);
   else unsent = true; // the list being read says whether this hub keeps it
+}
+
+/** Where the choices stand: taken as a request that makes the hub choose (an upload, a delete) leaves. */
+function choiceMark(): number {
+  return choices;
+}
+
+/**
+ * The hub's choice in the answer to an upload or a delete that left at `since` (choiceMark): the newest, as a `look`
+ * push would be, unless another choice came meanwhile (another device's push, or one made here) — the hub pushes its
+ * own before it answers, so which of the two it kept last only the hub can say. Then the one on screen stays and a
+ * fresh read settles it.
+ */
+function takeChoice(id: string, since: number) {
+  if (choices !== since && id !== ps.chosen) {
+    readPersonasAgain();
+    return ps.chosen;
+  }
+  choices++;
+  saveChosen(id);
+  return id;
+}
+
+/**
+ * A look the hub made from an uploaded image (#2404), shown at once with the choice the upload made (it left at
+ * `since`, choiceMark): in the hub's order (its own packages, then the extensions'). Its `personas` and `look` pushes
+ * come too and change nothing.
+ */
+function lookUploaded({ look, current }: UploadAnswer, since: number) {
+  edits++;
+  const theirs = (l: LookView) => l.source === "extension";
+  let looks = ps.looks;
+  if (looks) {
+    const rest = looks.filter((l) => l.id !== look.id);
+    const at = rest.findIndex(theirs);
+    looks = at < 0 ? [...rest, look] : [...rest.slice(0, at), look, ...rest.slice(at)];
+  }
+  // the packages already listed stay as they are shown (one still loading keeps its old files, withChosenReady)
+  const shown = new Map(ps.list.map((p) => [p.id, p]));
+  const made = usablePersonas(lookPackages([look]));
+  const list = looks ? usablePersonas(lookPackages(looks)).map((p) => (p.id === look.id ? p : (shown.get(p.id) ?? p))) : [...ps.list.filter((p) => p.id !== look.id), ...made];
+  setPS(current ? { looks, list, chosen: takeChoice(normalizePersonaChoice(current.id ?? current.effective), since) } : { looks, list });
+}
+
+/**
+ * An uploaded look deleted (#2404; the request left at `since`, choiceMark): gone from the list, and the hub's choice
+ * after it (the default when it was the chosen one).
+ */
+function uploadedLookDeleted(id: string, current: LookCurrent | undefined, since: number) {
+  edits++;
+  const chosen = current?.id ? normalizePersonaChoice(current.id) : ps.chosen === id ? BUILTIN_PERSONA : ps.chosen;
+  // the look on screen is the one deleted: nothing newer can name it any more, so the answer stands
+  setPS({ looks: ps.looks?.filter((l) => l.id !== id) ?? null, list: ps.list.filter((p) => p.id !== id), chosen: takeChoice(chosen, ps.chosen === id ? choices : since) });
 }
 
 function subscribe(l: () => void) {
@@ -369,7 +439,15 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
   const s = usePersonaStore();
   const current = usePersona();
   const lang = currentLanguage();
+  // making avatars from images (#2404): only a hub that says it can
+  const uploads = useStore((st) => hubHas(st.features, LOOK_UPLOADS_FEATURE));
   const [refreshing, setRefreshing] = useState(false);
+  // the upload dialog, a new one each time it opens (`key`)
+  const [upload, setUpload] = useState({ open: false, key: 0 });
+  const [deleting, setDeleting] = useState<{ id: string; name: string; current: boolean } | null>(null);
+  // where the choices stood as the upload left (takeChoice)
+  const uploadSent = useRef(0);
+  const grid = useRef<HTMLDivElement>(null);
   const load = () => {
     setRefreshing(true);
     void refreshPersonas().finally(() => setRefreshing(false));
@@ -377,11 +455,17 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
   useEffect(load, []);
   const sub = (text: string) => <span className="max-w-full truncate text-[11px] whitespace-nowrap text-ink-3">{text}</span>;
   const lookOf = (id: string) => s.looks?.find((l) => l.id === id);
-  const cards: { id: string; title: string; label: string; sub: React.ReactNode; face: React.ReactNode }[] = [
+  const cards: { id: string; title: string; label: string; sub: React.ReactNode; face: React.ReactNode; uploaded?: boolean }[] = [
     { id: BUILTIN_PERSONA, title: t("assistant-persona.mochi"), label: t("assistant-persona.mochi_default"), sub: sub(t("assistant-persona.default_avatar")), face: <MochiFace size={56} /> },
     ...s.list.map((p) => {
       const title = localized(p.manifest.name, p.manifest.names, lang);
-      const from = lookOf(p.id)?.extension_name ?? p.manifest.source?.extension_name;
+      const look = lookOf(p.id);
+      const from = look?.extension_name ?? p.manifest.source?.extension_name;
+      // one made from an image says what the user wrote under it, else that it is theirs (it has no colors to show)
+      if (look?.uploaded) {
+        const about = p.manifest.subtitle ? localized(p.manifest.subtitle, p.manifest.subtitles, lang) : "";
+        return { id: p.id, title, label: title, uploaded: true, sub: sub(about || t("assistant-persona.uploaded")), face: <PersonaAvatar size={56} persona={p} fallback={<MochiFace size={56} />} /> };
+      }
       return {
         id: p.id,
         title,
@@ -392,12 +476,13 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
     }),
   ];
   const missing = !isBuiltinPersona(s.chosen) && s.loaded && !s.list.some((p) => p.id === s.chosen);
+  const shownId = current.info?.id ?? BUILTIN_PERSONA;
   return (
     <div className="flex flex-col gap-3 p-3">
-      <div role="radiogroup" aria-label={t("assistant-persona.avatar")} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+      <div ref={grid} role="radiogroup" aria-label={t("assistant-persona.avatar")} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
         {cards.map((c) => {
-          const selected = c.id === (current.info?.id ?? BUILTIN_PERSONA);
-          return (
+          const selected = c.id === shownId;
+          const card = (
             <button
               key={c.id}
               type="button"
@@ -407,6 +492,7 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
               onClick={() => choosePersona(c.id)}
               className={cx(
                 "flex min-w-0 flex-col items-center gap-2 rounded-card px-2 pt-3.5 pb-2.5 transition-[background-color,box-shadow] duration-150",
+                c.uploaded && uploads && "flex-1",
                 selected ? "bg-accent-tint shadow-[inset_0_0_0_1.5px_var(--accent)]" : "bg-inset shadow-hairline hover:bg-hover",
               )}
             >
@@ -418,7 +504,33 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
               {c.sub}
             </button>
           );
+          if (!c.uploaded || !uploads) return card;
+          // Delete sits in the card's corner: shown on hover and keyboard focus, always on touch screens.
+          return (
+            <div key={c.id} className="group/look relative flex min-w-0">
+              {card}
+              <span className="absolute top-1 right-1 opacity-0 transition-opacity duration-150 group-hover/look:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                <IconButton icon="trash" label={t("assistant-persona.delete_label", { name: c.title })} onClick={() => setDeleting({ id: c.id, name: c.title, current: selected })} />
+              </span>
+            </div>
+          );
         })}
+        {uploads && (
+          <button
+            type="button"
+            aria-label={t("assistant-persona.upload_label")}
+            onClick={() => setUpload((u) => ({ open: true, key: u.key + 1 }))}
+            className="flex min-w-0 flex-col items-center gap-2 rounded-card bg-inset px-2 pt-3.5 pb-2.5 shadow-hairline transition-[background-color,box-shadow] duration-150 hover:bg-hover"
+          >
+            <span className="flex h-14 items-center justify-center">
+              <span className="flex size-14 items-center justify-center rounded-full border border-dashed border-line-strong text-ink-3">
+                <Icon name="plus" size={22} />
+              </span>
+            </span>
+            <span className="max-w-full truncate text-[12.5px] font-medium whitespace-nowrap text-ink">{t("assistant-persona.upload")}</span>
+            {sub(t("assistant-persona.upload_sub"))}
+          </button>
+        )}
       </div>
       <div className="grid grid-cols-5 gap-1 rounded-card bg-inset py-2.5 shadow-hairline" aria-label={t("assistant-persona.states_label", { name: current.name })} role="img">
         {PERSONA_STATES.map((st) => (
@@ -434,6 +546,74 @@ export function PersonaPicker({ onExtensions }: { onExtensions?: () => void } = 
         <Button icon="retry" onClick={load} busy={refreshing}>{t("assistant-persona.retry")}</Button>
       </div>}
       {s.loaded && !s.error && !s.list.length && <NoOtherLooks onExtensions={onExtensions} />}
+      {uploads && (
+        <LookUploadDialog
+          key={upload.key}
+          open={upload.open}
+          onClose={() => setUpload((u) => ({ ...u, open: false }))}
+          onSend={() => (uploadSent.current = choiceMark())}
+          onUploaded={(answer) => lookUploaded(answer, uploadSent.current)}
+        />
+      )}
+      <DeleteLookDialog
+        look={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={() => {
+          setDeleting(null);
+          // the card that opened it is gone: the focus goes to the avatar now chosen (unless it moved on meanwhile)
+          requestAnimationFrame(() => {
+            if (document.activeElement && document.activeElement !== document.body) return;
+            grid.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus({ preventScroll: true });
+          });
+        }}
+      />
     </div>
+  );
+}
+
+/** Asks before deleting an uploaded look: it goes from every device, and the current one gives way to the default. */
+function DeleteLookDialog({ look, onClose, onDeleted }: { look: { id: string; name: string; current: boolean } | null; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [was, setWas] = useState(look);
+  if (look && look !== was) {
+    // another look (or the same one again): it starts over
+    setWas(look);
+    setBusy(false);
+    setError("");
+  }
+  const remove = async () => {
+    if (!look || busy) return;
+    setBusy(true);
+    setError("");
+    const since = choiceMark();
+    try {
+      uploadedLookDeleted(look.id, await deleteUploadedLook(look.id), since);
+      setBusy(false);
+      onDeleted();
+    } catch (e) {
+      setBusy(false);
+      setError(refusalText(e));
+      // gone already (another device deleted it): a list read after this says so (one on its way may be older)
+      if (e instanceof ApiError && e.code === "not_found") readPersonasAgain();
+    }
+  };
+  const shown = look ?? was;
+  return (
+    <Dialog
+      open={!!look}
+      onClose={onClose}
+      title={shown ? t("assistant-persona.delete_title", { name: shown.name }) : undefined}
+      width={400}
+      footer={
+        <>
+          <Button tone="quiet" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button tone="danger" icon="trash" busy={busy} onClick={() => void remove()}>{t("assistant-persona.delete")}</Button>
+        </>
+      }
+    >
+      <p className="text-[13px] leading-relaxed text-ink-2">{t(shown?.current ? "assistant-persona.delete_body_current" : "assistant-persona.delete_body")}</p>
+      {error && <p role="alert" className="mt-2 text-[12px] leading-relaxed break-words text-red">{error}</p>}
+    </Dialog>
   );
 }

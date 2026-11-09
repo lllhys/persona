@@ -261,6 +261,8 @@ body {
 @media (prefers-reduced-motion: reduce) { [data-search-hit] { animation: none; outline-color: var(--accent); } }
 
 html, body, #root { height: 100%; }
+/* Pulling down at the top of a scroller must not reload the app. Vertical only: the drawer's sideways drags are unaffected. */
+html, body { overscroll-behavior-y: none; }
 /* Text size (ui/look.ts, src/lib/text-scale.ts): "Small" / "Large" as the Mac app's 12 / 14 pt against its 13; "Standard" sets nothing. */
 :root[data-text-size="small"] { --text-scale: calc(12 / 13); }
 :root[data-text-size="large"] { --text-scale: calc(14 / 13); }
@@ -366,6 +368,13 @@ button:disabled { cursor: default; }
 /* The visible viewport (lib/viewport.ts keeps them; the soft keyboard shrinks it): fixed overlays on a phone sit in it,
    not in the layout viewport the keyboard covers on iOS. */
 :root { --kb-top: 0px; --kb-h: 100dvh; }
+/* Cropping an image into an avatar (views/assistant/LookUpload.tsx, #2404): outside the avatar's circle is dimmed and
+   its edge drawn. They lie over the user's own picture, so they are the same in light and dark. --crop-box is the
+   square's largest side. */
+:root { --crop-scrim: #00000080; --crop-edge: #ffffffd9; --crop-box: 280px; }
+/* The avatar's circle over the crop: everything outside it dimmed (a spread wider than any box; the box clips it), and
+   its edge drawn as wide as a selected card's. */
+@utility crop-ring { border-radius: 9999px; box-shadow: 0 0 0 200vmax var(--crop-scrim), inset 0 0 0 1.5px var(--crop-edge); }
 /* A tap target of at least 44 × 44 on touch screens without changing how big the control looks: an invisible square
    centred on it (smaller only where the control is already bigger). */
 @utility touch-hit {

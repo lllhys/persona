@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendDraft } from "../../lib/drafts";
 import { Composer, type Outgoing } from "./Composer";
+import { t } from "../../i18n";
 
 // imagePayload decodes on a canvas, which jsdom has not: each read waits on a promise the test settles
 const reads: ((p: { mime: string; data: string }) => void)[] = [];
@@ -244,6 +245,17 @@ describe("Composer suggestion", () => {
     expect(onSend).toHaveBeenCalledWith({ text: "跑一下测试", images: [] });
   });
 
+  it("sends once while the send is on its way, and can come back after the agent has worked", async () => {
+    const onSend = vi.fn(() => new Promise<boolean>(() => {}));
+    show({ onSend });
+    await act(async () => pill()!.querySelectorAll("button")[1].click());
+    expect(pill()).toBeNull();
+    expect(onSend).toHaveBeenCalledTimes(1);
+    show({ onSend, working: true });
+    show({ onSend });
+    expect(pill()).not.toBeNull();
+  });
+
   it("is not there while the agent works or something is in the box", () => {
     show({ working: true });
     expect(pill()).toBeNull();
@@ -406,5 +418,73 @@ describe("Composer Escape the box uses itself", () => {
     render("a");
     escape();
     expect(seen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sending while another send is in flight", () => {
+  const sendButton = () => host.querySelector<HTMLButtonElement>(`button[aria-label="${t("chat-composer.send")}"]`)!;
+  const type = (key: string, text: string) => act(() => void sendDraft(key, { type: "replace", text }));
+  const click = (el: Element) => act(() => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+  it("takes the next message and keeps Stop while the first is on its way", async () => {
+    const onSend = vi.fn(() => new Promise<boolean>(() => {}));
+    const onStop = vi.fn();
+    act(() => root.render(<Composer draftKey="busy" placeholder="" working onStop={onStop} onSend={onSend} />));
+    type("busy", "one");
+    await act(async () => click(sendButton()));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(`button[aria-label="${t("chat-composer.interrupt")}"]`)).not.toBeNull();
+    type("busy", "two");
+    expect(sendButton().disabled).toBe(false);
+    await act(async () => click(sendButton()));
+    expect(onSend).toHaveBeenCalledTimes(2);
+  });
+
+  describe("focus after a send", () => {
+    let fine = true;
+    beforeEach(() => {
+      vi.stubGlobal("matchMedia", (q: string) => ({ get matches() { return q.includes("fine") && fine; }, addEventListener() {}, removeEventListener() {} }));
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    const send = async () => {
+      localStorage.setItem("draft:focus", "hello"); // not a draft event: that one focuses the box itself
+      act(() => root.render(<Composer draftKey="focus" placeholder="" onSend={async () => true} />));
+      await act(async () => click(sendButton()));
+    };
+
+    it("asks once while Enter is held down in a blocked box", () => {
+      fine = true;
+      const onNudge = vi.fn();
+      act(() => root.render(<Composer draftKey="held" placeholder="" blocked={{ label: "x", onNudge }} onSend={async () => true} />));
+      const press = (repeat: boolean) => act(() => host.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, repeat })));
+      press(false);
+      press(true);
+      press(true);
+      expect(onNudge).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns to the box with a precise pointer, from the send button", async () => {
+      fine = true;
+      await send();
+      expect(document.activeElement).toBe(host.querySelector("textarea"));
+    });
+
+    it("stays away on a touch screen", async () => {
+      fine = false;
+      await send();
+      expect(document.activeElement).not.toBe(host.querySelector("textarea"));
+    });
+
+    it("does not take the focus from somewhere else", async () => {
+      fine = true;
+      const other = document.body.appendChild(document.createElement("button"));
+      localStorage.setItem("draft:focus", "hello");
+      act(() => root.render(<Composer draftKey="focus" placeholder="" onSend={async () => true} />));
+      other.focus();
+      await act(async () => click(sendButton()));
+      expect(document.activeElement).toBe(other);
+      other.remove();
+    });
   });
 });

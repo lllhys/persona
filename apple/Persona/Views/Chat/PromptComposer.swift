@@ -257,19 +257,13 @@ enum PromptItems {
     /// Files the chat's tools read or wrote, newest first: picking one types `@path` (relative to the session's
     /// folder), which Claude Code and Codex read as that file.
     static func files(_ items: [Item], cwd: String) -> [PromptSource] {
-        var seen = Set<String>()
-        var out: [PromptSource] = []
-        for it in items.reversed() where it.kind == .toolUse {
-            guard let path = it.toolInput?["file_path"]?.string ?? it.toolInput?["notebook_path"]?.string,
-                  !path.isEmpty, seen.insert(path).inserted else { continue }
+        MentionRows.usedPaths(items).map { path in
             let rel = !cwd.isEmpty && path.hasPrefix(cwd + "/") ? String(path.dropFirst(cwd.count + 1)) : path
             let name = (rel as NSString).lastPathComponent
             let dir = (rel as NSString).deletingLastPathComponent
-            out.append(PromptSource(id: "file:" + path, name: name, detail: dir.isEmpty ? String(localized: "Used in this session") : dir,
-                                    icon: .symbol(Theme.Icon.document), insert: "@\(rel) "))
-            if out.count == 12 { break }
+            return PromptSource(id: "file:" + path, name: name, detail: dir.isEmpty ? String(localized: "Used in this session") : dir,
+                                icon: .symbol(Theme.Icon.document), insert: "@\(rel) ")
         }
-        return out
     }
 
     /// Other agents' sessions, most recently active first: picking one quotes it (title, folder, state, its last
@@ -287,6 +281,11 @@ enum PromptItems {
     /// The quote for a picked session (`ContextRef`, sent as a `<persona-context>` tag before the message).
     static func quote(_ source: PromptSource, in all: [Session]) -> ContextRef? {
         guard source.id.hasPrefix("session:"), let s = all.first(where: { "session:" + $0.id == source.id }) else { return nil }
+        return quote(s)
+    }
+
+    /// A session's quote: its title, agent and folder, and its last words (the shell composer's @ list, #2319, too).
+    static func quote(_ s: Session) -> ContextRef {
         var lines = ["另一个会话：\(s.displayTitle)（\(s.agentLabel)）", "目录：\(s.cwd)"] // i18n-ignore
         if let last = s.lastText?.trimmingCharacters(in: .whitespacesAndNewlines), !last.isEmpty {
             lines.append("它最近说：\(String(last.prefix(600)))") // i18n-ignore

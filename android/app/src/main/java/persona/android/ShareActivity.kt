@@ -21,6 +21,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.IntentCompat
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -95,27 +97,27 @@ class ShareActivity : ComponentActivity() {
                             placeholder = { Text(stringResource(R.string.app_share_note)) },
                             maxLines = 4,
                         )
-                        Text(stringResource(R.string.app_share_to), style = MaterialTheme.typography.labelLarge)
-                        ShareTarget(stringResource(R.string.app_main_chat), "Persona", model.target == null,
-                            !model.busy && !model.locked && model.paired) { model.select(null) }
-                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                            sessions.filter { it.isLive && !it.assistant && it.key != assistant.mainSession }
-                                .distinctBy { it.key }
-                                .map { session ->
-                                    val version = "${session.updatedAt.orEmpty()}|${session.rev ?: ""}"
-                                    val visible = if (session.agentState == persona.core.contracts.AgentState.Unread &&
-                                        sorting.seen[session.key.path] == version) session.copy(state = "idle") else session
-                                    AgentSession(visible, session.stateSince, session.subagents.orEmpty().any { it.running == true })
-                                }
-                                .sortedWith(compareBy<AgentSession> { agentRank(it, sorting.mutes) }
-                                    .thenByDescending { it.sortDate }.thenBy { it.session.sessionId }.thenBy { it.id })
-                                .forEach { row ->
-                                    val session = row.session
-                                    ShareTarget(session.displayTitle,
-                                        machines.firstOrNull { it.id == session.machineId }?.displayName ?: session.agentLabel,
-                                        model.target == session.key, !model.busy && !model.locked) { model.select(session.key) }
-                                }
-                        }
+                        val rows = sessions.filter { it.isLive && !it.assistant && it.key != assistant.mainSession }
+                            .distinctBy { it.key }
+                            .map { session ->
+                                val version = "${session.updatedAt.orEmpty()}|${session.rev ?: ""}"
+                                val visible = if (session.agentState == persona.core.contracts.AgentState.Unread &&
+                                    sorting.seen[session.key.path] == version) session.copy(state = "idle") else session
+                                AgentSession(visible, session.stateSince, session.subagents.orEmpty().any { it.running == true })
+                            }
+                            .sortedWith(compareBy<AgentSession> { agentRank(it, sorting.mutes) }
+                                .thenByDescending { it.sortDate }.thenBy { it.session.sessionId }.thenBy { it.id })
+                        // Until the user picks, the sheet is on the last target if it was used within a day and is listed.
+                        val selected = model.selected(rows.mapTo(HashSet()) { it.session.key })
+                        ShareTargetList(
+                            recentFirst(rows, { it.session.key }, model.recents).map { row ->
+                                val session = row.session
+                                ShareTargetRow(session.key, session.displayTitle,
+                                    machines.firstOrNull { it.id == session.machineId }?.displayName ?: session.agentLabel)
+                            },
+                            selected, mainEnabled = !model.busy && !model.locked && model.paired,
+                            enabled = !model.busy && !model.locked, select = model::select,
+                        )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(stringResource(R.string.app_share_as_context), Modifier.weight(1f))
                             Switch(model.asContext, model::updateContext, enabled = !model.busy && !model.locked)
@@ -141,7 +143,7 @@ class ShareActivity : ComponentActivity() {
                                 if (model.error != null && !model.busy) {
                                     TextButton(onClick = model::refresh) { Text(stringResource(R.string.app_refresh), maxLines = 1) }
                                 }
-                                Button(onClick = { model.send(model.target) },
+                                Button(onClick = { model.send(selected) },
                                     enabled = !model.busy && model.payload.hasContent && model.paired) {
                                     Text(stringResource(R.string.app_send), maxLines = 1)
                                 }
@@ -163,6 +165,21 @@ class ShareActivity : ComponentActivity() {
 /** A sheet closed without sending drops its staged copy (#4815); a submitted share stays queued. */
 internal fun discardUnsentShare(finishing: Boolean, submitted: Boolean, discard: () -> Unit) {
     if (finishing && !submitted) discard()
+}
+
+/** An Agent the sheet can send to: its title and where it runs. */
+internal data class ShareTargetRow(val key: SessionKey, val title: String, val subtitle: String)
+
+/** "Send to": the main chat, then the Agents in [rows]' order (the recent ones first, #2395). */
+@Composable
+internal fun ShareTargetList(
+    rows: List<ShareTargetRow>, selected: SessionKey?, mainEnabled: Boolean, enabled: Boolean, select: (SessionKey?) -> Unit,
+) {
+    Text(stringResource(R.string.app_share_to), style = MaterialTheme.typography.labelLarge)
+    ShareTarget(stringResource(R.string.app_main_chat), "Persona", selected == null, mainEnabled) { select(null) }
+    Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+        rows.forEach { row -> ShareTarget(row.title, row.subtitle, selected == row.key, enabled) { select(row.key) } }
+    }
 }
 
 @Composable
@@ -192,8 +209,10 @@ class ShareViewModel @Inject constructor(
     val sessions: SessionsRepository,
     private val queue: persona.android.platform.ShareQueue,
     private val saved: SavedStateHandle,
+    listPreferences: DataStore<Preferences>,
 ) : ViewModel() {
     private val app = application as PersonaApp
+    private val targets = ShareTargetStore(listPreferences)
     private var owner by mutableStateOf<persona.android.data.Hub?>(null)
     val paired get() = owner != null
     internal var payload by mutableStateOf(SharePayload())
@@ -206,6 +225,12 @@ class ShareViewModel @Inject constructor(
         SessionKey(it, saved.get<String>("targetSession").orEmpty())
     })
         private set
+    /** Whether the user picked [target] in this sheet; until then the sheet is on the preselected one. */
+    private var chosen by mutableStateOf(saved.get<Boolean>("targetChosen") ?: (target != null))
+    /** Where earlier shares went, latest first (#2395). */
+    internal var recents by mutableStateOf<List<RecentShareTarget>>(emptyList())
+        private set
+    private val openedAt = System.currentTimeMillis()
     var sentTarget: SessionKey? = null
         private set
     var locked by mutableStateOf(saved.get<Boolean>("submitted") ?: false)
@@ -228,9 +253,15 @@ class ShareViewModel @Inject constructor(
     fun updateContext(value: Boolean) { asContext = value; saved["context"] = value }
     fun select(value: SessionKey?) {
         target = value
+        chosen = true
         saved["targetMachine"] = value?.machineId
         saved["targetSession"] = value?.sessionId
+        saved["targetChosen"] = true
     }
+
+    /** The target the sheet is on: the user's pick, or else the last one if it was used within a day and is [listed]. */
+    fun selected(listed: Set<SessionKey>): SessionKey? =
+        if (chosen) target else preselectedShareTarget(recents, listed, openedAt)
 
     fun read(intent: Intent) {
         if (initialized) return
@@ -262,6 +293,7 @@ class ShareViewModel @Inject constructor(
                 owner = app.hub.value
                 check(owner != null)
                 if (locked) { completed = app.getString(R.string.app_share_queued); return@launch }
+                recents = try { targets.read() } catch (error: CancellationException) { throw error } catch (_: Exception) { emptyList() }
                 locked = queue.stage(id, payload.title, payload.text, payload.uris)
                 staged = true
                 if (locked) completed = app.getString(R.string.app_share_queued)
@@ -306,6 +338,12 @@ class ShareViewModel @Inject constructor(
             try {
                 queue.submit(id, destination, note, asContext)
                 sentTarget = destination
+                // Outlives the sheet, which finishes once the share is queued; a lost write only loses the order.
+                app.scope.launch {
+                    try { targets.remember(destination, System.currentTimeMillis()) }
+                    catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { }
+                }
                 saved["submitted"] = true
                 locked = true
                 completed = app.getString(R.string.app_share_queued_offline)

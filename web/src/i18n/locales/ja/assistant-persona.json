@@ -11,5 +11,14 @@
   "missing": "選択したアバターが今ハブにないため、デフォルトのアバターを表示しています。戻ると自動的に切り替わります。",
   "none": "ハブにはまだほかのアバターがありません。{extensions}でアバター付きの拡張機能を入れてください。",
   "none_extensions": "設定 › 拡張機能",
-  "from_extension": "{name} から"
+  "from_extension": "{name} から",
+  "uploaded": "アップロードした画像",
+  "upload": "アップロード",
+  "upload_sub": "自分の画像を使う",
+  "upload_label": "画像をアップロードしてアバターにする",
+  "delete": "削除",
+  "delete_label": "「{name}」を削除",
+  "delete_title": "「{name}」を削除しますか？",
+  "delete_body": "このアバターはハブとすべてのデバイスから削除されます。",
+  "delete_body_current": "このアバターはハブとすべてのデバイスから削除されます。使用中のアバターなので、Persona はデフォルトのアバターに戻ります。"
 }

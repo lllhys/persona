@@ -71,6 +71,7 @@ func (h *Hub) routes() http.Handler {
 	h.notifyRoutes(api)
 	h.personaRoutes(api)
 	h.lookRoutes(api)
+	h.lookUploadRoutes(api)
 	// usage windows (#2432): the manager's (devices_routes.go)
 	h.usageRoutesRelayed(api)
 	h.inboxRoutesRelayed(api)

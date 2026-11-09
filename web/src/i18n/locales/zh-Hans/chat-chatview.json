@@ -18,6 +18,7 @@
   "loading_chat": "正在读取对话",
   "retry": "重试",
   "delivering": "正在送达",
+  "waiting_for_hub": "等待 hub 恢复连接",
   "view_only": "此会话仅可查看",
   "ask_placeholder": "问 {name}…",
   "resume_placeholder": "发消息会在电脑上恢复这个会话…",
@@ -79,5 +80,9 @@
   "refresh_failed": "刷新失败",
   "preview": "预览",
   "archived_notice": "这个 Agent 已归档。恢复后会回到 Agent 列表；发一条新消息也会让它回来。",
-  "restore": "恢复"
+  "restore": "恢复",
+  "connecting": "连接中…",
+  "connecting_placeholder": "连接中… 可以先打字",
+  "session_gone": "不可用",
+  "session_gone_placeholder": "这条对话已不可用"
 }

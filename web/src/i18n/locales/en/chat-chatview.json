@@ -18,6 +18,7 @@
   "loading_chat": "Loading chat",
   "retry": "Retry",
   "delivering": "Delivering",
+  "waiting_for_hub": "Waiting for the hub to come back",
   "view_only": "This session is view-only",
   "ask_placeholder": "Ask {name}…",
   "resume_placeholder": "Sending a message resumes this session on the computer…",
@@ -79,5 +80,9 @@
   "refresh_failed": "Couldn’t refresh",
   "preview": "Preview",
   "archived_notice": "This agent is archived. Restore it to bring it back to Agents; a new message brings it back too.",
-  "restore": "Restore"
+  "restore": "Restore",
+  "connecting": "Connecting…",
+  "connecting_placeholder": "Connecting… you can start typing",
+  "session_gone": "Unavailable",
+  "session_gone_placeholder": "This conversation is no longer available"
 }

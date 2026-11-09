@@ -14,6 +14,23 @@ import (
 )
 
 func (u *updater) nodesEnabled() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.loaded {
+		ctx, cancel := context.WithTimeout(context.Background(), updateRequestLimit)
+		defer cancel()
+		if err := u.loadLocked(ctx); err != nil {
+			return false // An unread persisted choice must never enable deployment.
+		}
+	}
+	return u.nodesEnabledLocked()
+}
+
+// nodesEnabledLocked is also used by the view while holding the updater lock.
+func (u *updater) nodesEnabledLocked() bool {
+	if u.settings.AutoUpdateNodes != nil {
+		return *u.settings.AutoUpdateNodes
+	}
 	return u.h.cfg != nil && u.h.cfg.AutoUpdateNodes
 }
 
