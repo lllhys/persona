@@ -150,4 +150,46 @@ describe("设置 › 通知", () => {
     expect(times).toEqual(["23:00", "07:00"]);
     expect(host.textContent).toContain(`${new Intl.DateTimeFormat("zh-Hans", { timeStyle: "short" }).format(new Date(2000, 0, 1, 23, 0))} – `);
   });
+
+  describe("Always show system notifications (#2451)", () => {
+    const always = () => named("总是弹出系统通知")!;
+
+    it("is off and disabled until system notifications are on", async () => {
+      vi.stubGlobal("Notification", { permission: "default", requestPermission: async () => "granted" });
+      localStorage.setItem("persona.systemNotifyAlways", "1");
+      await render();
+      expect(always().disabled).toBe(true);
+      expect(always().getAttribute("aria-checked")).toBe("false");
+      expect(host.textContent).toContain("先打开上面的系统通知");
+    });
+
+    it("turns on and off once they are, kept in this browser, and the texts say so", async () => {
+      vi.stubGlobal("Notification", { permission: "granted", requestPermission: async () => "granted" });
+      localStorage.setItem("persona.systemNotify", "1");
+      await render();
+      expect(always().disabled).toBe(false);
+      expect(host.textContent).toContain("网页不在前台时弹出");
+      await act(async () => always().click());
+      expect(always().getAttribute("aria-checked")).toBe("true");
+      expect(localStorage.getItem("persona.systemNotifyAlways")).toBe("1");
+      expect(host.textContent).toContain("网页在前台时也弹出");
+      expect(host.textContent).toContain("Persona 标签页在前台时也弹，开着几个标签页也只弹一次");
+      expect(pending).toHaveLength(1); // only the prefs load: this switch is not the hub's
+      await act(async () => always().click());
+      expect(localStorage.getItem("persona.systemNotifyAlways")).toBeNull();
+    });
+
+    it("turning system notifications off turns it off with them, and back on brings the choice back", async () => {
+      vi.stubGlobal("Notification", { permission: "granted", requestPermission: async () => "granted" });
+      localStorage.setItem("persona.systemNotify", "1");
+      localStorage.setItem("persona.systemNotifyAlways", "1");
+      await render();
+      expect(always().getAttribute("aria-checked")).toBe("true");
+      await act(async () => named("弹出系统通知")!.click());
+      expect(always().getAttribute("aria-checked")).toBe("false");
+      expect(always().disabled).toBe(true);
+      await act(async () => named("弹出系统通知")!.click());
+      expect(always().getAttribute("aria-checked")).toBe("true");
+    });
+  });
 });

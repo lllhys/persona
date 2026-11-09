@@ -136,6 +136,44 @@ describe("系统通知", () => {
   });
 });
 
+describe("Always show system notifications (#2451)", () => {
+  beforeEach(() => localStorage.setItem("persona.systemNotifyAlways", "1"));
+
+  it("posts while this page is in front, and clicking opens the conversation", async () => {
+    focused = true;
+    await show([session("a", "working")]);
+    await show([session("a", "needs_you")]);
+    expect(posted).toEqual([{ title: "a 需要你", body: "a 的最后一句", tag: "m/a#needs" }]);
+    act(() => notifications[0].onclick?.());
+    expect(location.pathname).toBe("/s/m/a");
+  });
+
+  it("posts while another tab is in front", async () => {
+    _setTabId("tab-other");
+    markFront(true);
+    _setTabId("tab-me");
+    await show([session("a", "working")]);
+    await show([session("a", "needs_you")]);
+    expect(posted.map((p) => p.title)).toEqual(["a 需要你"]);
+  });
+
+  it("still once for all tabs: one another tab just posted is not posted again", async () => {
+    focused = true;
+    localStorage.setItem("persona.notified", JSON.stringify({ "m/a#needs": Date.now() }));
+    await show([session("a", "working"), session("b", "working")]);
+    await show([session("a", "needs_you"), session("b", "needs_you")]);
+    expect(posted.map((p) => p.title)).toEqual(["b 需要你"]);
+  });
+
+  it("does nothing while the main switch is off", async () => {
+    focused = true;
+    localStorage.removeItem("persona.systemNotify");
+    await show([session("a", "working")]);
+    await show([session("a", "needs_you")]);
+    expect(posted).toEqual([]);
+  });
+});
+
 describe("一批做完的合成一条（#4945）", () => {
   const long = "2026-01-01T09:58:00Z";
   const working = (...ids: string[]) => ids.map((id) => session(id, "working", long));

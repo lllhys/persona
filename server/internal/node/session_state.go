@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -53,12 +54,25 @@ type sessionState struct {
 func newState() *stateFile { return &stateFile{Sessions: map[string]sessionState{}} }
 
 // legacyState reads the pre-Postgres ~/.persona/sessions.json, if any.
-func legacyState(path string) map[string]sessionState {
+// A corrupt legacy file is quarantined to path.corrupt and logged.
+func legacyState(path string, logf func(string, ...any)) map[string]sessionState {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil
+	}
 	var f struct {
 		Sessions map[string]sessionState `json:"sessions"`
 	}
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &f)
+	if err := json.Unmarshal(b, &f); err != nil {
+		corruptPath := path + ".corrupt"
+		_ = os.Rename(path, corruptPath)
+		if logf != nil {
+			logf("legacy sessions file %s is corrupt (quarantined to %s): %v", path, corruptPath, err)
+		}
+		return nil
 	}
 	return f.Sessions
 }

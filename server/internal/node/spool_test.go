@@ -273,3 +273,90 @@ func TestReplayHandsTheManagerWhatStandbyTookInOrderOnce(t *testing.T) {
 	}
 	rec.mu.Unlock()
 }
+
+func TestSpoolFaults(t *testing.T) {
+	// 1. Truncated lines and invalid JSON
+	dir := t.TempDir()
+	path := filepath.Join(dir, spoolFile)
+	corruptContent := strings.Join([]string{
+		`{"id":"e1","kind":"notify"}`,
+		`{"id":"e2", truncated`,
+		`not-even-json`,
+		`{"id":"e3","kind":"notify"}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(corruptContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs []string
+	sp := openSpool(path)
+	sp.logf = func(format string, args ...any) {
+		logs = append(logs, strings.TrimSpace(format))
+	}
+	entries, err := sp.loadLocked()
+	if err != nil {
+		t.Fatalf("loadLocked: %v", err)
+	}
+	if len(entries) != 2 || entries[0].ID != "e1" || entries[1].ID != "e3" {
+		t.Fatalf("entries = %+v, want e1 and e3", entries)
+	}
+	if len(logs) == 0 {
+		t.Fatal("expected bad lines to be logged")
+	}
+
+	// 2. Unreadable / permission denied file
+	if os.Getuid() != 0 { // skip if running as root
+		unreadable := filepath.Join(dir, "unreadable.jsonl")
+		if err := os.WriteFile(unreadable, []byte(`{"id":"e1"}`), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		spUnreadable := openSpool(unreadable)
+		_, err = spUnreadable.loadLocked()
+		if err == nil {
+			t.Fatal("expected permission error on unreadable file, got nil")
+		}
+	}
+}
+
+func TestLegacyStateFaults(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "sessions.json")
+
+	// 1. Corrupt legacy file must be quarantined to .corrupt and logged
+	if err := os.WriteFile(legacyPath, []byte(`{invalid-json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs []string
+	logf := func(format string, args ...any) {
+		logs = append(logs, strings.TrimSpace(format))
+	}
+	res := legacyState(legacyPath, logf)
+	if len(res) != 0 {
+		t.Fatalf("expected empty result from corrupt file, got %+v", res)
+	}
+	if _, err := os.Stat(legacyPath + ".corrupt"); err != nil {
+		t.Fatalf("expected %s to be quarantined to .corrupt: %v", legacyPath, err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected original %s to be moved: %v", legacyPath, err)
+	}
+	if len(logs) == 0 {
+		t.Fatal("expected corrupt legacy state to be logged")
+	}
+
+	// 2. Migration: notify failure must prevent the rename
+	n, _ := testNode(t)
+	n.dir = dir
+	validLegacy := filepath.Join(dir, "sessions.json")
+	if err := os.WriteFile(validLegacy, []byte(`{"sessions":{"s1":{"created":100}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// With peer == nil, Notify cannot succeed, migration must keep original file
+	n.loadState(context.Background())
+	if _, err := os.Stat(validLegacy); err != nil {
+		t.Fatalf("expected %s to be preserved when Notify fails, got %v", validLegacy, err)
+	}
+	if _, err := os.Stat(validLegacy + ".migrated"); !os.IsNotExist(err) {
+		t.Fatalf("expected %s.migrated not to exist when Notify fails", validLegacy)
+	}
+}

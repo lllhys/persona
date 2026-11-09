@@ -396,16 +396,30 @@ func (n *Node) loadState(ctx context.Context) bool {
 	defer n.ultracodeStateLoaded()
 	n.state.mu.Lock()
 	n.state.persist = func(id string, v sessionState) {
-		_ = n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v})
+		if n.peer != nil {
+			_ = n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v})
+		}
 	}
 	n.state.mu.Unlock()
 	legacyPath := filepath.Join(n.dir, "sessions.json")
-	if legacy := legacyState(legacyPath); len(legacy) > 0 {
+	if legacy := legacyState(legacyPath, n.logf); len(legacy) > 0 {
+		allOk := true
 		for id, v := range legacy {
-			_ = n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v})
+			if n.peer == nil {
+				allOk = false
+				break
+			}
+			if err := n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v}); err != nil {
+				allOk = false
+				n.logf("legacy migration: state.put for %s failed: %v", id, err)
+			}
 		}
 		n.state.merge(legacy)
-		_ = os.Rename(legacyPath, legacyPath+".migrated")
+		if allOk {
+			_ = os.Rename(legacyPath, legacyPath+".migrated")
+		} else {
+			n.logf("legacy migration: kept %s for retry because not all entries could be notified", legacyPath)
+		}
 	}
 	return n.fetchState(ctx)
 }
@@ -428,6 +442,9 @@ func (n *Node) reloadState(ctx context.Context) bool {
 
 // fetchState is one try of state.load: what it brings is merged under what this connection already has.
 func (n *Node) fetchState(ctx context.Context) bool {
+	if n.peer == nil {
+		return false
+	}
 	ctx, cancel := context.WithTimeout(ctx, stateLoadTimeout)
 	defer cancel()
 	var res struct {
@@ -506,6 +523,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		Skip             int           `json:"skip"`
 		Turns            int           `json:"turns"`
 		LazyImages       bool          `json:"lazy_images"`
+		UserInputs       bool          `json:"user_inputs"`
 		FoldWork         bool          `json:"fold_work"`
 		FromSeq          int           `json:"from_seq"`
 		ThroughSeq       int           `json:"through_seq"`
@@ -1093,11 +1111,19 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		f, err := n.file(p.SessionID)
 		if err != nil {
 			if n.startingSession(p.SessionID) { // nothing written yet: an empty chat, not an error
+				if p.UserInputs {
+					return proto.UserInputIndex{Inputs: []proto.UserInputPosition{}}, nil
+				}
 				return map[string]any{"items": []proto.Item{}, "has_more": false}, nil
 			}
 			return nil, err
 		}
-		n.refresh(p.SessionID, f)
+		if err := n.refresh(p.SessionID, f); err != nil && p.UserInputs {
+			return nil, err
+		}
+		if p.UserInputs {
+			return f.UserInputs(ctx)
+		}
 		// Items are kept without their image data; a caller that did not ask for lazy images (an older hub) gets it.
 		items := func(items []proto.Item) []proto.Item {
 			if !p.LazyImages {

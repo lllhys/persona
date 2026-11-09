@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { formatDate, t } from "../../i18n";
 import { errorText, isAbort } from "../../lib/api";
 import { setAttentionSoundEnabled, useAttentionSoundSetting } from "../../lib/attention";
-import { DEFAULT_QUIET, durationText, loadNotifyPrefs, notifyPrefsGeneration, saveNotifyPrefs, setSystemNotify, useNotifyPrefs, useNotifyPrefsGeneration, useSystemNotify, type DonePref, type Permission, type QuietHours } from "../../lib/notify";
+import { DEFAULT_QUIET, durationText, loadNotifyPrefs, notifyPrefsGeneration, saveNotifyPrefs, setSystemNotify, setSystemNotifyAlways, useNotifyPrefs, useNotifyPrefsGeneration, useSystemNotify, type DonePref, type Permission, type QuietHours } from "../../lib/notify";
 import { Button, cx, Loading, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { Group, Pill, Row, Switch } from "./SettingsParts";
@@ -35,11 +35,16 @@ function clockText(hhmm: string): string {
 const timeClass =
   "h-8 w-28 rounded-control bg-field px-2.5 text-[12.5px] tabular-nums text-ink shadow-inset-field outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] disabled:opacity-60";
 
-function permissionHint(p: Permission, on: boolean): string | undefined {
+function permissionHint(p: Permission, on: boolean, always: boolean): string | undefined {
   if (p === "unsupported") return t("settings-notifications.system_unsupported");
   if (p === "denied") return t("settings-notifications.system_denied_short");
   if (p === "default" || !on) return t("settings-notifications.system_ask");
-  return t("settings-notifications.system_on");
+  return t(always ? "settings-notifications.system_on_always" : "settings-notifications.system_on");
+}
+
+function systemFooter(p: Permission, active: boolean, always: boolean): string {
+  if (p === "denied") return t("settings-notifications.system_denied");
+  return t(active && always ? "settings-notifications.system_footer_always" : "settings-notifications.system_footer");
 }
 
 export function NotificationSettings() {
@@ -75,6 +80,7 @@ export function NotificationSettings() {
   };
 
   const ready = state === "ready";
+  const systemActive = system.on && system.permission === "granted";
   const quiet = prefs.quiet ?? DEFAULT_QUIET;
   const saveQuiet = (patch: Partial<QuietHours>) => void save({ quiet: { ...quiet, tz: browserZone(), ...patch } });
   const long = durationText(prefs.long_turn_seconds, {
@@ -84,15 +90,19 @@ export function NotificationSettings() {
 
   return (
     <>
-      <Group title={t("settings-notifications.system_title")} anchor="system" footer={system.permission === "denied" ? t("settings-notifications.system_denied") : t("settings-notifications.system_footer")}>
-        <Row icon="bell" label={t("settings-notifications.system")} hint={permissionHint(system.permission, system.on)}>
+      <Group title={t("settings-notifications.system_title")} anchor="system" footer={systemFooter(system.permission, systemActive, system.always)}>
+        <Row icon="bell" label={t("settings-notifications.system")} hint={permissionHint(system.permission, system.on, system.always)}>
           {system.permission === "denied" && <Pill tone="orange">{t("settings-notifications.denied_pill")}</Pill>}
           <Switch
-            on={system.on && system.permission === "granted"}
+            on={systemActive}
             onChange={(on) => void toggleSystem(on)}
             disabled={asking || system.permission === "unsupported" || system.permission === "denied"}
             label={t("settings-notifications.system")}
           />
+        </Row>
+        {/* depends on the switch above (#2451): reads off and can't be changed until notifications go out at all */}
+        <Row icon="appWindow" label={t("settings-notifications.system_always")} hint={t(systemActive ? "settings-notifications.system_always_hint" : "settings-notifications.system_always_needs")}>
+          <Switch on={systemActive && system.always} onChange={setSystemNotifyAlways} disabled={!systemActive} label={t("settings-notifications.system_always")} />
         </Row>
       </Group>
 

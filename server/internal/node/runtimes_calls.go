@@ -101,6 +101,7 @@ type runtimeCallParams struct {
 	SinceSeq       int           `json:"since_seq"`
 	FoldWork       bool          `json:"fold_work"`
 	LazyImages     bool          `json:"lazy_images"`
+	UserInputs     bool          `json:"user_inputs"`
 	AfterSeq       *int          `json:"after_seq"`
 	ThroughSeq     int           `json:"through_seq"`
 	Title          *string       `json:"title"`
@@ -151,6 +152,10 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 	}
 	switch method {
 	case "session.items":
+		if p.UserInputs {
+			index, err := n.runtimeUserInputs(ctx, p.SessionID, func(params any) (json.RawMessage, error) { return call("session.items", params) })
+			return index, err, true
+		}
 		out, err := call("session.items", params)
 		if err != nil {
 			return nil, err, true

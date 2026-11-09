@@ -46,6 +46,9 @@ func (s *Service) toolTaskPlan(ctx context.Context, sessionID string, args json.
 		t := &a.Tasks[i]
 		t.normalizeReadonlyPermission()
 		t.TodoID, t.Error, t.ErrorCode, t.ErrorArgs = "", "", "", nil
+		// Reroute is hub-owned: drop any reroute a model passes in task_plan args, so healthyPlace seeds it only from a
+		// real health detour and its first-detour guard keeps the true original machine (#2271).
+		t.Reroute = nil
 		t.Title, t.Prompt, t.Cwd = strings.TrimSpace(t.Title), strings.TrimSpace(t.Prompt), strings.TrimSpace(t.Cwd)
 		t.Model = strings.TrimSpace(t.Model)
 		t.Permission = strings.TrimSpace(t.Permission)
@@ -75,6 +78,7 @@ func (s *Service) toolTaskPlan(ctx context.Context, sessionID string, args json.
 		}
 		s.healthyPlace(ctx, &preview) // health follows the resolved launcher
 		t.Machine, t.Cwd, t.Why = preview.Machine, preview.Cwd, preview.Why
+		t.Reroute = preview.Reroute
 	}
 	if err := s.ensureTodosLoaded(ctx); err != nil {
 		return "", fmt.Errorf("todos are unavailable: %v", err)
@@ -162,6 +166,9 @@ func applyPlanEdit(t *PlanTask, e PlanTask) {
 	if s := strings.TrimSpace(e.Machine); s != "" {
 		if s != t.Machine {
 			t.MachinePolicy = machineFixed
+			// The user's explicit retarget supersedes a plan-time health detour: drop the stale reroute so the receipt
+			// names the machine the task will actually run on, not the old landing (#2271).
+			t.Reroute = nil
 		}
 		t.Machine = s
 	}

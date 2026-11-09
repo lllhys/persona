@@ -81,34 +81,62 @@ type spoolEntry struct {
 type spool struct {
 	path     string
 	replayMu sync.Mutex
+	logf     func(string, ...any)
 }
 
 var spoolMu sync.Mutex // one spool file per process
 
 func openSpool(path string) *spool { return &spool{path: path} }
 
+func (s *spool) log(format string, args ...any) {
+	if s.logf != nil {
+		s.logf(format, args...)
+	}
+}
+
 // load reads the entries; a line that does not parse is skipped.
 func (s *spool) load() []spoolEntry {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
-	return s.loadLocked()
+	entries, err := s.loadLocked()
+	if err != nil {
+		s.log("load %s: %v", s.path, err)
+	}
+	return entries
 }
 
-func (s *spool) loadLocked() []spoolEntry {
+func (s *spool) loadLocked() ([]spoolEntry, error) {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	var out []spoolEntry
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 0, 64<<10), spoolBytesMost+1)
+	badLines := 0
 	for sc.Scan() {
+		raw := sc.Bytes()
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
 		var e spoolEntry
-		if json.Unmarshal(sc.Bytes(), &e) == nil && e.ID != "" {
+		if err := json.Unmarshal(raw, &e); err == nil && e.ID != "" {
 			out = append(out, e)
+		} else {
+			badLines++
 		}
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		s.log("scanner error reading %s: %v", s.path, err)
+		return out, err
+	}
+	if badLines > 0 {
+		s.log("skipped %d bad line(s) in %s", badLines, s.path)
+	}
+	return out, nil
 }
 
 // add appends e, dropping the oldest entries past the bounds. dropped is how many went.
@@ -122,11 +150,18 @@ func (s *spool) add(e spoolEntry) (dropped int, err error) {
 	if len(line) >= spoolBytesMost {
 		return 0, errors.New("too large to keep")
 	}
-	all := append(s.loadLocked(), e)
+	loaded, err := s.loadLocked()
+	if err != nil {
+		return 0, err
+	}
+	all := append(loaded, e)
 	lines := make([][]byte, 0, len(all))
 	size := 0
 	for _, x := range all {
-		b, _ := json.Marshal(x)
+		b, err := json.Marshal(x)
+		if err != nil {
+			return 0, err
+		}
 		lines = append(lines, b)
 		size += len(b) + 1
 	}
@@ -143,14 +178,21 @@ func (s *spool) failed(id string) (drop bool, err error) {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
 	var lines [][]byte
-	for _, x := range s.loadLocked() {
+	loaded, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
+	for _, x := range loaded {
 		if x.ID == id {
 			if x.Tries++; x.Tries >= spoolTriesMost {
 				drop = true
 				continue
 			}
 		}
-		b, _ := json.Marshal(x)
+		b, err := json.Marshal(x)
+		if err != nil {
+			return false, err
+		}
 		lines = append(lines, b)
 	}
 	return drop, s.writeLocked(lines)
@@ -161,9 +203,16 @@ func (s *spool) remove(id string) error {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
 	var lines [][]byte
-	for _, x := range s.loadLocked() {
+	loaded, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	for _, x := range loaded {
 		if x.ID != id {
-			b, _ := json.Marshal(x)
+			b, err := json.Marshal(x)
+			if err != nil {
+				return err
+			}
 			lines = append(lines, b)
 		}
 	}
@@ -246,6 +295,9 @@ type standby struct {
 }
 
 func newStandby(sp *spool, logf func(string, ...any)) *standby {
+	if sp != nil && sp.logf == nil {
+		sp.logf = logf
+	}
 	return &standby{sp: sp, logf: logf, now: time.Now, retry: 5 * time.Second}
 }
 

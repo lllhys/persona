@@ -367,6 +367,36 @@ export function systemNotifyActive(): boolean {
   return systemNotifyOn() && permission() === "granted";
 }
 
+const ALWAYS_KEY = "persona.systemNotifyAlways";
+
+/** "Always show system notifications" (#2451): also while a tab of the app is in front. Kept apart from the main
+ *  switch and only counts while that one is active, so turning the main one off and on again keeps this choice. */
+export function systemNotifyAlways(): boolean {
+  try {
+    return localStorage.getItem(ALWAYS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setSystemNotifyAlways(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(ALWAYS_KEY, "1");
+    else localStorage.removeItem(ALWAYS_KEY);
+  } catch {
+    // storage unavailable
+  }
+  systemListeners.forEach((l) => l());
+}
+
+/**
+ * May a system notification go out now? Only while they are on (`active`); then only while no tab of the app is in front
+ * (`here`: this one, `other`: another), unless `always` is on. Which tab posts it is claimNotification's, either way.
+ */
+export function systemNotifyAllowed(front: { here: boolean; other: boolean }, s = { active: systemNotifyActive(), always: systemNotifyAlways() }): boolean {
+  return s.active && (s.always || (!front.here && !front.other));
+}
+
 function subscribeSystem(l: () => void) {
   systemListeners.add(l);
   window.addEventListener("storage", l);
@@ -379,17 +409,17 @@ function subscribeSystem(l: () => void) {
   };
 }
 
-const snapshot = () => `${systemNotifyOn() ? 1 : 0}|${permission()}`;
+const snapshot = () => `${systemNotifyOn() ? 1 : 0}|${permission()}|${systemNotifyAlways() ? 1 : 0}`;
 
-export function useSystemNotify(): { on: boolean; permission: Permission } {
-  const s = useSyncExternalStore(subscribeSystem, snapshot, () => "0|unsupported");
-  const [on, p] = s.split("|");
-  return { on: on === "1", permission: p as Permission };
+export function useSystemNotify(): { on: boolean; permission: Permission; always: boolean } {
+  const s = useSyncExternalStore(subscribeSystem, snapshot, () => "0|unsupported|0");
+  const [on, p, always] = s.split("|");
+  return { on: on === "1", permission: p as Permission, always: always === "1" };
 }
 
 // ── between the app's tabs ───────────────────────────────
 // Every open tab watches the same sessions. A notification is for when the user is not looking at the app at all, so
-// none goes out while any tab of it is in front, and one event makes one notification, not one per tab.
+// none goes out while any tab of it is in front (unless "Always" is on), and one event makes one notification, not one per tab.
 
 const FRONT_KEY = "persona.frontTab";
 const NOTIFIED_KEY = "persona.notified";
