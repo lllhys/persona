@@ -235,6 +235,9 @@ final class SyncDevice {
             default: break
             }
         }
+        if session?.state.isActive == true, !store.liveText.isEmpty, v.messages.last?.from == "agent" {
+            v.messages.removeLast()
+        }
         v.messages += placed.rest.map(bubble)
         v.messages += queued.map { SyncView.Message(from: "user", text: $0, state: "pending") }
         for ix in model.interactions(for: key) { v.cards[ix.id] = "open" }
