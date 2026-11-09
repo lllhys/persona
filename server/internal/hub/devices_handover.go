@@ -22,7 +22,11 @@ func (h *Hub) devicesConfig() devicewire.Config { return h.devicesConfigFor(devi
 // only to the carrier.
 func (h *Hub) devicesConfigFor(id string) devicewire.Config {
 	out := devicewire.Config{Machines: []json.RawMessage{}, HubID: h.hubID(), HubName: h.hubName(), HubVersion: h.version}
-	out.AutoUpdateNodes = h.upd.nodesEnabled()
+	if h.upd != nil {
+		out.AutoUpdateNodes = h.upd.nodesEnabled()
+	} else if h.cfg != nil {
+		out.AutoUpdateNodes = h.cfg.AutoUpdateNodes
+	}
 	for _, mc := range h.cfgEntries() {
 		if h.entryOwner(mc.ID) != id {
 			continue

@@ -14,6 +14,9 @@ import (
 )
 
 func (u *updater) nodesEnabled() bool {
+	if u == nil {
+		return false
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !u.loaded {
