@@ -67,23 +67,18 @@ struct APIErrorTests {
         #expect(f["code"] == "input_draft" && f["delivered"] == "none" && f["error"] == "x")
     }
 
-    @Test func messageReadsTheErrorTextBesideOtherFields() {
-        // The hub adds non-string fields such as `retryable` to some error bodies; the text still comes through.
-        let notFound = Data(#"{"error":"todo not found","code":"not_found","retryable":false}"#.utf8)
-        #expect(APIError.message(in: notFound) == "todo not found")
-        let draft = Data(#"{"error":"x","code":"input_draft","delivered":"none","n":3}"#.utf8)
-        #expect(APIError.message(in: draft) == "x")
-    }
-
-    @Test func messageKeepsThePlainAndObjectShapes() {
-        #expect(APIError.message(in: Data(#"{"error":"plain"}"#.utf8)) == "plain")
-        let objectError = Data(#"{"error":{"code":"99991663","message":"token invalid"}}"#.utf8)
-        #expect(APIError.message(in: objectError) == "token invalid（99991663）")
-    }
-
-    @Test func messageIsNilWithoutJSONOrAnErrorText() {
-        #expect(APIError.message(in: Data("404 page not found\n".utf8)) == nil)
-        #expect(APIError.message(in: Data(#"{"code":"not_found","retryable":false}"#.utf8)) == nil)
-        #expect(APIError.message(in: Data(#"{"error":true}"#.utf8)) == nil)
+    /// The hub's error body in every shape: the text beside other fields (some add non-string ones such as `retryable`),
+    /// the plain and object shapes, and nil without JSON or an error text.
+    @Test(arguments: [
+        (body: #"{"error":"todo not found","code":"not_found","retryable":false}"#, expected: "todo not found" as String?),
+        (body: #"{"error":"x","code":"input_draft","delivered":"none","n":3}"#, expected: "x"),
+        (body: #"{"error":"plain"}"#, expected: "plain"),
+        (body: #"{"error":{"code":"99991663","message":"token invalid"}}"#, expected: "token invalid（99991663）"),
+        (body: "404 page not found\n", expected: nil),
+        (body: #"{"code":"not_found","retryable":false}"#, expected: nil),
+        (body: #"{"error":true}"#, expected: nil),
+    ])
+    func messageReadsEveryErrorBodyShape(body: String, expected: String?) {
+        #expect(APIError.message(in: Data(body.utf8)) == expected, "\(body)")
     }
 }

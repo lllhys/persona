@@ -38,9 +38,9 @@ struct AutoConversationsView: View {
 
     var body: some View {
         let everyone = model.assistantConversations.filter { $0.key != model.assistantMain }
-        let split = AutoConversations(everyone, tasks: taskChats.known, current: nil,
+        let split = AutoConversations(everyone, tasks: taskChats.known(on: model.api), current: nil,
                                       hubSays: model.hubFeatures.contains(AutoConversationSource.feature))
-        let groups = split.bySource(tasks: taskChats.known)
+        let groups = split.bySource(tasks: taskChats.known(on: model.api))
         let shown = AssistantSidebarGroups.newestFirst(Self.list(filter, all: everyone, mine: split.mine, groups: groups))
         NavigationStack {
             List {
@@ -111,7 +111,7 @@ struct AutoConversationsView: View {
 
     private func row(_ s: Session) -> some View {
         let title = s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title
-        let from = AutoConversations.source(of: s, tasks: taskChats.known)
+        let from = AutoConversations.source(of: s, tasks: taskChats.known(on: model.api))
         let detail = [filter == .all ? from?.name : nil, [.working, .needsYou, .unread].contains(s.state) ? s.state.label : s.updatedAt.map { Fmt.relative($0) }]
             .compactMap { $0 }.joined(separator: " · ")
         return Button { open(s.key) } label: {

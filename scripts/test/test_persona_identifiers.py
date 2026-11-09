@@ -79,7 +79,7 @@ class PersonaIdentifiersTest(unittest.TestCase):
         self.assertIn('if (PairingInput.isLink(url)) PairingInput.parse(url) else null', helper)
         pairing_input = (ROOT / 'android/feature/settings/src/main/kotlin/persona/feature/settings/PairingInput.kt').read_text()
         self.assertIn('fun isLink(value: String): Boolean = Pairing.isLink(value)', pairing_input)
-        self.assertIn('if (isLink(address)) parse(address)', pairing_input)
+        self.assertIn('if (isLink(address)) return parse(address)', pairing_input)
         pairing = (ROOT / 'android/core/domain/src/main/kotlin/persona/core/domain/Pairing.kt').read_text()
         self.assertIn('const val scheme = "persona"', pairing)
         self.assertIn('fun isLink(text: String): Boolean = ProtocolCompatibility.isAppLink(text)', pairing)

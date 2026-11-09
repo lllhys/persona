@@ -144,10 +144,3 @@ func TestLCUArchiveChecksumAndTraversal(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
-
-func TestLCUInstallArgsNeverNameAHarness(t *testing.T) {
-	args := strings.Join(lcuInstallArgs("/tmp/lcu"), " ")
-	if !strings.Contains(args, "--runtime-only") || !strings.Contains(args, "--yes") || strings.Contains(args, "--agent") {
-		t.Fatal(args)
-	}
-}

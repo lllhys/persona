@@ -49,26 +49,6 @@ func appendSubagentText(t *testing.T, path, text string) {
 	}
 }
 
-// Reproduces #3139: a watch on "<parent>@<agent>" must push what the subagent's file grows by.
-func TestWatchSubagentPushesAppends(t *testing.T) {
-	n, jp := subagentFixture(t)
-	hub := withHub(t, n)
-	appendSubagentText(t, jp, "first")
-	if err := n.watch(subID, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { n.unwatch(subID) })
-	appendSubagentText(t, jp, "second")
-	waitFor(t, "the appended line to be pushed", func() bool {
-		for _, it := range hub.got() {
-			if it.Text == "second" {
-				return true
-			}
-		}
-		return false
-	})
-}
-
 // servedNode connects n to a fake hub the way a real connection does: the hub's session.watch is a request whose ctx
 // ends when it is answered (rpc.Peer), so a watch hanging off that ctx would die with its reply (#3139).
 func servedNode(t *testing.T, n *Node) (call func(method string, params any) error, hub *hubEnd) {

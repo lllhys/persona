@@ -27,24 +27,36 @@ final class ExtensionMachineSwitchesTests: XCTestCase {
         XCTAssertFalse(app.textFields["添加一项"].exists, "no machine ids typed in")
         XCTAssertEqual(macbook.value as? String, "1")
         XCTAssertEqual(studio.value as? String, "0")
-        XCTAssertTrue(macbook.label.contains("MacBook") && macbook.label.contains("在线 · Cua 可以用"), macbook.label)
-        XCTAssertTrue(studio.label.contains("在线 · Cua 没装"), "said for a Mac it is not on for too: \(studio.label)")
+        // How Cua Driver is on each Mac comes with the machines, which can be a moment after the form.
+        XCTAssertTrue(waitUntil { macbook.label.contains("MacBook") && macbook.label.contains("在线 · Cua 可以用") }, macbook.label)
+        XCTAssertTrue(waitUntil { studio.label.contains("在线 · Cua 没装") }, "said for a Mac it is not on for too: \(studio.label)")
         if let dir = env["PERSONA_SHOTS"] {
             try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appending(path: "plugins-machines-\(look).png"))
         }
 
+        // Its machine page, where Control This Computer is (and, once on, Cua Driver's installation and permissions); only
+        // that Mac's page: the Macs share one row (#2446).
         let setup = app.buttons["extension-machine-setup-studio"].firstMatch
         XCTAssertTrue(setup.exists, "no way to open Cua Driver's installation and permissions")
         setup.tap()
-        XCTAssertTrue(app.buttons["computer-install"].waitForExistence(timeout: 15), "the existing computer setup did not open:\n\(app.debugDescription)")
+        XCTAssertTrue(app.navigationBars["Mac Studio"].waitForExistence(timeout: 15), "Mac Studio's page did not open:\n\(app.debugDescription)")
+        let control = app.switches["computer-switch"]
+        for _ in 0..<12 where !(control.exists && control.isHittable) { app.swipeUp() }
+        XCTAssertTrue(control.exists, "no Control This Computer on its page:\n\(app.debugDescription)")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(studio.waitForExistence(timeout: 10), "back to the extension settings")
+        XCTAssertTrue(studio.waitForExistence(timeout: 10), "back to the extension settings, not another Mac's page:\n\(app.debugDescription)")
 
         // In effect at once, no Save: the hub turns it on for that Mac (the machine page's switch).
         studio.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         XCTAssertTrue(waitFor(studio, value: "1"), "turned on")
         XCTAssertTrue(waitUntil { (try? self.enabledMacs(hub)) == ["macbook", "studio"] }, "the hub has it: \(String(describing: try? enabledMacs(hub)))")
-        XCTAssertFalse(app.buttons["plugin-save"].isEnabled, "nothing left to 保存")
+        // Save ends the configuration, below the fold: it is drawn once scrolled to.
+        let save = app.buttons["plugin-save"]
+        for _ in 0..<8 where !(save.exists && save.isHittable) { app.swipeUp() }
+        XCTAssertTrue(save.exists, "no 保存:\n\(app.debugDescription)")
+        XCTAssertFalse(save.isEnabled, "nothing left to 保存")
+        for _ in 0..<8 where !(studio.exists && studio.isHittable) { app.swipeDown() }
+        usleep(800_000) // the page coasts on after a swipe, and a tap then only stops it
         studio.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         XCTAssertTrue(waitUntil { (try? self.enabledMacs(hub)) == ["macbook"] }, "and off again")
     }
@@ -64,8 +76,10 @@ final class ExtensionMachineSwitchesTests: XCTestCase {
         app.launchPinned()
 
         let noLock = app.switches.matching(NSPredicate(format: "identifier == %@ AND label BEGINSWITH %@", "plugin-field-no_auto_lock", "MacBook、")).firstMatch
-        XCTAssertTrue(noLock.waitForExistence(timeout: 30), "no 插件开着时不自动锁屏 switch for MacBook:\n\(app.debugDescription)")
-        for _ in 0..<6 where !noLock.isHittable { app.swipeUp() }
+        // It is below the fold, and the page's rows only come in as it scrolls to them.
+        XCTAssertTrue(app.switches.matching(identifier: "plugin-field-machines").firstMatch.waitForExistence(timeout: 30), "no form:\n\(app.debugDescription)")
+        for _ in 0..<8 where !(noLock.exists && noLock.isHittable) { app.swipeUp() }
+        XCTAssertTrue(noLock.exists, "no 插件开着时不自动锁屏 switch for MacBook:\n\(app.debugDescription)")
         usleep(800_000) // the page coasts on after a swipe, and a tap then only stops it
         XCTAssertEqual(noLock.value as? String, "0", "off by default")
         let flip = { noLock.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }

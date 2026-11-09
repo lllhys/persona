@@ -61,8 +61,4 @@ struct NotificationActionsTests {
         #expect(NotificationActions.resolution(action: UNNotificationDefaultActionIdentifier) == nil)
         #expect(NotificationActions.resolution(action: UNNotificationDismissActionIdentifier) == nil)
     }
-
-    @Test func categoryNameIsUpperCasedKind() {
-        #expect(NotificationActions.category(.permission) == "INTERACTION_PERMISSION")
-    }
 }

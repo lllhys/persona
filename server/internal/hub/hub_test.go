@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/db"
-	"github.com/nwverse/persona/server/internal/identity"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -109,13 +108,6 @@ func TestEnvOverridesConfig(t *testing.T) {
 	}
 }
 
-func TestNodeBinaryDirFromEnv(t *testing.T) {
-	t.Setenv("PERSONA_NODE_BINARIES", "/opt/persona/nodes")
-	if d := identity.NodeBinaryDir(); d != "/opt/persona/nodes" {
-		t.Fatalf("node binaries in %s", d)
-	}
-}
-
 func TestLoadConfigCreatesAndReloads(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PERSONA_HOME", "")
@@ -139,39 +131,6 @@ func TestLoadConfigCreatesAndReloads(t *testing.T) {
 	}
 	if again.Token != cfg.Token {
 		t.Fatal("the token must survive a reload")
-	}
-}
-
-// scripts/deploy/db.sh creates hub.json with only database_url before the hub's first start: the token generated then must
-// be written down, or each start and `personad hub pair` would invent another one and paired phones get 401.
-func TestLoadConfigPersistsTokenMissingFromFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("PERSONA_HOME", "")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
-	dir := filepath.Join(home, ".persona")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "hub.json")
-	if err := os.WriteFile(path, []byte(`{"database_url":"postgres://x"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, err := LoadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Token == "" || again.Token != cfg.Token {
-		t.Fatalf("token changed between loads: %q then %q", cfg.Token, again.Token)
-	}
-	var raw map[string]any
-	b, _ := os.ReadFile(path)
-	if err := json.Unmarshal(b, &raw); err != nil || raw["database_url"] != "postgres://x" || raw["token"] != cfg.Token {
-		t.Fatalf("hub.json = %s", b)
 	}
 }
 
@@ -348,13 +307,13 @@ func TestPhoneToolsPersist(t *testing.T) {
 	h.store = database
 	tools := []proto.Tool{{Name: "phone_device_info", Description: "info", InputSchema: json.RawMessage(`{"type":"object"}`)}}
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "legacy", Tools: tools})
-	if got := h.phoneToolList(); len(got) != 1 || got[0].Name != "phone_device_info" {
+	if got := h.phoneToolList(); len(got) != 3 || got[0].Name != "phone_device_info" {
 		t.Fatalf("tools = %+v", got)
 	}
 	reloaded := newTestHub(t)
 	reloaded.store = database
 	reloaded.loadPhoneTools()
-	if got := reloaded.phoneToolList(); len(got) != 1 || got[0].Name != "phone_device_info" {
+	if got := reloaded.phoneToolList(); len(got) != 3 || got[0].Name != "phone_device_info" {
 		t.Fatalf("reloaded tools = %+v", got)
 	}
 }

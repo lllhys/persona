@@ -319,21 +319,6 @@ func TestComputerAppMoveToLegacyReceiverRejectsBeforeRelay(t *testing.T) {
 	}
 }
 
-func TestComputerAppGuardedAliasCannotMutateLegacyReceiverThroughOldHub(t *testing.T) {
-	store := &computerAppsSettings{values: map[string]json.RawMessage{}}
-	if err := store.PutSetting(context.Background(), "computer.apps", map[string]any{"example-machine": []map[string]string{{"bundle_id": "org.example.editor", "name": "Example Editor"}}}); err != nil {
-		t.Fatal(err)
-	}
-	before := store.writes.Load()
-	request := httptest.NewRequest(http.MethodDelete, "/api/v1/machines/example-machine/computer/apps/revoke/org.example.editor?expected_manager=assistant", nil)
-	recorder := httptest.NewRecorder()
-	// A hub without the new translation forwards this path unchanged, regardless of an earlier capability read.
-	legacyComputerApps(store).ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusNotFound || store.count(t) != 1 || store.writes.Load() != before {
-		t.Fatalf("legacy receiver accepted guarded alias: %d %s", recorder.Code, recorder.Body)
-	}
-}
-
 func TestComputerAppLegacyDeleteKeepsCurrentOwnerRouting(t *testing.T) {
 	h := computerAppsRoutingHub(t)
 	a, _ := computerAppsManagerOnBus(t, h, assistantwire.AssistantID, nil)

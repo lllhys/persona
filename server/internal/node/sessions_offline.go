@@ -124,10 +124,12 @@ func (n *Node) scanOffline() []proto.Session {
 		}
 		listed[id] = true
 		m := n.meta(c.path, c.st)
-		if !n.sessionScopeAllows(m.cwd) {
+		// Where the session is: an assistant conversation's start directory, before the filters look at it.
+		cwd := n.assistantHome(id, m.cwd)
+		if !n.sessionScopeAllows(cwd) {
 			continue
 		}
-		if m.cwd != "" && n.cwdBlocked(m.cwd) {
+		if cwd != "" && n.cwdBlocked(cwd) {
 			continue
 		}
 		// Sessions that never produced output (hook probes): small files read whole with no title and no words. A bigger
@@ -139,7 +141,7 @@ func (n *Node) scanOffline() []proto.Session {
 		}
 		n.setPath(id, c.path)
 		s := proto.Session{
-			SessionID: id, Title: m.title, Cwd: m.cwd, Status: proto.StatusOffline, Model: m.model,
+			SessionID: id, Title: m.title, Cwd: cwd, Status: proto.StatusOffline, Model: m.model,
 			Agent: "claude", AgentSurface: m.surface,
 			LastText: snippet(m.lastText), UpdatedAt: lastUsed(m, c.st), Rev: c.st.Size(),
 		}
@@ -219,6 +221,33 @@ const maxAssistantOffline = 100
 // assistantProject is the projects directory name Claude Code keeps for this node's assistant directory.
 func (n *Node) assistantProject() string {
 	return nonAlnum.ReplaceAllString(identity.AssistantDir(n.home), "-")
+}
+
+// assistantDirOfProject is the directory of this node's assistant (or its health space) whose projects directory
+// Claude Code names base, "" for any other. Only this node's own names map back: the projects directory's name is
+// lossy ("/", ".", "-" and "_" all become "-"), so the former state directory's or a symlinked home's cannot be told
+// apart from another directory's (assistant-bin, another manager's assistant-m-<hex>).
+func (n *Node) assistantDirOfProject(base string) string {
+	switch own := n.assistantProject(); base {
+	case own:
+		return identity.AssistantDir(n.home)
+	case strings.TrimSuffix(own, "-assistant") + "-health":
+		return identity.HealthDir(n.home)
+	}
+	return ""
+}
+
+// assistantHome is the directory session id is listed in at rest: the directory its node record says it started in,
+// when that is an assistant or health directory (the unresolved path its running process and resumes use), else cwd
+// (what its transcript says: where an assistant conversation started, an agent's latest directory, #2368).
+func (n *Node) assistantHome(id, cwd string) string {
+	if n.state == nil {
+		return cwd
+	}
+	if st, ok := n.state.get(id); ok && identity.IsAssistantDir(st.Cwd) {
+		return st.Cwd
+	}
+	return cwd
 }
 
 // isAssistantProject: base is the name of the projects directory Claude Code keeps for the assistant's directory

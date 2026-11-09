@@ -38,7 +38,7 @@ struct WorkspaceSidebarStatus: View {
     var body: some View {
         Group {
             if workspace.sidebarUnread {
-                Image(systemName: Theme.Icon.workspaceUnread).font(Theme.WorkspaceSidebar.meta)
+                ThemedIcon(Theme.Icon.notification).font(Theme.WorkspaceSidebar.meta)
                     .foregroundStyle(Theme.WorkspaceSidebar.unread)
             } else {
                 StatusDot(state: workspace.sidebarState, size: Theme.Size.dot)
@@ -196,7 +196,7 @@ struct WorkspaceSidebarCard<AgentContent: View, Actions: View>: View {
                 } else if target.workspaceKind == "git" {
                     Label {
                         Text(String(localized: "Detached HEAD") + (target.head.isEmpty ? "" : " @ " + String(target.head.prefix(7))))
-                    } icon: { Image(systemName: Theme.Icon.gitBranch) }
+                    } icon: { ThemedIcon(Theme.Icon.gitBranch) }
                         .font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.cautionText).lineLimit(1)
                         .padding(.horizontal, Theme.Space.xs).padding(.vertical, Theme.Space.xxs)
                         .background(Theme.caution.opacity(0.06), in: .rect(cornerRadius: Theme.WorkspaceSidebar.chipRadius))
@@ -206,7 +206,7 @@ struct WorkspaceSidebarCard<AgentContent: View, Actions: View>: View {
                     Text((target.cwd as NSString).lastPathComponent).font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.WorkspaceSidebar.muted).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: Theme.Icon.workspaceHost).font(Theme.WorkspaceSidebar.meta)
+                ThemedIcon(Theme.Icon.workspaceHost).font(Theme.WorkspaceSidebar.meta)
                     .rotationEffect(Theme.WorkspaceSidebar.hostRotation)
                     .foregroundStyle(Theme.WorkspaceSidebar.muted)
                     .accessibilityLabel(target.available ? target.source : String(localized: "This computer is offline"))
@@ -307,7 +307,7 @@ struct WorkspaceAgentRow: View {
 
     @ViewBuilder private var title: some View {
         if session.state == .unread || session.state == .idle {
-            Image(systemName: Theme.Icon.success).font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.WorkspaceSidebar.success)
+            ThemedIcon(Theme.Icon.success).font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.WorkspaceSidebar.success)
         } else { StatusDot(state: session.state, size: Theme.Size.dotS) }
         AgentMark(session, side: Theme.Size.markXS)
         Text(session.displayTitle).font(session.state == .unread ? Theme.Font.labelStrong : Theme.WorkspaceSidebar.agent)

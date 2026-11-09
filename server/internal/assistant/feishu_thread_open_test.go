@@ -183,17 +183,52 @@ func TestNotAnAICommandIsAWord(t *testing.T) {
 	}
 }
 
-// "/ai" with nothing after it, on its own or as a topic's first message, has nothing to name a to-do by: it asks for the words.
-func TestAICommandWithNoWordsAsksForThem(t *testing.T) {
-	for _, ev := range []feishubot.MessageEvent{topicEvent("om_e1", "/ai"), topicEvent("om_e2", "/ai   "), rootEvent("om_e3", "/ai")} {
-		e := newThreadEnv(t, nil)
-		e.deliver(ev)
-		if todoCount(e.s) != 0 || len(handoffs(e.f)) != 0 {
-			t.Fatalf("%q: %d todos, %d sent on", ev.Message.Content, todoCount(e.s), len(handoffs(e.f)))
-		}
-		if got := lastNote(t, e.f); got != e.said("thread_open_needs_text") {
-			t.Fatalf("%q: note %q", ev.Message.Content, got)
-		}
+// A message without words has nothing to name a to-do by: the topic is asked for words, nothing is made or sent on.
+// "/ai" with nothing after it, on its own or as a topic's first message, is one. So is a topic opened with a picture or a
+// merged forward alone (nothing is downloaded) or blank text. Only a text or a rich-text message has words: voice, a
+// shared group, a shared card, a location, a card, a file, a message of a type not known (the content has a placeholder
+// like "[语音消息]" for them) and a rich text of only pictures open nothing too.
+func TestMessageWithoutWordsOpensNoTodo(t *testing.T) {
+	root := func(id, kind, content string) feishubot.MessageEvent {
+		ev := rootEvent(id, "")
+		ev.Message.MessageType, ev.Message.Content = kind, content
+		return ev
+	}
+	for _, c := range []struct {
+		name       string
+		ev         feishubot.MessageEvent
+		noDownload bool
+	}{
+		{"/ai in a topic", topicEvent("om_e1", "/ai"), false},
+		{"/ai and spaces in a topic", topicEvent("om_e2", "/ai   "), false},
+		{"/ai as a topic's first message", rootEvent("om_e3", "/ai"), false},
+		{"image", root("om_i1", "image", `{"image_key":"img_test"}`), true},
+		{"merge_forward", root("om_i1", "merge_forward", `{}`), true},
+		{"blank text", root("om_i1", "text", `{"text":"   "}`), true},
+		{"audio", root("om_v1", "audio", `{"file_key":"f_test"}`), false},
+		{"share_chat", root("om_v1", "share_chat", `{"chat_id":"oc_other"}`), false},
+		{"share_user", root("om_v1", "share_user", `{"user_id":"ou_other"}`), false},
+		{"location", root("om_v1", "location", `{"name":"某处","longitude":"1","latitude":"2"}`), false},
+		{"interactive", root("om_v1", "interactive", `{"title":"一张卡片"}`), false},
+		{"file", root("om_v1", "file", `{"file_key":"f_test","file_name":"a.txt"}`), false},
+		{"a_new_type", root("om_v1", "a_new_type", `{"text":"看起来像文字"}`), false},
+		{"post of only a picture", root("om_v1", "post", `{"title":"","content":[[{"tag":"img","image_key":"img_test"}]]}`), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThreadEnv(t, nil)
+			e.deliver(c.ev)
+			if todoCount(e.s) != 0 || len(handoffs(e.f)) != 0 {
+				t.Fatalf("%q: %d todos, %d sent on", c.ev.Message.Content, todoCount(e.s), len(handoffs(e.f)))
+			}
+			if got := lastNote(t, e.f); got != e.said("thread_open_needs_text") {
+				t.Fatalf("%q: note %q", c.ev.Message.Content, got)
+			}
+			if c.noDownload {
+				if got := e.f.appParams(AppFeishu, FeishuResource); len(got) != 0 {
+					t.Fatalf("something was downloaded: %v", got)
+				}
+			}
+		})
 	}
 }
 
@@ -290,32 +325,6 @@ func TestOnlyTheOwnerOpensATodo(t *testing.T) {
 	}
 	if todoCount(e.s) != 0 || len(handoffs(e.f)) != 0 || len(topicNotes(e.f)) != 0 || len(e.s.channelRuns(channel.Feishu)) != 0 {
 		t.Fatalf("something was done for a stranger: %d todos, %v", todoCount(e.s), topicNotes(e.f))
-	}
-}
-
-// A topic opened with a picture or a merged forward alone has nothing to name a to-do by: it is told so, nothing is made
-// or sent on, nothing is downloaded.
-func TestPictureOrForwardAloneOpensNothing(t *testing.T) {
-	for _, c := range []struct{ kind, content string }{
-		{"image", `{"image_key":"img_test"}`},
-		{"merge_forward", `{}`},
-		{"text", `{"text":"   "}`},
-	} {
-		t.Run(c.kind, func(t *testing.T) {
-			e := newThreadEnv(t, nil)
-			ev := rootEvent("om_i1", "")
-			ev.Message.MessageType, ev.Message.Content = c.kind, c.content
-			e.deliver(ev)
-			if todoCount(e.s) != 0 || len(handoffs(e.f)) != 0 {
-				t.Fatalf("%d todos, %d sent on", todoCount(e.s), len(handoffs(e.f)))
-			}
-			if got := lastNote(t, e.f); got != e.said("thread_open_needs_text") {
-				t.Fatalf("note %q", got)
-			}
-			if got := e.f.appParams(AppFeishu, FeishuResource); len(got) != 0 {
-				t.Fatalf("something was downloaded: %v", got)
-			}
-		})
 	}
 }
 
@@ -562,35 +571,6 @@ func TestMentionAloneOpensNothingAndAICommandBehindOneIsAnswered(t *testing.T) {
 	notes = topicNotes(e.f)
 	if len(notes) != 4 || notes[2]["text"] != e.said("thread_done") || notes[3]["text"] != e.said("thread_done") || todoCount(e.s) != 1 {
 		t.Fatalf("%d todos, notes %v", todoCount(e.s), notes)
-	}
-}
-
-// Only a text or a rich-text message has words. Voice, a shared group, a shared card, a location, a card, a file, a
-// message of a type not known (the content has a placeholder like "[语音消息]" for them) and a rich text of only pictures
-// open nothing: the topic is asked for words, nothing is made or sent on.
-func TestOnlyWordsOpenATodo(t *testing.T) {
-	for _, c := range []struct{ kind, content string }{
-		{"audio", `{"file_key":"f_test"}`},
-		{"share_chat", `{"chat_id":"oc_other"}`},
-		{"share_user", `{"user_id":"ou_other"}`},
-		{"location", `{"name":"某处","longitude":"1","latitude":"2"}`},
-		{"interactive", `{"title":"一张卡片"}`},
-		{"file", `{"file_key":"f_test","file_name":"a.txt"}`},
-		{"a_new_type", `{"text":"看起来像文字"}`},
-		{"post", `{"title":"","content":[[{"tag":"img","image_key":"img_test"}]]}`},
-	} {
-		t.Run(c.kind, func(t *testing.T) {
-			e := newThreadEnv(t, nil)
-			ev := rootEvent("om_v1", "")
-			ev.Message.MessageType, ev.Message.Content = c.kind, c.content
-			e.deliver(ev)
-			if todoCount(e.s) != 0 || len(handoffs(e.f)) != 0 {
-				t.Fatalf("%d todos, %d sent on", todoCount(e.s), len(handoffs(e.f)))
-			}
-			if got := lastNote(t, e.f); got != e.said("thread_open_needs_text") {
-				t.Fatalf("note %q", got)
-			}
-		})
 	}
 }
 

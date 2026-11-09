@@ -22,26 +22,26 @@ struct AgentRepoTreeTests {
 
     // MARK: Where a working directory sits
 
-    @Test func aMainCheckoutIsTheRepositoryItself() {
-        #expect(RepoPlace(cwd: "/code/app") == RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app", main: true))
-        #expect(RepoPlace(cwd: "/code/app/") == RepoPlace(cwd: "/code/app"), "a trailing slash is the same directory")
-    }
-
-    @Test func theUsualWorkingTreeFoldersBelongToTheRepositoryAboveThem() {
-        for cwd in ["/code/app/.worktrees/fix-login", "/code/app/.claude/worktrees/fix-login", "/code/app/.herdr/worktrees/fix-login"] {
-            #expect(RepoPlace(cwd: cwd) == RepoPlace(repo: "/code/app", name: "app", worktree: cwd, main: false), "\(cwd)")
-        }
-    }
-
-    @Test func aHomeLevelCollectionNamesTheRepositoryAfterTheFolder() {
-        #expect(RepoPlace(cwd: "/home/me/.worktrees/persona/fix-login")
-            == RepoPlace(repo: "/home/me/.worktrees/persona", name: "persona", worktree: "/home/me/.worktrees/persona/fix-login", main: false))
-    }
-
-    @Test func withoutAWorkingTreeFolderTheDirectoryIsItsOwnRepository() {
-        #expect(RepoPlace(cwd: "/code/app/server/internal")
-            == RepoPlace(repo: "/code/app/server/internal", name: "internal", worktree: "/code/app/server/internal", main: true))
-        #expect(RepoPlace(cwd: "") == RepoPlace(repo: "", name: "", worktree: "", main: true))
+    /// A main checkout is the repository itself (a trailing slash is the same directory); the usual working-tree folders belong
+    /// to the repository above them; a home-level collection names the repository after the folder; without a working-tree
+    /// folder the directory is its own repository.
+    @Test(arguments: [
+        (cwd: "/code/app", expected: RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app", main: true)),
+        (cwd: "/code/app/", expected: RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app", main: true)),
+        (cwd: "/code/app/.worktrees/fix-login",
+         expected: RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app/.worktrees/fix-login", main: false)),
+        (cwd: "/code/app/.claude/worktrees/fix-login",
+         expected: RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app/.claude/worktrees/fix-login", main: false)),
+        (cwd: "/code/app/.herdr/worktrees/fix-login",
+         expected: RepoPlace(repo: "/code/app", name: "app", worktree: "/code/app/.herdr/worktrees/fix-login", main: false)),
+        (cwd: "/home/me/.worktrees/persona/fix-login",
+         expected: RepoPlace(repo: "/home/me/.worktrees/persona", name: "persona", worktree: "/home/me/.worktrees/persona/fix-login", main: false)),
+        (cwd: "/code/app/server/internal",
+         expected: RepoPlace(repo: "/code/app/server/internal", name: "internal", worktree: "/code/app/server/internal", main: true)),
+        (cwd: "", expected: RepoPlace(repo: "", name: "", worktree: "", main: true)),
+    ])
+    func aWorkingDirectoryNamesItsRepositoryAndWorkingTree(cwd: String, expected: RepoPlace) {
+        #expect(RepoPlace(cwd: cwd) == expected, "\(cwd)")
     }
 
     /// Paseo keeps its worktrees under its own folder, whose paths name no repository: its host names it (#2840).

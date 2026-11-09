@@ -16,6 +16,7 @@ import { loadRoster, setRoster } from "../../lib/managers";
 import { ChannelPage } from "./Channels";
 import { Connectors } from "./Connectors";
 import { Extensions } from "./Extensions";
+import { ConnectorList } from "./HubConnector";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -163,5 +164,34 @@ describe("another manager's connector and channel pages", () => {
     act(() => root.render(<ChannelPage id="wechat" manager="m-1" onBack={() => {}} onSettings={() => {}} />));
     await flush();
     expect(calls.find((c) => c.url.endsWith("/channels/wechat"))?.header).toBe("m-1");
+  });
+});
+
+describe("Settings › Connectors' rows", () => {
+  const rows = () => [...host.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.textContent?.includes("微信"));
+
+  it("lists each manager's copy under its name, and a row opens that manager's copy", async () => {
+    setRoster(ROSTER);
+    const onOpen = vi.fn();
+    act(() => root.render(<ConnectorList onOpen={onOpen} />));
+    await flush();
+    const text = host.textContent ?? "";
+    expect(rows()).toHaveLength(2);
+    expect(text.indexOf("助手")).toBeGreaterThan(-1);
+    expect(text.indexOf("助手")).toBeLessThan(text.indexOf("工作"));
+    act(() => rows()[1].click());
+    expect(onOpen).toHaveBeenLastCalledWith("wechat@m-1");
+    act(() => rows()[0].click());
+    expect(onOpen).toHaveBeenLastCalledWith("wechat");
+  });
+
+  it("one manager: no headings, a row opens by id", async () => {
+    setRoster({ default: "assistant", managers: [ROSTER.managers[0]] });
+    const onOpen = vi.fn();
+    act(() => root.render(<ConnectorList onOpen={onOpen} />));
+    await flush();
+    expect(host.textContent).not.toContain("助手");
+    act(() => rows()[0].click());
+    expect(onOpen).toHaveBeenLastCalledWith("wechat");
   });
 });

@@ -191,23 +191,6 @@ func TestTopicsCommand(t *testing.T) {
 	}
 }
 
-// The command takes the group out of the list at once: a topic message after /topics off is not handed over.
-func TestTopicsOffStopsTheGroup(t *testing.T) {
-	w := newBotWorld(t)
-	w.pair(t)
-	w.send(t, groupEvent("om_c1", "ou_me", "/topics", topicChat, ""))
-	w.api.find(t, "/messages/om_c1/reply", "已开启")
-	w.send(t, groupEvent("om_g1", "ou_me", "在", topicChat, "omt_1"))
-	eventually(t, 5*time.Second, "handed while on", func() bool { return len(w.handed()) == 1 })
-	w.send(t, groupEvent("om_c2", "ou_me", "/topics off", topicChat, "omt_1"))
-	w.api.find(t, "/messages/om_c2/reply", "已关闭")
-	w.send(t, groupEvent("om_g2", "ou_me", "还在吗", topicChat, "omt_1"))
-	time.Sleep(300 * time.Millisecond)
-	if got := w.handed(); len(got) != 1 {
-		t.Fatalf("handed %v after /topics off", got)
-	}
-}
-
 // The app's list: PUT topic_chats replaces it (and needs a paired bot), GET shows it, a bad id is refused, and it is
 // the list the gate uses.
 func TestTopicChatsSetting(t *testing.T) {

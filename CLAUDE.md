@@ -174,6 +174,8 @@ The full list is in `docs/lessons/`; read the file for the area you touch first.
 - Claude Code's config directory isn't always `~/.claude` (`CLAUDE_CONFIG_DIR`), and one session id can exist in two; take the most
   recently modified. Verify transcript or sync changes against real transcripts and bump the app's `ChatCache` version when items change
   (`docs/lessons/agents.md`, `docs/lessons/transcript.md`).
+- Claude Code's transcript and hook `cwd` follow the model's Bash `cd`: place assistant and health conversations by the directory they
+  started in, never their latest cwd (`docs/lessons/transcript.md`, #2368).
 
 ## Design system (iOS)
 

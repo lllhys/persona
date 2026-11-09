@@ -114,11 +114,26 @@ func liveNode(t *testing.T, agent map[string]any, screen string) (*Node, *fakeHe
 	return n, f, out
 }
 
-// startLive runs watchLive for sidA; stop ends it and waits until it has returned.
+// startLive runs sidA's status line as the watch pump does, every liveEvery; stop ends the watch as an unwatch does
+// (endLive) and waits until it has.
 func startLive(t *testing.T, n *Node) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
+	w := &watch{cancel: cancel, ctx: ctx, id: sidA}
 	done := make(chan struct{})
-	go func() { n.watchLive(ctx, sidA); close(done) }()
+	go func() {
+		defer close(done)
+		tk := time.NewTicker(liveEvery)
+		defer tk.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				n.endLive(w)
+				return
+			case <-tk.C:
+				n.pumpLive(w)
+			}
+		}
+	}()
 	t.Cleanup(cancel)
 	return func() { cancel(); <-done }
 }

@@ -655,71 +655,54 @@ func TestGoneConversationIsToldAsAFailure(t *testing.T) {
 	a.until(func(f map[string]any) bool { return f["type"] == "tool" && f["id"] == "d1" && f["done"] == true })
 }
 
-// Without the hub link (another hub's machine, the link down) the 5 s look finds the turn, even one that came and went
-// between two looks (the transcript moved).
-func TestRunsWithoutTheHubLink(t *testing.T) {
-	setVar(t, &lookEvery, 200*time.Millisecond)
-	setVar(t, &readEvery, 500*time.Millisecond)
-	hub := newFakeHub(t)
-	hub.noWS = true
-	up := delegatingUpstream(t)
-	pl := testPlugin(t, liveProvider(up), hub.server(t))
-	a := dialApp(t, pl, map[string]any{"type": "start"})
-	a.until(ofType("ready"))
-	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
-	if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
-		t.Fatalf("result: %s", got)
+// A voice run reaches the agent's answer whatever state the hub is in.
+func TestRunAnswersAcrossHubConditions(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, hub *fakeHub)
+	}{
+		// Without the hub link (another hub's machine, the link down) the 5 s look finds the turn, even one that came
+		// and went between two looks (the transcript moved).
+		{"without the hub link", func(t *testing.T, hub *fakeHub) {
+			setVar(t, &lookEvery, 200*time.Millisecond)
+			setVar(t, &readEvery, 500*time.Millisecond)
+			hub.noWS = true
+		}},
+		// A send to a conversation that has to be resumed first takes longer than an API call may: it is waited for.
+		{"send outlives the call timeout", func(t *testing.T, hub *fakeHub) {
+			setVar(t, &callTimeout, 150*time.Millisecond)
+			hub.delay = 600 * time.Millisecond
+		}},
+		// The transcript was rewritten under the run (it ends before the run's base): its message is found from the start.
+		{"finds its message after a rewrite", func(t *testing.T, hub *fakeHub) {
+			first := true
+			hub.toSeq = func(_ string, last int) int {
+				if first { // the base the run takes: past where the rewritten transcript ends
+					first = false
+					return 500
+				}
+				return last
+			}
+		}},
+		// No main conversation yet: one is started with the message.
+		{"starts the main conversation", func(t *testing.T, hub *fakeHub) {
+			hub.main = ""
+			delete(hub.sessions, "main1")
+		}},
 	}
-}
-
-// A send to a conversation that has to be resumed first takes longer than an API call may: it is waited for.
-func TestSendOutlivesTheCallTimeout(t *testing.T) {
-	setVar(t, &callTimeout, 150*time.Millisecond)
-	hub := newFakeHub(t)
-	hub.delay = 600 * time.Millisecond
-	up := delegatingUpstream(t)
-	pl := testPlugin(t, liveProvider(up), hub.server(t))
-	a := dialApp(t, pl, map[string]any{"type": "start"})
-	a.until(ofType("ready"))
-	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
-	if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
-		t.Fatalf("result: %s", got)
-	}
-}
-
-// The transcript was rewritten under the run (it ends before the run's base): its message is found from the start.
-func TestRunFindsItsMessageAfterARewrite(t *testing.T) {
-	hub := newFakeHub(t)
-	first := true
-	hub.toSeq = func(_ string, last int) int {
-		if first { // the base the run takes: past where the rewritten transcript ends
-			first = false
-			return 500
-		}
-		return last
-	}
-	up := delegatingUpstream(t)
-	pl := testPlugin(t, liveProvider(up), hub.server(t))
-	a := dialApp(t, pl, map[string]any{"type": "start"})
-	a.until(ofType("ready"))
-	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
-	if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
-		t.Fatalf("result: %s", got)
-	}
-}
-
-// No main conversation yet: one is started with the message.
-func TestRunStartsTheMainConversation(t *testing.T) {
-	hub := newFakeHub(t)
-	hub.main = ""
-	delete(hub.sessions, "main1")
-	up := delegatingUpstream(t)
-	pl := testPlugin(t, liveProvider(up), hub.server(t))
-	a := dialApp(t, pl, map[string]any{"type": "start"})
-	a.until(ofType("ready"))
-	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
-	if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
-		t.Fatalf("result: %s", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hub := newFakeHub(t)
+			tc.setup(t, hub)
+			up := delegatingUpstream(t)
+			pl := testPlugin(t, liveProvider(up), hub.server(t))
+			a := dialApp(t, pl, map[string]any{"type": "start"})
+			a.until(ofType("ready"))
+			a.send(map[string]any{"type": "text", "text": "明天有什么会"})
+			if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
+				t.Fatalf("result: %s", got)
+			}
+		})
 	}
 }
 

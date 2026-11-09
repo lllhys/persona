@@ -129,12 +129,13 @@ extension AppModel {
     /// The group hub-level pages (Persona, Inbox, the hub's settings) show: the one picked, else the first.
     var hub: HubLink? { link(hubGroup) ?? links.first }
 
-    /// A client for the group a session, machine or interaction is from.
+    /// A client for the group a session, machine or interaction is from; the assistant's routes go to the manager its
+    /// Persona page shows (`APIClient.showing`).
     func api(_ group: String) -> APIClient? {
         #if DEBUG
         if let apiForTests { return apiForTests }
         #endif
-        return link(group)?.api
+        return link(group)?.api.showing(assistantPick(in: group))
     }
 
     /// Back in the app: every group's socket opens again.

@@ -99,6 +99,7 @@ type Hub struct {
 	// phoneToolsMu: one phone tool registration written at a time, so the rows and phoneTools agree on the latest.
 	// Never held with mu taken first; the write it covers runs outside mu (#5358).
 	phoneToolsMu sync.Mutex
+	phoneWrites  phoneWriteQueue
 
 	// askVia replaces fleet.ask in tests that play the manager (waitInteraction).
 	askVia func(context.Context, proto.Interaction) (proto.Resolution, error)
@@ -158,6 +159,14 @@ type Store interface {
 	CleanupClientOps(ctx context.Context, before time.Time) error
 	ReplacePhoneTools(ctx context.Context, registration db.PhoneToolRegistration) error
 	PhoneTools(ctx context.Context) ([]db.PhoneToolRegistration, error)
+	FindQueuedPhoneWrite(ctx context.Context, tool string, args json.RawMessage) (*db.PhoneWrite, error)
+	EnqueuePhoneWrite(ctx context.Context, id, tool string, args json.RawMessage) (*db.PhoneWrite, error)
+	PhoneWrites(ctx context.Context) ([]db.PhoneWrite, error)
+	QueuedPhoneWrites(ctx context.Context) ([]db.PhoneWrite, error)
+	ClaimPhoneWrite(ctx context.Context, id string) (bool, error)
+	FinishPhoneWrite(ctx context.Context, id, state string, result json.RawMessage) error
+	CancelPhoneWrite(ctx context.Context, id string) (*db.PhoneWrite, error)
+	RecoverPhoneWrites(ctx context.Context) error
 	ClaimSend(ctx context.Context, id, machine, session string) (string, error)
 	SettleSend(ctx context.Context, id, state string) error
 	UpsertDevice(ctx context.Context, d db.Device) error
@@ -258,6 +267,9 @@ func runHub(ctx context.Context, b update.Build, cfg *Config, budget *shutdownBu
 	h.importLegacy(ctx)
 	h.loadUserLang(ctx)
 	h.loadPhoneTools()
+	if err := h.startPhoneWrites(ctx); err != nil {
+		return err
+	}
 	h.push = newPusher(cfg.dir, h.store, h.logf)
 	h.push.traffic = h.recordTraffic
 	h.push.desktopOnline = h.desktopOnline
@@ -344,6 +356,7 @@ var phoneToolsTimeout = 5 * time.Second
 // setPhoneTools saves a phone's tools, then lists them. The write runs outside h.mu, the hub's global lock: a stalled
 // database used to stop every broadcast and client message with it (#5358).
 func (h *Hub) setPhoneTools(registration db.PhoneToolRegistration) {
+	defer h.wakePhoneWrites()
 	h.phoneToolsMu.Lock()
 	defer h.phoneToolsMu.Unlock()
 	if h.store != nil {
@@ -396,11 +409,34 @@ func (h *Hub) phoneToolList() []proto.Tool {
 	if tools == nil {
 		tools = []proto.Tool{}
 	}
-	return tools
+	return h.withPhoneWriteTools(tools)
 }
 
 func (h *Hub) callPhone(ctx context.Context, name string, args json.RawMessage) proto.ToolResult {
+	if result, handled := h.phoneWriteTool(ctx, name, args); handled {
+		return result
+	}
+	args, queue, err := phoneQueueOption(name, args)
+	if err != nil {
+		return proto.TextResult(err.Error(), true)
+	}
+	if queue && h.store != nil {
+		lookupCtx, cancel := context.WithTimeout(ctx, phoneToolsTimeout)
+		existing, err := h.store.FindQueuedPhoneWrite(lookupCtx, name, args)
+		cancel()
+		if err != nil {
+			return proto.TextResult(err.Error(), true)
+		}
+		if existing != nil {
+			h.wakePhoneWrites()
+			go h.requestPhoneWake(name)
+			return phoneWriteResult(existing)
+		}
+	}
 	c := h.phoneClient(name)
+	if c == nil && queue {
+		return h.enqueuePhoneWrite(ctx, name, args)
+	}
 	if c == nil {
 		c = h.wakePhone(ctx, name)
 	}
@@ -456,10 +492,11 @@ var phoneConfirmedTools = map[string]bool{
 	"phone_health_write_sample":   true,
 }
 
-// wakePhone asks iOS to wake the app in the background (silent push) and waits briefly for it to connect.
-func (h *Hub) wakePhone(ctx context.Context, name string) *client {
+// requestPhoneWake selects a provider and asks iOS to wake it without waiting for a connection.
+// It reports whether a provider can be woken, including when a recent request throttles this push.
+func (h *Hub) requestPhoneWake(name string) bool {
 	if !h.push.ready() {
-		return nil
+		return false
 	}
 	h.mu.Lock()
 	var candidates []db.PhoneToolRegistration
@@ -501,10 +538,18 @@ func (h *Hub) wakePhone(ctx context.Context, name string) *client {
 	}
 	h.mu.Unlock()
 	if len(candidates) == 0 {
-		return nil
+		return false
 	}
 	if len(wakeIDs) > 0 {
 		h.push.wakeDevices("tool", wakeIDs)
+	}
+	return true
+}
+
+// wakePhone asks iOS to wake the app in the background (silent push) and waits briefly for it to connect.
+func (h *Hub) wakePhone(ctx context.Context, name string) *client {
+	if !h.requestPhoneWake(name) {
+		return nil
 	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)

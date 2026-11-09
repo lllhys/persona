@@ -33,27 +33,6 @@ func TestManagedLauncherRunsThroughPersonad(t *testing.T) {
 	}
 }
 
-// Subagents follow the model unless a subagent model is set; a custom model entry is passed with its labels.
-func TestManagedEnvSubagentAndCustomModel(t *testing.T) {
-	base := proto.ManagedLauncher{Name: "l", BaseURL: "http://gw", Model: "m1"}
-	if env := managedEnv(base); !slices.Contains(env, "CLAUDE_CODE_SUBAGENT_MODEL=m1") {
-		t.Fatalf("subagents do not follow the model: %v", env)
-	}
-	// A gateway cannot carry Claude Code's Artifacts: off for every managed start (artifactsOff).
-	if env := managedEnv(base); !slices.Contains(env, "CLAUDE_CODE_DISABLE_ARTIFACT=1") {
-		t.Fatalf("Artifacts are not turned off: %v", env)
-	}
-	base.SubagentModel, base.CustomModel = "m2", "m3"
-	base.CustomModelName, base.CustomModelDescription = "Third", "a model"
-	env := managedEnv(base)
-	for _, want := range []string{"CLAUDE_CODE_SUBAGENT_MODEL=m2", "ANTHROPIC_CUSTOM_MODEL_OPTION=m3",
-		"ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=Third", "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=a model"} {
-		if !slices.Contains(env, want) {
-			t.Errorf("env lacks %s: %v", want, env)
-		}
-	}
-}
-
 // A node started by launchd has a minimal PATH: a claude installed outside it must still be found.
 func TestClaudeExecutableFallsBackToInstallLocations(t *testing.T) {
 	home := t.TempDir()

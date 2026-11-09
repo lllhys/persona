@@ -6,26 +6,28 @@ import Testing
 /// messages from another session are a subagent's handback.
 @MainActor
 struct ReportFoldTests {
-    @Test func aHeadingFirstIsTheLine() {
-        #expect(ReportFold.line("## 结算回归：42 个用例全部通过\n\n- 三条主流程都过了。") == "结算回归：42 个用例全部通过")
-        #expect(ReportFold.line("# **Summary**\nAll green.") == "Summary")
-    }
-
-    @Test func otherwiseItsFirstEightyCharacters() {
-        let long = String(repeating: "很长的报告", count: 20)
-        #expect(ReportFold.line(long) == String(long.prefix(80)) + "…")
+    /// A heading first is the line; otherwise the first eighty characters; a report that is one short line is not folded (nil).
+    nonisolated static let foldedLines: [(input: String, expected: String?)] = [
+        // A heading first is the line.
+        (input: "## 结算回归：42 个用例全部通过\n\n- 三条主流程都过了。", expected: "结算回归：42 个用例全部通过"),
+        (input: "# **Summary**\nAll green.", expected: "Summary"),
+        // Otherwise its first eighty characters.
+        (input: String(repeating: "很长的报告", count: 20), expected: String(String(repeating: "很长的报告", count: 20).prefix(80)) + "…"),
         // Its lines run on as one, without the marks they start with.
-        #expect(ReportFold.line("42 passed.\n- **checkout** ok\n> note") == "42 passed. checkout ok note")
+        (input: "42 passed.\n- **checkout** ok\n> note", expected: "42 passed. checkout ok note"),
         // "**bold**" opening the report is bold, not a list item.
-        #expect(ReportFold.line("**Done**: 42 passed.\nagentId: x1") == "Done: 42 passed. agentId: x1")
-    }
+        (input: "**Done**: 42 passed.\nagentId: x1", expected: "Done: 42 passed. agentId: x1"),
+        // A report that is one short line is not folded.
+        (input: "42 passed.", expected: nil),
+        (input: "  \n", expected: nil),
+        (input: "# Only a heading", expected: nil),
+        (input: String(repeating: "a", count: 80), expected: nil),
+        (input: String(repeating: "a", count: 81), expected: String(repeating: "a", count: 80) + "…"),
+    ]
 
-    @Test func aReportThatIsOneShortLineIsNotFolded() {
-        #expect(ReportFold.line("42 passed.") == nil)
-        #expect(ReportFold.line("  \n") == nil)
-        #expect(ReportFold.line("# Only a heading") == nil)
-        #expect(ReportFold.line(String(repeating: "a", count: 80)) == nil)
-        #expect(ReportFold.line(String(repeating: "a", count: 81)) != nil)
+    @Test(arguments: foldedLines)
+    func theFoldedLine(input: String, expected: String?) {
+        #expect(ReportFold.line(input) == expected)
     }
 
     @Test func openReportsAreKeptByTheirCardAndOnlyTheLatestFew() {

@@ -70,17 +70,6 @@ func TestParsePs(t *testing.T) {
 	}
 }
 
-// /proc/<pid>/stat on Linux: comm may hold spaces and parentheses; tty_nr 0 is no terminal.
-func TestParseStat(t *testing.T) {
-	p, ok := parseStat([]byte("4242 (node (vite) x) S 4200 4242 4100 34817 4242 4194304 1 0 0 0"))
-	if !ok || p.ppid != 4200 || p.tty != "34817" || p.cmd != "node (vite) x" {
-		t.Fatalf("parseStat = %+v %v", p, ok)
-	}
-	if p, _ := parseStat([]byte("1 (systemd) S 0 1 1 0 -1 4194560")); p.tty != "" {
-		t.Fatalf("no terminal: %+v", p)
-	}
-}
-
 // parseStatFields is the strings.Fields parser parseStat replaced, kept as its reference.
 func parseStatFields(s string) (proc, bool) {
 	open, end := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
@@ -102,6 +91,7 @@ func parseStatFields(s string) (proc, bool) {
 	return proc{ppid: ppid, tty: tty, cmd: s[open+1 : end]}, true
 }
 
+// /proc/<pid>/stat on Linux: comm may hold spaces and parentheses; tty_nr 0 is no terminal.
 // The byte parser reads every line the way the strings.Fields one did, odd names and broken lines included.
 func TestParseStatBytes(t *testing.T) {
 	for _, tc := range []struct {

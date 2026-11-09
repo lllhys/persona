@@ -814,7 +814,7 @@ struct NoticeRow: View {
     private var wake: some View {
         let w = Self.wakeSummary(item)
         return HStack(spacing: Theme.Space.sm) {
-            ThemedIcon(w.failed ? Theme.Icon.errorFilled : "bell.fill")
+            ThemedIcon(w.failed ? Theme.Icon.errorFilled : Theme.Icon.notification)
                 .foregroundStyle(w.failed ? Theme.danger : Theme.accent)
             Text(w.text).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
         }
@@ -875,7 +875,7 @@ struct WakeChip: View {
                 if live {
                     ProgressView().controlSize(.mini)
                 } else {
-                    ThemedIcon(failed ? Theme.Icon.errorFilled : "bell.fill")
+                    ThemedIcon(failed ? Theme.Icon.errorFilled : Theme.Icon.notification)
                         .foregroundStyle(failed ? Theme.danger : Theme.accent)
                 }
                 Text(live ? String(localized: "Background task done · Processing") : summary?.text ?? String(localized: "\(notices.count) background tasks done"))

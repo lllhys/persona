@@ -174,14 +174,25 @@ func TestJSONMaxSaysTheReplyWasCutOff(t *testing.T) {
 	}
 }
 
-func TestJSONMaxTakesACompleteObjectFromACutOffReply(t *testing.T) {
-	c, seen := truncatingServer(t, map[string]any{"text": `{"summary":"done"} and then some more chatter that ran o`, "stop": "max_tokens"})
-	var out struct{ Summary string }
-	if err := c.JSONMax(context.Background(), "sys", "user", 100, &out); err != nil || out.Summary != "done" {
-		t.Fatalf("out = %+v, %v", out, err)
-	}
-	if len(*seen) != 1 {
-		t.Errorf("requests = %v, want no retry", *seen)
+func TestJSONMaxTakesAUsableReplyWithoutRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, stop, want string
+	}{
+		{"a complete object from a cut-off reply", `{"summary":"done"} and then some more chatter that ran o`, "max_tokens", "done"},
+		{"a quote escaped as in JavaScript", `{"summary":"it\'s done"}`, "end_turn", "it's done"},
+		// A model writing a summary in paragraphs puts the line breaks into the string as they are, not as \n (#4872).
+		{"a line break typed into a string (#4872)", "{\"summary\":\"第一段\n\n第二段\"}", "end_turn", "第一段\n\n第二段"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, seen := truncatingServer(t, map[string]any{"text": tc.text, "stop": tc.stop})
+			var out struct{ Summary string }
+			if err := c.JSONMax(context.Background(), "sys", "user", 100, &out); err != nil || out.Summary != tc.want {
+				t.Fatalf("out = %+v, %v", out, err)
+			}
+			if len(*seen) != 1 {
+				t.Errorf("requests = %v, want no retry", *seen)
+			}
+		})
 	}
 }
 
@@ -204,29 +215,6 @@ func TestJSONMaxSaysTheModelRefused(t *testing.T) {
 	err := c.JSONMax(context.Background(), "sys", "user", 100, &out)
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
-	}
-	if len(*seen) != 1 {
-		t.Errorf("requests = %v, want one", *seen)
-	}
-}
-
-func TestJSONMaxTakesAQuoteEscapedAsInJavaScript(t *testing.T) {
-	c, seen := truncatingServer(t, map[string]any{"text": `{"summary":"it\'s done"}`, "stop": "end_turn"})
-	var out struct{ Summary string }
-	if err := c.JSONMax(context.Background(), "sys", "user", 100, &out); err != nil || out.Summary != "it's done" {
-		t.Fatalf("out = %+v, %v", out, err)
-	}
-	if len(*seen) != 1 {
-		t.Errorf("requests = %v, want one", *seen)
-	}
-}
-
-// A model writing a summary in paragraphs puts the line breaks into the string as they are, not as \n (#4872).
-func TestJSONMaxTakesALineBreakTypedIntoAString(t *testing.T) {
-	c, seen := truncatingServer(t, map[string]any{"text": "{\"summary\":\"第一段\n\n第二段\"}", "stop": "end_turn"})
-	var out struct{ Summary string }
-	if err := c.JSONMax(context.Background(), "sys", "user", 100, &out); err != nil || out.Summary != "第一段\n\n第二段" {
-		t.Fatalf("out = %+v, %v", out, err)
 	}
 	if len(*seen) != 1 {
 		t.Errorf("requests = %v, want one", *seen)

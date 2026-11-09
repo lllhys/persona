@@ -122,7 +122,34 @@ func (f *File) freshTree() *branchTree {
 	return &t
 }
 
+// Changed reports whether RefreshSpan may have something to do: the file's size or inode is not what was read, it
+// cannot be stat'ed (RefreshSpan then says why), or a turn taken for rewound has to be read again (RefreshSpan). A
+// watch asks on every tick, so it never waits for the file's lock (a read or a page under way): it says true then.
+func (f *File) Changed() bool {
+	if !f.mu.TryLock() {
+		return true
+	}
+	path, offset, ino := f.Path, f.offset, f.ino
+	revoked := f.tree != nil && len(f.tree.revoked) > 0
+	f.mu.Unlock()
+	if revoked {
+		return true
+	}
+	st, err := os.Stat(path)
+	return err != nil || !unchanged(st, offset, ino)
+}
+
+// unchanged: a file stat'ed as st is the one read up to offset (same inode), with nothing after it.
+func unchanged(st os.FileInfo, offset int64, ino uint64) bool {
+	return st.Size() == offset && inode(st) == ino
+}
+
 func (f *File) refresh() ([]proto.Item, Span, error) {
+	// A file with nothing new is the common case of a watched session at rest (a refresh four times a second): a stat
+	// says so, without the open, fstat and close below. A stat that fails goes on to the open, which reports it.
+	if st, err := os.Stat(f.Path); err == nil && unchanged(st, f.offset, f.ino) {
+		return nil, Span{f.history(), f.lines, f.lines}, nil
+	}
 	fh, err := os.Open(f.Path)
 	if err != nil {
 		return nil, Span{}, err

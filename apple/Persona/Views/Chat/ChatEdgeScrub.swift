@@ -1,14 +1,15 @@
 import SwiftUI
 
 // The right-edge navigator of Persona's conversation in the new layout (#1666, docs/apple/ios.md "New conversation
-// layout"), like the ChatGPT desktop app's: a slide up or down along the list's right edge shows a column of short
-// ticks, one per message the user typed, with a light tap as it opens; moving over the ticks picks one (a tick of the
-// haptic each) and shows its first words beside it; letting go brings that message into view.
+// layout"), like the ChatGPT desktop app's: a finger held still on the list's right edge shows a column of short
+// ticks, one per message the user typed, with a light tap as it opens; sliding up or down over the ticks picks one (a
+// tick of the haptic each) and shows its first words beside it; letting go brings that message into view.
 //
 // It never takes another gesture's touch: it starts only in the band at the right edge (`Theme.Size.edgeBand`, inside
-// the list's side margin) and only for a slide that is more up-and-down than sideways, so a sideways drag there still
-// pages to Agents or opens the drawer (`DrawerPan`), and the system's back swipe is at the other edge. The list's own
-// scrolling waits for it to give up, which a touch outside the band does at once.
+// the list's side margin) and only after a hold (`Theme.Motion.edgeScrubHold`). A finger that moves during the hold is
+// a swipe like anywhere else: up and down scroll the list, sideways pages to Agents or opens the drawer (`DrawerPan`),
+// and the system's back swipe is at the other edge. The list's own scrolling waits for it to give up, which a touch
+// outside the band, or one that moves before the hold is over, does at once (#2615).
 
 /// One tick: a message the user typed, by its line's id, and its first words.
 nonisolated struct EdgeMark: Equatable, Sendable {
@@ -52,6 +53,11 @@ nonisolated struct EdgeScrubColumn: Equatable, Sendable {
     private(set) var marks: [EdgeMark] = []
     private(set) var column: EdgeScrubColumn?
     private(set) var picked: Int?
+    /// The finger has gone past the slop to another tick than the one the navigator opened on: only then is letting go
+    /// a choice. Read when the finger lets go, never drawn.
+    @ObservationIgnored private(set) var moved = false
+    /// Where the finger was as the navigator opened, and the tick it opened on.
+    @ObservationIgnored private var opening: (y: CGFloat, index: Int)?
 
     var isOpen: Bool { column != nil }
     var pickedMark: EdgeMark? { picked.flatMap { marks.indices.contains($0) ? marks[$0] : nil } }
@@ -78,6 +84,8 @@ nonisolated struct EdgeScrubColumn: Equatable, Sendable {
         self.marks = marks
         self.column = column
         picked = column.index(at: y)
+        moved = false
+        opening = (y, column.index(at: y))
         return true
     }
 
@@ -91,6 +99,8 @@ nonisolated struct EdgeScrubColumn: Equatable, Sendable {
     func move(to y: CGFloat) -> Bool {
         guard let column else { return false }
         let i = column.index(at: y)
+        // A finger held still trembles, and dense ticks are a few points apart: within the slop it is no choice yet.
+        if let opening, i != opening.index, abs(y - opening.y) > Theme.Space.s { moved = true }
         guard i != picked else { return false }
         picked = i
         return true
@@ -103,6 +113,8 @@ nonisolated struct EdgeScrubColumn: Equatable, Sendable {
         marks = []
         column = nil
         picked = nil
+        moved = false
+        opening = nil
         return mark
     }
 }
@@ -173,8 +185,9 @@ struct EdgeScrubOverlay: View {
     }
 }
 
-/// The touch side of the navigator: begins in the band along the right edge (`band`, window coordinates) on a slide
-/// more up-and-down than sideways; the list's scrolling waits for it to fail.
+/// The touch side of the navigator: begins when a finger has stayed put for `Theme.Motion.edgeScrubHold` in the band
+/// along the right edge (`band`, window coordinates); the list's scrolling waits for it to fail, which it does as soon
+/// as the finger moves during the hold (#2615).
 struct EdgeScrubGesture: UIGestureRecognizerRepresentable {
     var band: () -> CGRect
     /// Where the finger is (window coordinates) as the gesture begins, moves and ends.
@@ -183,7 +196,10 @@ struct EdgeScrubGesture: UIGestureRecognizerRepresentable {
     final class Recognizer: UIGestureRecognizer {
         var band: () -> CGRect = { .zero }
         private var start: CGPoint?
-        /// How far the finger goes before its direction counts.
+        /// Begins the navigator once the hold is over.
+        private var hold: Task<Void, Never>?
+        /// How far the finger may drift during the hold: past it, the touch is a swipe, the list's or (sideways) the
+        /// strip's pager's and the drawer's.
         private let slop = Theme.Space.s
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -192,6 +208,11 @@ struct EdgeScrubGesture: UIGestureRecognizerRepresentable {
                 return
             }
             start = p
+            hold = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Theme.Motion.edgeScrubHold))
+                guard !Task.isCancelled, let self, self.start != nil, self.state == .possible else { return }
+                self.state = .began
+            }
         }
 
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -200,12 +221,8 @@ struct EdgeScrubGesture: UIGestureRecognizerRepresentable {
                 state = .changed
                 return
             }
-            let dx = p.x - start.x, dy = p.y - start.y
-            if abs(dx) > slop, abs(dx) >= abs(dy) {
-                state = .failed // sideways: the strip's pager or the drawer
-            } else if abs(dy) > slop {
-                state = .began
-            }
+            // Moving before the hold is over, in any direction, is a swipe: the list scrolls as anywhere else.
+            if hypot(p.x - start.x, p.y - start.y) > slop { state = .failed }
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -218,13 +235,15 @@ struct EdgeScrubGesture: UIGestureRecognizerRepresentable {
 
         override func reset() {
             super.reset()
+            hold?.cancel()
+            hold = nil
             start = nil
         }
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        /// A scroll view's pan (the list's) waits until the navigator gives up: a slide that starts in the band and
-        /// goes up or down is the navigator's, not the list's.
+        /// A scroll view's pan (the list's) waits until the navigator gives up: a slide after a hold in the band is
+        /// the navigator's, not the list's. Without the hold the wait is over within the slop.
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
             other.view is UIScrollView && other is UIPanGestureRecognizer
         }

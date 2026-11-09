@@ -116,6 +116,7 @@ func runNode(ctx context.Context, args []string, b Build) error {
 				exitNodeUsage(err)
 			}
 			osproc.SealInherited() // as the node on stdin / stdout does, below
+			capProcs()
 			return runResident(ctx, b, supervised)
 		case "tailcat":
 			return runNodeTailcat(ctx, args[1:])
@@ -138,6 +139,7 @@ func runNode(ctx context.Context, args []string, b Build) error {
 	// What a parent left inheritable (an older hub's listening socket, through its manager) stops here, not in every
 	// agent and program the node starts. Here, not in main: other commands of this binary hand descriptors on by exec.
 	osproc.SealInherited()
+	capProcs() // the resident node's too, above
 	relayed, err := node.Relay(ctx, os.Stdin, os.Stdout)
 	if relayed {
 		if errors.Is(err, io.EOF) {

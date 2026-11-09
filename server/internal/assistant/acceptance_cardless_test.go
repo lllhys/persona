@@ -169,7 +169,7 @@ func TestAcceptanceWithABotKeepsItsCard(t *testing.T) {
 
 // A bot status that cannot be read (the manager away) is a card for later, not a card never due: the ask is kept
 // waiting for its card, not card-less, and the next tick posts it once the status reads (acceptance_retry_test.go). A
-// card whose send failed is the same.
+// card whose send failed is the same (TestAcceptanceCardRetriedAfterAFailedSend).
 func TestAcceptanceStatusErrorIsNotNoCard(t *testing.T) {
 	waiting := func(t *testing.T, s *Service, id string, posts func() []string) {
 		t.Helper()
@@ -192,12 +192,6 @@ func TestAcceptanceStatusErrorIsNotNoCard(t *testing.T) {
 		if a := askOf(s, id); a == nil || a.MessageID == "" || countAcceptCards(posts()) != 1 {
 			t.Fatalf("the card for later did not go out: %+v, %d cards", a, countAcceptCards(posts()))
 		}
-	})
-	t.Run("send failed", func(t *testing.T) {
-		s, f, _, id := cardlessService(t, botReady)
-		f.answerApp(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) { return nil, errors.New("feishu: 503") })
-		s.askAcceptance(onlyTodo(s), "box", "s1", deployedReply)
-		waiting(t, s, id, func() []string { return nil })
 	})
 }
 

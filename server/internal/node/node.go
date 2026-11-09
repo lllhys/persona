@@ -93,6 +93,8 @@ type Node struct {
 	paths   map[string]string           // session id -> transcript path
 	pathsAt map[string]time.Time        // when a path was last reported or chosen (transcriptPath looks again after 30 s)
 	watches map[string]*watch
+	// pumping: the shared watch pump runs (session_watch.go watchPump); it stops when watches is empty.
+	pumping bool
 	// waiting: watches of sessions with no transcript yet (watchFor), so session.unwatch finds them (#5389).
 	waiting map[string]*watch
 	agents  map[string]host.Agent // session id -> live agent
@@ -1455,12 +1457,33 @@ func (n *Node) sessionInfo(ctx context.Context, id string) (map[string]any, erro
 			mode = tuiMode(screen) // shift+tab in the terminal shows up in the transcript only with the next prompt
 		}
 	}
+	cwd := m.Cwd // an agent's latest directory
+	if n.isAssistantSession(id) {
+		cwd = n.assistantCwd(id, f.Path, cwd) // a conversation's own, where it started (#2368)
+	}
 	return map[string]any{
-		"session_id": id, "transcript_path": f.Path, "cwd": m.Cwd, "model": m.Model, "launcher": st.Launcher,
+		"session_id": id, "transcript_path": f.Path, "cwd": cwd, "model": m.Model, "launcher": st.Launcher,
 		"git_branch": m.GitBranch, "version": m.Version, "permission_mode": mode, "effort": effort,
 		"context_tokens": m.ContextTokens, "output_tokens": m.OutputTokens, "compactions": m.Compactions,
 		"turns": m.Turns, "started_at": m.StartedAt, "last_activity": m.LastActivity,
 	}, nil
+}
+
+// assistantCwd is the directory assistant conversation id runs in: its running process's, else where it started as
+// its record or its transcript at path says it (assistantHome over the quick meta), else latest, its transcript's
+// latest directory. Not where the model's last `cd` left the shell (#2368).
+func (n *Node) assistantCwd(id, path, latest string) string {
+	n.mu.Lock()
+	p := n.procs[id]
+	n.mu.Unlock()
+	if p != nil && p.cwd != "" {
+		return p.cwd
+	}
+	cwd := latest
+	if fi, err := os.Stat(path); err == nil {
+		cwd = firstNonEmpty(n.meta(path, fi).cwd, latest)
+	}
+	return n.assistantHome(id, cwd)
 }
 
 func withSpan(m map[string]any, sp transcript.Span, continues bool) map[string]any {

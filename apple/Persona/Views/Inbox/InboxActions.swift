@@ -169,8 +169,7 @@ struct InboxDraftSheet: View {
             }
             if let key = a.sessionKey {
                 Button {
-                    model.assistantCurrent = model.inHub(key)
-                    model.selectedTab = .assistant
+                    model.openAssistantConversation(model.inHub(key), manager: item.manager)
                     dismiss()
                 } label: {
                     Label("See How the AI Twin Handled It", systemImage: Theme.Icon.list).font(Theme.Font.captionMedium).lineLimit(1)
@@ -268,9 +267,7 @@ struct InboxHandOffSheet: View {
     private static let presets = InboxAsk.allCases.map(\.ask)
 
     private var agents: [Session] {
-        model.allSessions.filter { !$0.assistant }
-            .sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-            .prefix(8).map { $0 }
+        InboxHandOffModel.agents(model.allSessions, limit: 8) { model.machine($0)?.online == true }
     }
 
     var body: some View {
@@ -314,6 +311,7 @@ struct InboxHandOffSheet: View {
                 }
                 Section {
                     Toggle("Also Mark as Done", isOn: Binding(get: { handOff.markDone }, set: { handOff.setMarkDone($0) }))
+                        .disabled(handOff.sending)
                 }
                 if let error = handOff.error { Text(error).foregroundStyle(Theme.danger).font(Theme.Font.caption) }
             }

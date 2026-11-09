@@ -8,6 +8,6 @@
   - 在等的（hub 到时会叫醒它们，不用管）：等部署（server，session_id=bbbbbbbb，链接 http://hub.example.com:18660/s/server/bbbbbbbb-2）：等部署跑完再跑线上测试
   - 做完的（24 小时内）：修登录（server，session_id=aaaaaaaa，链接 http://hub.example.com:18660/s/server/aaaaaaaa-1）：已合并 PR #12
   - 已屏蔽（用户关了它们的通知，上面的数不算它们；别主动提，问到再说）：屏蔽了（server，session_id=ffffffff，链接 http://hub.example.com:18660/s/server/ffffffff-6）：删掉这个分支吗？
-- iPhone：App 不在前台，phone_* 工具会先尝试在后台唤醒 App，失败就请他打开 App
+- iPhone：App 不在前台，phone_* 工具会先尝试在后台唤醒 App，失败就请用户打开 App；要手机确认的写操作可以带 queue_if_offline 先排队（phone_write_queue_list 查看）
 - 已安排的跟进：没有
 - 每天的定时任务：早报（工作日 09:00）

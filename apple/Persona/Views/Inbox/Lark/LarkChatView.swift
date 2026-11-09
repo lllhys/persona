@@ -1404,11 +1404,10 @@ struct LarkChatView: View {
         let prompt = String(localized: "Read the recent messages in my Lark chat “\(conversation.name)” (Lark gateway feedId \(conversation.id)), summarize the key points, list what I need to reply to or handle, and suggest replies.")
         do {
             let s = try await AssistantStart.run(receipts: model.hubFeatures.contains(AssistantStart.feature)) { op in
-                try await api.startConversation(prompt: prompt, opID: op)
+                try await api.showing(nil).startConversation(prompt: prompt, opID: op) // the default manager's, whichever page shows
             }
             model.began(s, text: prompt)
-            model.assistantCurrent = s.key
-            model.selectedTab = .assistant
+            model.openAssistantConversation(s.key)
         } catch {
             model.show(error)
         }

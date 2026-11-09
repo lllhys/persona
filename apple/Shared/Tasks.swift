@@ -110,6 +110,10 @@ nonisolated struct FeedItem: Codable, Hashable, Identifiable, Sendable {
     /// `receipt`: the task's title, done / failed, the agent's last words, its PR and machine.
     var title: String? { string("title") }
     var failed: Bool { string("state") == "failed" }
+    /// A turn the model service cut off (#1516): not done, whatever its to-do says.
+    var turnInterrupted: Bool { string("state") == "interrupted" }
+    /// An interrupted receipt's raw error (the API error that cut the turn off); older hubs put it in `summary`.
+    var receiptError: String? { string("error") }
     var summary: String? { string("summary") }
     var pr: String? { string("pr") }
     var machine: String? { string("machine") }

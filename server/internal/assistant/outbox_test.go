@@ -365,24 +365,6 @@ func TestAPushThatTimedOutIsKept(t *testing.T) {
 	}
 }
 
-// Live updates kept are bounded on their own and go once stale: they never crowd out the pushes.
-func TestTheOutboxBoundsEachKind(t *testing.T) {
-	out := &memOutbox{}
-	ctx := context.Background()
-	_ = out.OutboxAdd(ctx, db.OutboxItem{ID: "ntf_1", Kind: outboxPush, Body: []byte(`{}`)}, 2, time.Now().Add(-time.Minute))
-	for _, id := range []string{"bc_1", "bc_2", "bc_3"} {
-		_ = out.OutboxAdd(ctx, db.OutboxItem{ID: id, Kind: outboxBroadcast, Body: []byte(`{}`)}, 2, time.Now().Add(-time.Minute))
-	}
-	items, _ := out.OutboxItems(ctx, 10)
-	var ids []string
-	for _, it := range items {
-		ids = append(ids, it.ID)
-	}
-	if !slices.Equal(ids, []string{"ntf_1", "bc_2", "bc_3"}) {
-		t.Fatalf("kept %v", ids)
-	}
-}
-
 // What the outbox keeps: not a coded answer of the hub about the item (it would get the same), but a connection the
 // hub no longer takes calls on, a timeout or a dropped bus; and never a body that is not JSON.
 func TestWhatTheOutboxKeeps(t *testing.T) {

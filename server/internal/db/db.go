@@ -379,7 +379,7 @@ func renumberMigration(ctx context.Context, conn *pgxpool.Conn, from, to string)
 func (d *DB) TruncateForTest(ctx context.Context) error {
 	var tables []string
 	err := d.pool.QueryRow(ctx, `SELECT coalesce(array_agg(t), '{}') FROM unnest($1::text[]) AS t WHERE to_regclass(t) IS NOT NULL`,
-		[]string{"workspace_board", "workspace_snapshots", "push_device_retirements", "devices", "device_tokens", "live_activities", "phone_tools",
+		[]string{"workspace_board", "workspace_snapshots", "push_device_retirements", "devices", "device_tokens", "live_activities", "phone_tools", "phone_write_queue",
 			"node_sessions", "mail_accounts", "interactions", "settings", "inbox_items", "kb_entities", "connector_secrets",
 			"machine_systems", "machine_metrics", "sent_messages", "todos", "todo_agents", "assistant_always", "machine_trust", "hub_settings",
 			"manager_outbox", "handed_over",

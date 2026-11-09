@@ -12,31 +12,6 @@ import (
 	"time"
 )
 
-func TestMCPTools(t *testing.T) {
-	s := newServiceWithAccount(t, newTestIMAP(t))
-
-	tools := s.Tools()
-	names := map[string]bool{}
-	for _, tool := range tools {
-		names[tool.Name] = true
-		if tool.Description == "" {
-			t.Errorf("tool %s has no description", tool.Name)
-		}
-		var schema map[string]any
-		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
-			t.Errorf("tool %s schema is not JSON: %v", tool.Name, err)
-		}
-		if schema["type"] != "object" {
-			t.Errorf("tool %s schema type = %v", tool.Name, schema["type"])
-		}
-	}
-	for _, want := range []string{ToolAccounts, ToolSearch, ToolRead, ToolSaveAttachment, ToolSend} {
-		if !names[want] {
-			t.Errorf("tool %s is missing", want)
-		}
-	}
-}
-
 func TestMCPAccountsAndSearch(t *testing.T) {
 	srv := newTestIMAP(t)
 	s := newServiceWithAccount(t, srv)

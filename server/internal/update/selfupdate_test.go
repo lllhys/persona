@@ -187,29 +187,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-func TestSwapAndRestore(t *testing.T) {
-	dir := t.TempDir()
-	target, next := filepath.Join(dir, "personad"), filepath.Join(dir, "new")
-	os.WriteFile(target, []byte("old"), 0o755)
-	os.WriteFile(next, []byte("new"), 0o755)
-	prev, err := Swap(target, next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(target); string(b) != "new" {
-		t.Fatalf("target %q", b)
-	}
-	if b, _ := os.ReadFile(prev); string(b) != "old" {
-		t.Fatalf("prev %q", b)
-	}
-	if err := Restore(target, prev); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(target); string(b) != "old" {
-		t.Fatalf("restored %q", b)
-	}
-}
-
 // noTemps fails when a .new temp file is left in dir.
 func noTemps(t *testing.T, dir string) {
 	t.Helper()

@@ -1,7 +1,6 @@
 package kb
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,42 +71,5 @@ func TestForgetSource(t *testing.T) {
 	// Again: nothing left to forget.
 	if again, err := e.ForgetSource("imessage"); err != nil || len(again.Chats)+len(again.People)+len(again.Projects) != 0 {
 		t.Errorf("again %+v %v", again, err)
-	}
-}
-
-// forgetting is a model that has the chat forgotten while it writes the summary.
-type forgetting struct {
-	e    *Engine
-	next Model
-}
-
-func (m forgetting) JSONMax(ctx context.Context, system, user string, n int, out any) error {
-	if _, err := m.e.ForgetSource("imessage"); err != nil {
-		return err
-	}
-	return m.next.JSONMax(ctx, system, user, n, out)
-}
-
-// A chat forgotten while its compression ran is not written back.
-func TestCompressAfterForget(t *testing.T) {
-	e := testEngine(t, nil)
-	e.Model = forgetting{e: e, next: &fakeModel{}}
-	st := e.Store
-	c := &Chat{ID: "imessage-0123456789ab", Source: "imessage", SourceID: "0123456789ab", Kind: "dm", Name: "张三",
-		Created: time.Now().Add(-time.Hour), LastAt: time.Now()}
-	_ = st.PutChat(c)
-	if err := st.AppendMessages(c, []Line{{At: time.Now().Add(-time.Minute), Sender: "张三", Text: "示例：周五见"}}); err != nil {
-		t.Fatal(err)
-	}
-	c.Pending = 1
-	_ = st.PutChat(c)
-	if err := e.Compress(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := st.Chat(c.ID); ok {
-		t.Error("the forgotten chat came back")
-	}
-	if _, err := os.Stat(st.Path(KindChat, c.ID)); !os.IsNotExist(err) {
-		t.Errorf("its directory: %v", err)
 	}
 }

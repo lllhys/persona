@@ -15,26 +15,24 @@ struct SubagentTreeTests {
         Subagent.tree(all).map { String(repeating: "  ", count: $0.depth) + $0.agent.id }
     }
 
-    @Test func nestsEachUnderItsLauncherSeveralLevelsDeep() {
-        #expect(shape([
-            sub("e5", 1, parent: "c3", fork: true), sub("b2", 9), sub("c3", 6, parent: "a1"),
-            sub("a1", 10, running: true), sub("f6", 2, parent: "c3", fork: true), sub("d4", 5, parent: "a1"),
-        ]) == ["a1", "  d4", "  c3", "    e5", "    f6", "b2"])
-    }
-
-    @Test func oneWhoseLauncherIsNotListedIsAtTheTop() {
-        #expect(shape([sub("a1", 10), sub("k9", 3, parent: "gone"), sub("c3", 6, parent: "a1")]) == ["k9", "a1", "  c3"])
-    }
-
-    @Test func eachLevelRunningFirstThenNewestFirst() {
-        #expect(shape([
-            sub("old", 30), sub("new", 1), sub("live", 50, running: true),
-            sub("kid-old", 20, parent: "old"), sub("kid-live", 25, parent: "old", running: true), sub("kid-new", 2, parent: "old"),
-        ]) == ["live", "new", "old", "  kid-live", "  kid-new", "  kid-old"])
-    }
-
-    @Test func launchersNamingEachOtherAreListedOnceFromTheTop() {
-        #expect(shape([sub("x", 2, parent: "y"), sub("y", 1, parent: "x"), sub("z", 3, parent: "z")]) == ["z", "y", "  x"])
+    @Test func treeNestsUnderLaunchersRunningFirstThenNewestFirst() {
+        let cases: [(label: String, input: [Subagent], expected: [String])] = [
+            ("nests each under its launcher several levels deep", [
+                sub("e5", 1, parent: "c3", fork: true), sub("b2", 9), sub("c3", 6, parent: "a1"),
+                sub("a1", 10, running: true), sub("f6", 2, parent: "c3", fork: true), sub("d4", 5, parent: "a1"),
+            ], ["a1", "  d4", "  c3", "    e5", "    f6", "b2"]),
+            ("one whose launcher is not listed is at the top",
+             [sub("a1", 10), sub("k9", 3, parent: "gone"), sub("c3", 6, parent: "a1")], ["k9", "a1", "  c3"]),
+            ("each level running first, then newest first", [
+                sub("old", 30), sub("new", 1), sub("live", 50, running: true),
+                sub("kid-old", 20, parent: "old"), sub("kid-live", 25, parent: "old", running: true), sub("kid-new", 2, parent: "old"),
+            ], ["live", "new", "old", "  kid-live", "  kid-new", "  kid-old"]),
+            ("launchers naming each other are listed once from the top",
+             [sub("x", 2, parent: "y"), sub("y", 1, parent: "x"), sub("z", 3, parent: "z")], ["z", "y", "  x"]),
+        ]
+        for c in cases {
+            #expect(shape(c.input) == c.expected, "\(c.label)")
+        }
         #expect(Subagent.tree([]).isEmpty)
     }
 

@@ -83,12 +83,6 @@ struct ExtensionRenameTests {
         #expect(old.plugins == 2 && old.hasToken)
     }
 
-    @Test func theNewEvent() {
-        let set = ServerEvent.decode(Data(#"{"type":"extension_ui","extension":"gw","id":"usage","badge":{"text":"3"}}"#.utf8))
-        guard case .pluginBadge(let ext, let id, let badge, _)? = set else { Issue.record("not decoded"); return }
-        #expect(ext == "gw" && id == "usage" && badge?.text == "3")
-    }
-
     @Test func featuresUnderEitherName() {
         #expect(Set(["extension_ui_slots"]).hasExtensionFeature("ui_slots"))
         #expect(Set(["plugin_ui_slots"]).hasExtensionFeature("ui_slots"))

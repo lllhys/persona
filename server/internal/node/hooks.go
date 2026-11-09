@@ -17,6 +17,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/acceptloop"
 	"github.com/nwverse/persona/server/internal/host"
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/nodeclient"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -330,13 +331,21 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 	if in.MCPServer != nil {
 		ix.MCPServerName, ix.MCPConfigSource = in.MCPServer.Name, in.MCPServer.Source
 	}
+	// A card of a headless conversation is placed in its directory, where it started, not where the model's last
+	// `cd` left the hook: a health conversation's card in health/reports or /tmp is still the health space's (#2368).
+	n.mu.Lock()
+	proc := n.procs[in.SessionID]
+	n.mu.Unlock()
+	if proc != nil {
+		ix.Cwd = identity.CardCwd(proc.cwd, in.Cwd)
+	}
 	if p := n.transcriptPath(in.SessionID); p != "" {
 		if st, err := os.Stat(p); err == nil {
 			ix.SessionTitle = n.meta(p, st).title
 		}
 	}
 	if ix.SessionTitle == "" {
-		ix.SessionTitle = filepath.Base(in.Cwd)
+		ix.SessionTitle = filepath.Base(ix.Cwd)
 	}
 	if asksPhone(in) {
 		var stopWatch func()

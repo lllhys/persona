@@ -22,6 +22,8 @@ struct AssistantView: View {
     /// A first message whose start failed (#1368): it stays on the page until it is sent again or deleted.
     @State private var failedStart = FailedStart.shared
     @State private var starterLauncher: String?
+    /// Health's own pick with several managers: its conversations are the default's, whichever manager the page shows.
+    @State private var healthLauncher: String?
     @State private var showProfile = false
     @State private var showKnowledge = false
     @State private var showRoutines = false
@@ -34,6 +36,10 @@ struct AssistantView: View {
     @State private var drawer = AssistantDrawer()
     /// Regular width (iPhone Duo open): the sidebar is a column beside the conversation; Chat History shows or hides it.
     @State private var columns = SplitColumns.shown
+    /// iPhone Duo's bars down the side: the top bar is the side rail, and the page's top is free.
+    @Environment(\.shellRailEdge) private var railEdge
+    /// The manager switcher's height as drawn (several managers).
+    @State private var switcherHeight: CGFloat = 0
     #if DEBUG
     @State private var showAvatars = false
     #endif
@@ -135,6 +141,25 @@ struct AssistantView: View {
         }
     }
 
+    /// Several managers: the page shows one at a time, picked under the top bar.
+    private var switcherShown: Bool { model.managerRoster?.isMulti == true }
+
+    /// The manager switcher under the top bar, over the bar's fog carried down behind it (the page scrolls beneath); it
+    /// measures itself for the room the page leaves free. Not while a first message spins up: its answer is that
+    /// manager's.
+    @ViewBuilder private var managerSwitcher: some View {
+        if switcherShown {
+            ManagerSwitcher()
+                .disabled(pending != nil)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { switcherHeight = $0 }
+                .background(alignment: .top) {
+                    TopFog(solidHeight: switcherHeight, fadeHeight: AssistantTopBar.fade)
+                        .frame(height: switcherHeight + AssistantTopBar.fade)
+                }
+                .padding(.top, AssistantTopBar.room(railEdge))
+        }
+    }
+
     /// Nothing pushed on the page: the sidebar's drag only works here (pushed pages have their own back swipe).
     private var atRoot: Bool {
         var pushed = showProfile || showKnowledge || showRoutines || showTodos || openedExtension != nil || showHealth || !path.isEmpty
@@ -150,23 +175,34 @@ struct AssistantView: View {
     private var stack: some View {
         NavigationStack(path: $path) {
             Group {
+                #if DEBUG
+                let _ = ShellTrace.shared.note("assistant page \(NewChatCheck.name(current, main: model.assistantMain)) pending=\(pending != nil)")
+                #endif
                 if let key = current, pending == nil {
                     ChatView(key: key, style: .assistant)
                         .id(key)
                         // The iPad draws the shell's composer too (`ChatComposerKind.padCard`): the assistant's, as on the iPhone.
                         .environment(\.shellChat, shell != nil || ChatComposerKind.padCard)
                 } else if shell != nil {
-                    ShellHome(pending: shownStart, error: failedStart.message?.reason, launcher: $starterLauncher, mode: $starterMode,
+                    ShellHome(pending: shownStart, error: shownFailure?.reason, launcher: $starterLauncher, mode: $starterMode,
                               effort: $starterEffort, openInbox: { path.append($0) }, resend: resend, delete: deleteFailed) { text, images in
                         Task { await start(text, images) }
                     }
+                    .onAppear {
+                        NewChatCheck.shared.homeAppeared()
+                        #if DEBUG
+                        ShellTrace.shared.note("home appeared")
+                        #endif
+                    }
                 } else {
-                    AssistantHome(pending: shownStart, error: failedStart.message?.reason, launcher: $starterLauncher, mode: $starterMode,
+                    AssistantHome(pending: shownStart, error: shownFailure?.reason, launcher: $starterLauncher, mode: $starterMode,
                                   effort: $starterEffort, resend: resend, delete: deleteFailed) { text, images in
                         Task { await start(text, images) }
                     }
+                    .onAppear { NewChatCheck.shared.homeAppeared() }
                 }
             }
+            .environment(\.managerSwitcherRoom, switcherShown ? switcherHeight : 0)
             // No system bar: the top bar floats over the conversation with a fog under it (it scrolls beneath).
             .toolbarVisibility(.hidden, for: .navigationBar)
             #if os(iOS) || os(visionOS)
@@ -184,6 +220,7 @@ struct AssistantView: View {
                 .transformEnvironment(\.macTitleRowLeading) { if columns != .detailOnly { $0 = 0 } }
                 #endif
             }
+            .overlay(alignment: .top) { managerSwitcher }
             #if os(macOS)
             // The bar is the title bar's row, as the list beside it (#830); pushed pages keep their own.
             .ignoresSafeArea(.container, edges: .top)
@@ -194,7 +231,7 @@ struct AssistantView: View {
             .navigationDestination(isPresented: $showTodos) { TodosView() }
             .navigationDestination(item: $openedExtension) { ExtensionNavPage(route: $0) }
             .navigationDestination(isPresented: $showHealth) {
-                HealthView(disabled: shownStart != nil, launcher: $starterLauncher) { text, images in
+                HealthView(disabled: shownStart != nil, launcher: healthLauncherPick) { text, images in
                     Task { await start(text, images, space: Session.healthSpace) }
                 }
             }
@@ -219,6 +256,7 @@ struct AssistantView: View {
             // A start error belongs to the home page it failed on: another conversation (from any menu, the Mac's
             // ⇧⌘N, a quick action) leaves it behind.
             .onChange(of: model.assistantCurrent) { backToRoot() }
+            .onChange(of: model.assistantManagerID) { starterLauncher = nil } // a launcher of the manager shown before
             .onChange(of: model.assistantReveal) { backToRoot(); activeDrawer.close() }
             #if DEBUG
             // `-openAssistantPage profile|avatars|routines|runs|…` (with `-tab assistant`): the profile and its pages;
@@ -307,29 +345,63 @@ struct AssistantView: View {
     }
 
     private func newConversation() {
+        let from = NewChatCheck.name(current, main: model.assistantMain)
+        #if DEBUG
+        ShellTrace.shared.note("new conversation from \(from)")
+        #endif
+        if from != "none" {
+            // The page must come to the new-conversation page; a miss is kept and reported, labels only (#2189).
+            NewChatCheck.shared.watch(from: from, current: { [model] in NewChatCheck.name(model.assistantCurrent, main: model.assistantMain) },
+                                      miss: { [model] line in Self.newChatMissed(line, model: model) })
+        }
         withAnimation(Theme.Motion.standard) {
             model.assistantCurrent = nil
             pending = nil
         }
     }
 
+    /// New Chat did not bring the new-conversation page: the line is kept on the device, and sent where the hub takes
+    /// error reports.
+    private static func newChatMissed(_ line: String, model: AppModel) {
+        UserDefaults.standard.set("\(Date.now.formatted(.iso8601)) \(line)", forKey: NewChatCheck.defaultsKey)
+        #if os(iOS) || os(macOS)
+        if ErrorReportQueue.shared.write(ErrorReports.report(kind: "log", level: "warning", message: line)), let group = model.hub?.group {
+            model.flushErrorReports(group)
+        }
+        #endif
+    }
+
     /// The first message the page shows: the one spinning up, else one whose start failed (#1368).
     private var shownStart: PendingStart? {
-        pending ?? failedStart.message.map { PendingStart(text: $0.text, imageCount: $0.images.count, failed: $0) }
+        pending ?? shownFailure.map { PendingStart(text: $0.text, imageCount: $0.images.count, failed: $0) }
     }
+
+    /// The failed first message this page shows: the latest sent from the manager it shows, or from Health.
+    private var shownFailure: FailedStart.Message? {
+        failedStart.messages.last { $0.space != nil || model.assistantShows($0.manager) }
+    }
+
+    /// Health's launcher pick: home's with one manager.
+    private var healthLauncherPick: Binding<String?> { model.managerRoster?.isMulti == true ? $healthLauncher : $starterLauncher }
 
     /// Resend on a failed first message: the op id a chat's Resend would choose (`FailedStart.resendOp`), then the start.
     private func resend() {
-        guard let m = failedStart.message, let api = model.api else { return }
+        guard let m = shownFailure, let api = model.api else { return }
+        if m.space == nil, let offline = model.assistantManagerOffline {
+            model.toast = Toast(ManagerOfflineNote.text(offline), style: .error)
+            return
+        }
         let receipts = model.hubFeatures.contains(AssistantStart.feature)
         Task {
             let op = await FailedStart.resendOp(m, api: api, receipts: receipts)
+            guard m.space != nil || model.showsPage(of: api) else { return } // another manager's page by now
             await start(m.text, m.images, space: m.space, op: op)
         }
     }
 
     private func deleteFailed() {
-        withAnimation(Theme.Motion.standard) { failedStart.clear() }
+        let m = shownFailure
+        withAnimation(Theme.Motion.standard) { failedStart.clear { $0 == m } }
         model.readiness.failure = nil
     }
 
@@ -345,9 +417,11 @@ struct AssistantView: View {
         }
         withAnimation(Theme.Motion.standard) { pending = PendingStart(text: text, imageCount: images.count) }
         do {
-            let makesMain = space == nil && model.assistantMain == nil // the first one becomes the main conversation
+            // The first one becomes the main conversation; with the settings not read yet, whether there is one is unknown.
+            let makesMain = space == nil && model.assistantConfig != nil && model.assistantMain == nil
+            let launcher = space == nil ? starterLauncher : healthLauncherPick.wrappedValue
             let s = try await AssistantStart.run(receipts: model.hubFeatures.contains(AssistantStart.feature), op: op) { op in
-                try await api.startConversation(prompt: text, images: images, launcher: starterLauncher,
+                try await api.startConversation(prompt: text, images: images, launcher: launcher,
                                                 permissionMode: starterMode.isEmpty ? nil : starterMode,
                                                 effort: starterEffort.isEmpty ? nil : starterEffort,
                                                 main: makesMain, space: space, opID: op)
@@ -356,22 +430,25 @@ struct AssistantView: View {
             Haptics.success()
             model.began(s, text: text, images: images) // the message stays on screen until claude has written it
             withAnimation(Theme.Motion.standard) {
-                model.assistantCurrent = s.key
+                // Another manager's page by now: the conversation is listed on its own page, not opened on this one.
+                if space != nil || model.showsPage(of: api) { model.assistantCurrent = s.key }
                 pending = nil
-                failedStart.clear()
+                failedStart.clear { $0.space == space && (space != nil || model.sameManager($0.manager, api.shownManager)) }
             }
         } catch {
             // A coded refusal (no computer, Claude Code missing…) is a card with what to do, not a red line (5.2).
             // The message stays where it was sent, as the chat's failed bubble, with Resend and Delete (#1368).
             let coded = CodedFailure(error)
+            let here = space != nil || model.showsPage(of: api) // the card belongs to the page it failed on
             withAnimation(Theme.Motion.standard) {
                 pending = nil
-                model.readiness.failure = coded
+                if here { model.readiness.failure = coded }
                 failedStart.fail(FailedStart.Message(text: text, images: images, space: space, op: op,
                                                      mayHaveStarted: FailedStart.mayHaveStarted(error),
-                                                     reason: coded == nil ? error.shown : nil, at: .now))
+                                                     reason: coded == nil || !here ? error.shown : nil, at: .now,
+                                                     manager: space == nil ? api.shownManager : nil))
             }
-            if coded != nil { model.readinessChanged() }
+            if here, coded != nil { model.readinessChanged() }
             Haptics.error()
         }
     }
@@ -428,6 +505,7 @@ struct FirstMessagePending: View {
 /// a conversation spins up it shows the first message and a typing indicator so the send feels instant.
 struct AssistantHome: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.managerSwitcherRoom) private var switcherRoom
     var pending: PendingStart?
     var error: String?
     @Binding var launcher: String?
@@ -440,6 +518,9 @@ struct AssistantHome: View {
 
     /// How far the page fades out above the chips and the field.
     private static let fade = Theme.Space.xl
+
+    /// Nothing can be sent: a first message is spinning up, or the manager the page shows is offline.
+    private var blocked: Bool { pending != nil || model.assistantManagerOffline != nil }
 
     var body: some View {
         ScrollView {
@@ -464,7 +545,7 @@ struct AssistantHome: View {
         // The floating top bar (AssistantTopBar) is over the page: leave its room, let the page scroll under it. Before
         // the composer is added: margins reach every scroll view below them, and the chips' row above the field stood
         // the top bar's height tall, over the suggestion cards.
-        .contentMargins(.top, AssistantTopBar.height, for: .scrollContent)
+        .contentMargins(.top, AssistantTopBar.height + switcherRoom, for: .scrollContent)
         // Room to scroll the last suggestions clear of the fade over the chips (as ShellHome).
         .contentMargins(.bottom, pending == nil ? Self.fade : ChatView.newestGap, for: .scrollContent)
         .themedGroupedPage()
@@ -478,9 +559,10 @@ struct AssistantHome: View {
                         .padding(.horizontal, Theme.Space.s)
                 }
                 if pending == nil || pending?.failed != nil { ReadinessHomeCard(route: $route) }
+                if let m = model.assistantManagerOffline { ManagerOfflineNote(manager: m) }
                 if ChatComposerKind.padCard {
                     // The iPad: the iPhone's composer, the launcher, mode and effort in its model menu (#2779).
-                    StarterComposer(disabled: pending != nil, shell: StarterComposer.ShellModes(launcher: $launcher, mode: $mode, effort: $effort),
+                    StarterComposer(disabled: blocked, shell: StarterComposer.ShellModes(launcher: $launcher, mode: $mode, effort: $effort),
                                     gate: model.readinessGate(route: $route), send: send)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -492,9 +574,9 @@ struct AssistantHome: View {
                         .padding(.horizontal, Theme.Space.xs)
                     }
                     if AppStyle.current.usesBeautifulUI {
-                        BeautifulStarterComposer(disabled: pending != nil, launcher: $launcher, gate: model.readinessGate(route: $route), send: send)
+                        BeautifulStarterComposer(disabled: blocked, launcher: $launcher, gate: model.readinessGate(route: $route), send: send)
                     } else {
-                        StarterComposer(disabled: pending != nil, gate: model.readinessGate(route: $route), send: send)
+                        StarterComposer(disabled: blocked, gate: model.readinessGate(route: $route), send: send)
                     }
                 }
             }
@@ -591,48 +673,53 @@ struct AssistantWelcome: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
             header
-            if AppStyle.current.usesBeautifulUI {
-                // BeautifulUI's list card: one row per thing to ask, its mark, what it is and how it is put.
-                BUIListSection(String(localized: "Things to Ask")) {
-                    ForEach(suggestions, id: \.title) { s in
-                        Button {
-                            ask(s)
-                        } label: {
-                            BUIListRow(s.title, detail: s.local == nil ? s.prompt : nil, accessory: .disclosure, detailLines: 1) {
-                                IconTile(s.symbol, tint: Theme.accent)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .modifier(WelcomeFold.Mark(first: s.title == suggestions.first?.title))
-                    }
-                }
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    ForEach(cardRows.map { Array(suggestions.prefix($0 * 2)) } ?? suggestions, id: \.title) { s in
-                        Button {
-                            ask(s)
-                        } label: {
-                            VStack(alignment: .leading, spacing: Theme.Space.m) {
-                                ThemedIcon(s.symbol)
-                                    .font(Theme.Font.title)
-                                    .foregroundStyle(Theme.accent)
-                                Text(s.title).font(Theme.Font.heading).foregroundStyle(Color.primary)
-                            }
-                            .scaledFrame(maxWidth: .infinity, minHeight: Theme.Size.box72, alignment: .topLeading)
-                            .card(padding: 14)
-                        }
-                        .buttonStyle(.plain)
-                        // Two cards a row, and the first two rows kept clear of Needs You: the fold is where the tallest
-                        // of the first four ends (#5648: English and Japanese titles run to two lines, and the second row
-                        // was half under the fade when the fold was the first row's end).
-                        .modifier(WelcomeFold.Mark(first: suggestions.prefix(WelcomeFold.cards).contains { $0.title == s.title }))
-                    }
-                }
-            }
+            // An offline manager takes nothing: no things to ask, which would send.
+            if model.assistantManagerOffline == nil { things }
         }
         .coordinateSpace(.named(WelcomeFold.space))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("assistant-welcome")
+    }
+
+    @ViewBuilder private var things: some View {
+        if AppStyle.current.usesBeautifulUI {
+            // BeautifulUI's list card: one row per thing to ask, its mark, what it is and how it is put.
+            BUIListSection(String(localized: "Things to Ask")) {
+                ForEach(suggestions, id: \.title) { s in
+                    Button {
+                        ask(s)
+                    } label: {
+                        BUIListRow(s.title, detail: s.local == nil ? s.prompt : nil, accessory: .disclosure, detailLines: 1) {
+                            IconTile(s.symbol, tint: Theme.accent)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(WelcomeFold.Mark(first: s.title == suggestions.first?.title))
+                }
+            }
+        } else {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                ForEach(cardRows.map { Array(suggestions.prefix($0 * 2)) } ?? suggestions, id: \.title) { s in
+                    Button {
+                        ask(s)
+                    } label: {
+                        VStack(alignment: .leading, spacing: Theme.Space.m) {
+                            ThemedIcon(s.symbol)
+                                .font(Theme.Font.title)
+                                .foregroundStyle(Theme.accent)
+                            Text(s.title).font(Theme.Font.heading).foregroundStyle(Color.primary)
+                        }
+                        .scaledFrame(maxWidth: .infinity, minHeight: Theme.Size.box72, alignment: .topLeading)
+                        .card(padding: 14)
+                    }
+                    .buttonStyle(.plain)
+                    // Two cards a row, and the first two rows kept clear of Needs You: the fold is where the tallest
+                    // of the first four ends (#5648: English and Japanese titles run to two lines, and the second row
+                    // was half under the fade when the fold was the first row's end).
+                    .modifier(WelcomeFold.Mark(first: suggestions.prefix(WelcomeFold.cards).contains { $0.title == s.title }))
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -645,7 +732,7 @@ struct AssistantWelcome: View {
                 .foregroundStyle(.secondary)
             // Wraps: in one HStack, a few more machines (or larger text) widened the whole page past the screen.
             LarkFlowLayout(spacing: 8, lineSpacing: 8) {
-                ForEach(model.machines.filter(\.online)) { m in
+                ForEach(model.machines.filter { $0.online && model.assistantShows($0.manager) }) { m in
                     Chip(text: m.name, symbol: m.symbol)
                 }
                 #if os(macOS)
@@ -809,8 +896,11 @@ struct StarterComposer: View {
         focused = true
     }
 
-    /// The assistant's machine (the hub's unless set otherwise): files and videos go to its temp directory.
-    private var machine: MachineRef { model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID) }
+    /// The assistant's machine (the hub's unless set otherwise): files and videos go to its temp directory. Health's is
+    /// the default manager's.
+    private var machine: MachineRef {
+        model.hubRef(uploadDest == Session.healthSpace ? model.healthMachineID : model.assistantConfig?.machineID ?? model.hubMachineID)
+    }
 
     /// A PhotosPicker inside a Menu never presents (the menu dismisses first): the buttons present it from here.
     @ViewBuilder private var attachments: some View {
@@ -851,7 +941,7 @@ struct StarterComposer: View {
                 } modes: {
                     StarterModesMenu(modes: shell, launchers: launchers)
                 }
-                .task { launchers = (try? await model.launchers(model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID)))?.filter(\.runsAssistant) ?? [] }
+                .task(id: machine) { launchers = (try? await model.launchers(machine))?.filter(\.runsAssistant) ?? [] }
             } else {
                 ComposerRow(placeholder: placeholder ?? String(localized: "Ask \(model.persona.name)…"), text: $text, selection: $selection, focused: $focused, canSend: canSend,
                             send: submit, history: "assistant.new", gate: gate) {
@@ -862,14 +952,14 @@ struct StarterComposer: View {
         .mediaPicker(isPresented: $showPhotos, selection: $picks)
         .fileUploadPicker(isPresented: $showFiles) { urls in
             // The assistant runs on its machine (the hub's unless set otherwise): files go to that one's temp directory.
-            uploads.start(urls, machine: model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID), model: model, dest: uploadDest) { path in
+            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
                 text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
             }
         }
         #if os(macOS)
         // Finder drags and ⌘V of pictures / copied files, as in an Agent's composer (docs/apple/mac.md「细节」).
         .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in
-            uploads.start(urls, machine: model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID), model: model, dest: uploadDest) { path in
+            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
                 text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
             }
         })
@@ -931,10 +1021,10 @@ struct BeautifulStarterComposer: View {
     @State private var selection: TextSelection?
     @FocusState private var focused: Bool
 
-    private var launcherMachine: String { model.assistantConfig?.machineID ?? model.hubMachineID }
+    private var launcherMachine: String { uploadDest == Session.healthSpace ? model.healthMachineID : model.assistantConfig?.machineID ?? model.hubMachineID }
     /// The launcher a new conversation starts with (the user's pick, else the one in Persona settings), or nil while
     /// settings are not known (#4200): no name is made up, and requests omit the field so the hub picks its default.
-    private var currentLauncher: String? { launcher ?? model.starterLauncherSetting }
+    private var currentLauncher: String? { launcher ?? (uploadDest == Session.healthSpace ? model.healthLauncherSetting : model.starterLauncherSetting) }
     /// Where files and videos go: the assistant's machine.
     private var machine: MachineRef { model.hubRef(launcherMachine) }
 
@@ -1012,14 +1102,14 @@ struct BeautifulStarterComposer: View {
         .mediaPicker(isPresented: $showPhotos, selection: $picks)
         .fileUploadPicker(isPresented: $showFiles) { urls in
             // The assistant runs on its machine (the hub's unless set otherwise): files go to that one's temp directory.
-            uploads.start(urls, machine: model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID), model: model, dest: uploadDest) { path in
+            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
                 text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
             }
         }
         #if os(macOS)
         // Finder drags and ⌘V of pictures / copied files, as in an Agent's composer (docs/apple/mac.md「细节」).
         .macComposerFiles(images: images.count, focused: focused, attach: { MacDrop.append($0, to: &images) }, upload: { urls in
-            uploads.start(urls, machine: model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID), model: model, dest: uploadDest) { path in
+            uploads.start(urls, machine: machine, model: model, dest: uploadDest) { path in
                 text = PathInsert.edit(path, text: text, selection: $selection, focused: $focused)
             }
         })
@@ -1148,7 +1238,7 @@ struct StarterModelChip: View {
                 ModeChip(symbol: Theme.Icon.model, text: current, tint: .secondary) // neutral, like the mode and effort chips beside it
             }
             .labelOnlyMenu()
-            .task { launchers = (try? await model.launchers(model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID))) ?? [] }
+            .task(id: model.assistantConfig?.machineID) { launchers = (try? await model.launchers(model.hubRef(model.assistantConfig?.machineID ?? model.hubMachineID))) ?? [] }
         } else {
             StarterLauncherStatus()
         }
@@ -1204,6 +1294,12 @@ private extension View {
 private extension AppModel {
     var starterLauncherSetting: String? {
         guard let name = assistantConfig?.launcher, !name.isEmpty else { return nil }
+        return name
+    }
+
+    /// Health's: the default manager's, whose space it is.
+    var healthLauncherSetting: String? {
+        guard let name = defaultAssistant?.launcher, !name.isEmpty else { return nil }
         return name
     }
 }

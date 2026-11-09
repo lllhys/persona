@@ -1320,13 +1320,13 @@ private struct AgentsList: View {
 
     private func openWorktree(_ worktree: RepoTree.Worktree) {
         if let first = WorkspaceNavigation.firstAgent(rendered: worktree.sessions, workspace: worktree.workspace,
-                                                      inventory: model.allSessions, catalog: workspaceCatalog.workspaces,
+                                                      inventory: model.sessionsNow, catalog: workspaceCatalog.workspaces,
                                                       ordered: { ordered($0) }) { openFromList(first) }
         else if let workspace = worktree.workspace { selectEmptyWorktree(workspace) }
     }
 
     private func openWorktree(_ workspace: HostWorkspace) {
-        if let first = WorkspaceNavigation.firstAgent(rendered: [], workspace: workspace, inventory: model.allSessions,
+        if let first = WorkspaceNavigation.firstAgent(rendered: [], workspace: workspace, inventory: model.sessionsNow,
                                                       catalog: workspaceCatalog.workspaces, ordered: { ordered($0) }) { openFromList(first) }
         else { selectEmptyWorktree(workspace) }
     }
@@ -1707,7 +1707,7 @@ private struct AgentsList: View {
         return HStack(spacing: Theme.Space.xs) {
             Button { toggleFold(r.id) } label: {
                 HStack(spacing: Theme.Space.s) {
-                    Image(systemName: Theme.Icon.folder).foregroundStyle(Theme.WorkspaceSidebar.muted)
+                    ThemedIcon(Theme.Icon.folder).foregroundStyle(Theme.WorkspaceSidebar.muted)
                     Text(r.name).font(Theme.WorkspaceSidebar.titleUnread).foregroundStyle(Theme.WorkspaceSidebar.foreground).lineLimit(1)
                     Spacer(minLength: 0)
                     FoldChevron(folded: isFolded)
@@ -1843,7 +1843,7 @@ private struct AgentsList: View {
 
     @ViewBuilder private func worktreeMenu(_ worktree: RepoTree.Worktree, agent: Session? = nil) -> some View {
         if let target = worktree.workspace {
-            let direct = ordered(WorkspaceNavigation.directSessions(target, inventory: model.allSessions, catalog: workspaceCatalog.workspaces))
+            let direct = ordered(WorkspaceNavigation.directSessions(target, inventory: model.sessionsNow, catalog: workspaceCatalog.workspaces))
             WorktreeSidebarMenu(workspace: target, parent: workspaceCatalog.workspaces.first { $0.key == target.parentKey },
                                 sessions: direct, agent: agent, menus: direct.map(workspaceAgentMenu),
                                 open: { target in

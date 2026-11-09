@@ -102,9 +102,9 @@ func (n *Node) larkCheck(ctx context.Context, session, cwd, command string, ix p
 	}
 	// A health conversation's writes are confirmed each time: no rule's allow, no "Always allow for this session" (docs/assistant/health.md "Outgoing").
 	// Its space is the one its process was started in (assistantLarkEnv notes it, and the gate proxy goes by the same),
-	// not the directory the hook says: that is where the model's last `cd` left it. A hook directory that is a health
-	// space's counts too, so a mix-up can only ask more.
-	health := n.gates().healthSession(session) || identity.SpaceOf(cwd) == identity.SpaceHealth
+	// not the directory the hook says: that is where the model's last `cd` left it. A hook directory in a health space
+	// (the space's own or one inside it, identity.InHealthSpace) counts too, so a mix-up can only ask more.
+	health := n.gates().healthSession(session) || identity.InHealthSpace(cwd)
 	// ask: the calls to confirm on the phone; covered: those "Always allow for this session" covers. Once let through
 	// here, the gate proxy lets each go once (gateproxy.go).
 	var ask, covered []larkCall

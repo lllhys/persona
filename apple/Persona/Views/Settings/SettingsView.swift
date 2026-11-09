@@ -237,6 +237,23 @@ struct SettingsView: View {
                                     .textSelection(.enabled)
                             }
                         }
+                        // The last time New Chat did not bring the new-conversation page, as labels (#2189): only once there was one.
+                        if let check = UserDefaults.standard.string(forKey: NewChatCheck.defaultsKey) {
+                            if AppStyle.current.usesBeautifulUI {
+                                BUIListRow(String(localized: "Last New Chat Check"), detail: check, detailLines: 4)
+                                    .accessibilityIdentifier("settings-new-chat-check")
+                            } else {
+                                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                                    Text("Last New Chat Check")
+                                    Text(check)
+                                        .font(Theme.Font.code)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("settings-new-chat-check")
+                            }
+                        }
                     }
                     .bareListRow()
                 } header: {

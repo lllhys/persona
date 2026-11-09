@@ -3,8 +3,8 @@ import Observation
 
 /// A new conversation's first message that did not start one (#1368): it stays on the new-conversation page, drawn as
 /// the chat draws a message that did not go (`PendingBubble`, failed), with the reason, Resend and Delete, and the
-/// composer stays empty. Kept across launches, like the outbox (`StateCache`); one at a time, since the page takes no
-/// other first message while it is there.
+/// composer stays empty. Kept across launches, like the outbox (`StateCache`); one per page it was sent from (Health's,
+/// each manager's Persona page), since a page takes no other first message while its own is there.
 @MainActor @Observable
 final class FailedStart {
     static let shared = FailedStart()
@@ -22,19 +22,26 @@ final class FailedStart {
         /// Why, for the line over the composer; nil when the readiness card says it (`CodedFailure`).
         var reason: String?
         var at: Date
+        /// The manager whose Persona page it was sent from (`AppModel.assistantManagerID`), nil for the default's: that
+        /// page alone shows it and sends it again.
+        var manager: String? = nil
+
+        func samePage(_ o: Message) -> Bool { space == o.space && (space != nil || manager == o.manager) }
     }
 
     private static let name = "assistant-failed-start"
-    private(set) var message: Message?
+    /// Oldest first.
+    private(set) var messages: [Message]
 
-    private init() { message = StateCache.load(Self.name, as: [Message].self)?.first }
+    private init() { messages = StateCache.load(Self.name, as: [Message].self) ?? [] }
 
-    func fail(_ m: Message) { set(m) }
-    func clear() { if message != nil { set(nil) } }
+    /// Holds `m` in place of the one from its page.
+    func fail(_ m: Message) { set(messages.filter { !$0.samePage(m) } + [m]) }
+    func clear(where gone: (Message) -> Bool) { if messages.contains(where: gone) { set(messages.filter { !gone($0) }) } }
 
-    private func set(_ m: Message?) {
-        message = m
-        StateCache.save(Self.name, m.map { [$0] } ?? []) // saved, not removed: two writes stay in order of arrival
+    private func set(_ ms: [Message]) {
+        messages = ms
+        StateCache.save(Self.name, ms) // saved, not removed: two writes stay in order of arrival
     }
 
     /// Whether `error` leaves the start possibly done: the hub may have started it though the app was told otherwise.

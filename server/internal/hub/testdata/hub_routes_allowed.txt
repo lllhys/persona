@@ -184,3 +184,7 @@ PUT /api/v1/machines/{mid}/codex-settings
 PUT /api/v1/machines/{mid}/omp-settings
 PUT /api/v1/mutes
 PUT /api/v1/pins
+
+# Phone write delivery receipts (full credentials only).
+GET /api/v1/phone/write-queue
+POST /api/v1/phone/write-queue/{id}/cancel

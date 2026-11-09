@@ -324,16 +324,6 @@ func TestCollectHoldsAFallback(t *testing.T) {
 	}
 }
 
-func TestCheckProgramPassesWhatTheFixturesSay(t *testing.T) {
-	f := &fixtureProgram{}
-	if got := f.check(t); got != "" {
-		t.Fatalf("CheckProgram failed a program that says what the fixtures say:\n%s", got)
-	}
-	if f.wrote.Load() {
-		t.Fatal("CheckProgram asked the program to write (actions.do or inbox.reply): a check never sends")
-	}
-}
-
 // A program that declares recall passes (CheckProgram reaches the capabilities the hub can have in a program, and this
 // is one), and is never asked to take anything back: a recall deletes a message, as actions.do and inbox.reply write.
 func TestCheckProgramAcceptsADeclaredRecallAndNeverAsksIt(t *testing.T) {

@@ -53,7 +53,7 @@ struct WorkspacePicker: View {
                     HStack(spacing: Theme.Space.m) {
                         WorkspaceChoiceRow(workspace: workspace, catalog: workspaces)
                         Spacer(minLength: Theme.Space.xs)
-                        if selectedID == workspace.sourceID { Image(systemName: Theme.Icon.success).foregroundStyle(Theme.accent) }
+                        if selectedID == workspace.sourceID { ThemedIcon(Theme.Icon.success).foregroundStyle(Theme.accent) }
                     }
                 }
                 .disabled(!workspace.available)
@@ -62,6 +62,6 @@ struct WorkspacePicker: View {
         }
         .themedGroupedPage()
         .navigationTitle(String(localized: "workspace.choose", defaultValue: "Choose Worktree"))
-        .searchable(text: $query)
+        .pageSearchable(text: $query, prompt: String(localized: "Search"))
     }
 }

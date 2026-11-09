@@ -1,6 +1,72 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%@ stopped, not done yet" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ stopped, not done yet"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@は止まりました（未完了）"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 停下了，还没完成"
+          }
+        }
+      }
+    },
+    "Interrupted by a model service error" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrupted by a model service error"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルサービスのエラーで中断しました"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型服务出错，中断了"
+          }
+        }
+      }
+    },
+    "Interrupted by a model service error: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrupted by a model service error: %1$@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルサービスのエラーで中断しました：%1$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型服务出错，中断了：%1$@"
+          }
+        }
+      }
+    },
     "Avatar [Agent Row Style]": {
       "extractionState": "manual",
       "localizations": {
@@ -59371,6 +59437,28 @@
       },
       "extractionState" : "manual"
     },
+    "Last New Chat Check" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last New Chat Check"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前回の新しいチャットのチェック"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近一次新对话检查"
+          }
+        }
+      }
+    },
     "Last Received" : {
       "localizations" : {
         "en" : {
@@ -112365,6 +112453,29 @@
         }
       }
     },
+    "The message couldn't be sent to the agent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The message couldn't be sent to the agent"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージをエージェントに送信できませんでした"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息没能发给这个 Agent"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "The message source can't send encrypted messages right now" : {
       "localizations" : {
         "en" : {
@@ -139881,6 +139992,75 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@。%2$lld件は変更できませんでした：%3$@"
+          }
+        }
+      }
+    },
+    "%@, offline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, offline"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@，离线"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@、オフライン"
+          }
+        }
+      }
+    },
+    "%@ is offline. Messages can be sent once it's back." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is offline. Messages can be sent once it's back."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 不在线，回来后才能发消息。"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ はオフラインです。戻ったらメッセージを送れます。"
+          }
+        }
+      }
+    },
+    "%@ · last synced %@. Messages can be sent once it's back." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · last synced %2$@. Messages can be sent once it's back."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · 最后同步于 %2$@。回来后才能发消息。"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · 最終同期 %2$@。戻ったらメッセージを送れます。"
           }
         }
       }

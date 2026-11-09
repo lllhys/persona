@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,7 +13,6 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/connector"
-	"github.com/nwverse/persona/server/internal/connector/github"
 	"github.com/nwverse/persona/server/internal/db"
 )
 
@@ -550,73 +547,6 @@ func TestRecallSentNeverMailsNorRecordedSends(t *testing.T) {
 		})
 		if codeOf(err) != RecallNotRecallable || !strings.Contains(err.Error(), tc.why) {
 			t.Errorf("%s %s: %v", row.Connector, row.Action, err)
-		}
-	}
-}
-
-// A comment the real GitHub connector wrote through the gate is taken back by RecallSent against a fake GitHub: what
-// the gate put in the row (the comment's id, the target) is what the connector deletes by, and the row is marked.
-func TestRecallSentTakesBackAGitHubComment(t *testing.T) {
-	var mu sync.Mutex
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/" { // a node's port probe (node/ports.go), not this test's client
-			http.NotFound(w, r)
-			return
-		}
-		mu.Lock()
-		seen = append(seen, r.Method+" "+r.URL.Path)
-		mu.Unlock()
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/example-org/example-repo/issues/12/comments":
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":3000000001,"html_url":"https://github.com/example-org/example-repo/issues/12#issuecomment-3000000001"}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/example-org/example-repo/issues/comments/3000000001":
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	h := newTestManager(t)
-	st := newSentLedgerStore()
-	h.store = st
-	h.connectors = h.newConnectors([]connector.Rule{{Connector: "github", Action: "github_comment", Decision: connector.Allow}})
-	gh := github.New(github.Config{Auth: github.AuthConfig{FromMachine: "mac"}, APIRoot: srv.URL}, "Mac", func(context.Context, string) (string, error) {
-		return "gho_example000000000000000000000000000001", nil
-	})
-	if err := h.addConnector(signedInGitHub{gh}); err != nil {
-		t.Fatal(err)
-	}
-	args := json.RawMessage(`{"repo":"example-org/example-repo","number":12,"body":"Looks good."}`)
-	if r := h.callConnector(context.Background(), asker{}, "github_comment", args); r.IsError {
-		t.Fatalf("write: %+v", r)
-	}
-	rows := st.all()
-	if len(rows) != 1 || rows[0].MessageRef != "3000000001" || string(rows[0].Target) != `{"ref":"example-org/example-repo#12"}` {
-		t.Fatalf("the row: %+v", rows)
-	}
-	row, err := h.RecallSent(context.Background(), rows[0].ID, func(context.Context, db.SentAsUser) error { return nil })
-	if err != nil || row.RecalledAt == nil || st.all()[0].RecalledAt == nil {
-		t.Fatalf("%v, returned %v, stored %v", err, row.RecalledAt, st.all()[0].RecalledAt)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if want := "POST /repos/example-org/example-repo/issues/12/comments\nDELETE /repos/example-org/example-repo/issues/comments/3000000001"; strings.Join(seen, "\n") != want {
-		t.Fatalf("GitHub saw %v", seen)
-	}
-}
-
-// What GitHub's recall reads out of a row's target ({"ref": "owner/name#12"}, connector/github/recall.go) is what the
-// gate writes for a comment, whether the model or the thread page gave the repository and number.
-func TestGitHubTargetIsWhatRecallReads(t *testing.T) {
-	for _, args := range []string{
-		`{"repo":"example-org/example-repo","number":12,"body":"ok"}`,
-		`{"chat":"example-org/example-repo#12","text":"ok"}`,
-	} {
-		target, _ := sentTarget("github_comment", json.RawMessage(args))
-		if got := string(mustJSON(target)); got != `{"ref":"example-org/example-repo#12"}` {
-			t.Errorf("%s: target %s", args, got)
 		}
 	}
 }

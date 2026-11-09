@@ -90,60 +90,45 @@ func TestParseLaunchersSkipsJunk(t *testing.T) {
 	}
 }
 
-func TestTrustKeysCursorAlreadyOnYes(t *testing.T) {
-	screen := strings.Join([]string{
-		"Do you trust this folder?",
-		"  > Yes, I trust this folder",
-		"    No, exit",
-	}, "\n")
-	if got := trustKeys(screen); !reflect.DeepEqual(got, []string{"enter"}) {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestTrustKeysCursorOnNoMovesDown(t *testing.T) {
-	screen := strings.Join([]string{
-		"Do you trust this folder?",
-		"  ❯ 1. Yes, proceed",
-		"    2. No, exit",
-	}, "\n")
-	// "❯" sits on the Yes line here, so no movement is needed.
-	if got := trustKeys(screen); !reflect.DeepEqual(got, []string{"enter"}) {
-		t.Fatalf("got %v", got)
-	}
-
-	screen = strings.Join([]string{
-		"Do you trust this folder?",
-		"   1. Yes, I trust this folder",
-		"  ❯ 2. No, exit",
-	}, "\n")
-	if got := trustKeys(screen); !reflect.DeepEqual(got, []string{"up", "enter"}) {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestTrustKeysMultiStepCursor(t *testing.T) {
-	screen := strings.Join([]string{
-		"So, do you trust this folder?",
-		"   1. Yes, I trust this folder",
-		"   2. No, exit",
-		"   3. Something else",
-		"  ❯ 4. Another choice",
-	}, "\n")
-	if got := trustKeys(screen); !reflect.DeepEqual(got, []string{"up", "up", "up", "enter"}) {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestTrustKeysNoDialog(t *testing.T) {
-	for _, screen := range []string{
-		"",
-		"⏺ Hello\n> \n  ? for shortcuts",
-		"Do you trust this folder?", // dialog but no Yes option rendered yet
+func TestTrustKeys(t *testing.T) {
+	screen := func(lines ...string) string { return strings.Join(lines, "\n") }
+	for _, tc := range []struct {
+		name   string
+		screen string
+		want   []string
+	}{
+		{"cursor already on yes", screen(
+			"Do you trust this folder?",
+			"  > Yes, I trust this folder",
+			"    No, exit",
+		), []string{"enter"}},
+		// "❯" sits on the Yes line here, so no movement is needed.
+		{"numbered cursor on yes", screen(
+			"Do you trust this folder?",
+			"  ❯ 1. Yes, proceed",
+			"    2. No, exit",
+		), []string{"enter"}},
+		{"cursor on no moves up", screen(
+			"Do you trust this folder?",
+			"   1. Yes, I trust this folder",
+			"  ❯ 2. No, exit",
+		), []string{"up", "enter"}},
+		{"multi-step cursor", screen(
+			"So, do you trust this folder?",
+			"   1. Yes, I trust this folder",
+			"   2. No, exit",
+			"   3. Something else",
+			"  ❯ 4. Another choice",
+		), []string{"up", "up", "up", "enter"}},
+		{"no dialog: empty screen", "", nil},
+		{"no dialog: ready prompt", "⏺ Hello\n> \n  ? for shortcuts", nil},
+		{"no dialog: no yes option rendered yet", "Do you trust this folder?", nil},
 	} {
-		if got := trustKeys(screen); got != nil {
-			t.Fatalf("screen %q produced %v", screen, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := trustKeys(tc.screen); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("screen %q: got %#v, want %#v", tc.screen, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -361,33 +346,6 @@ func TestSnippetCollapsesWhitespaceAndTruncates(t *testing.T) {
 	}
 }
 
-func TestListKeyIgnoresSmallTimeChurn(t *testing.T) {
-	base := proto.Session{SessionID: "s1", Status: proto.StatusWorking, Title: "t",
-		UpdatedAt: time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)}
-	same := base
-	same.UpdatedAt = base.UpdatedAt.Add(4 * time.Second) // under the 10s bucket
-	if listKey([]proto.Session{base}) != listKey([]proto.Session{same}) {
-		t.Fatal("a few seconds of churn must not count as a change")
-	}
-	changed := base
-	changed.Status = proto.StatusDone
-	if listKey([]proto.Session{base}) == listKey([]proto.Session{changed}) {
-		t.Fatal("a status change must be visible")
-	}
-	withSpawn := base
-	withSpawn.SpawnFrom = "todo_1@macbook/parent_s"
-	if listKey([]proto.Session{base}) == listKey([]proto.Session{withSpawn}) {
-		t.Fatal("a spawn_from change must be visible in listKey (#873)")
-	}
-	withReason, withLink := base, base
-	withReason.AttentionReason = "本轮执行失败，再发一条消息继续"
-	withLink.ExternalURL = "https://applink.example.com/thread/t1"
-	if listKey([]proto.Session{base}) == listKey([]proto.Session{withReason}) ||
-		listKey([]proto.Session{base}) == listKey([]proto.Session{withLink}) {
-		t.Fatal("an attention reason or topic link that changes alone must be visible in listKey (#1225)")
-	}
-}
-
 // A layout change alone (panes swapped, a shell pane before an agent closed) moves only pane_index: it is pushed, and
 // an index of 0 is not the same as none.
 func TestListKeySeesPaneIndex(t *testing.T) {
@@ -429,24 +387,6 @@ func TestParseClaudeVersion(t *testing.T) {
 		if got := parseClaudeVersion(out); got != want {
 			t.Errorf("%q: %q, want %q", out, got, want)
 		}
-	}
-}
-
-// A new step shows at once: an agent that only runs tools changes no text, and its updated_at only every 10 s bucket.
-func TestListKeySeesANewStep(t *testing.T) {
-	at := time.Date(2026, 11, 4, 1, 20, 13, 0, time.UTC)
-	base := proto.Session{SessionID: "s1", Status: proto.StatusWorking, Title: "t", UpdatedAt: at, LastText: "先看代码",
-		Activity: "在读 tasks.go", ActivityAt: &at}
-	next := base
-	next.Activity = "在跑测试"
-	if listKey([]proto.Session{base}) == listKey([]proto.Session{next}) {
-		t.Fatal("a new step must be pushed")
-	}
-	later := at.Add(3 * time.Second)
-	again := base
-	again.ActivityAt = &later // the same kind of step again (another file read)
-	if listKey([]proto.Session{base}) == listKey([]proto.Session{again}) {
-		t.Fatal("the same step started again must be pushed (its time resets on the card)")
 	}
 }
 

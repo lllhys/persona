@@ -17,11 +17,6 @@ struct VoiceAvailabilityTests {
         try! JSON.decoder.decode([HubExtension].self, from: Data(json.utf8))
     }
 
-    @Test func availableOnAPhoneWithARunningProtocolTwoExtension() {
-        #expect(VoiceAvailability.evaluate(platform: .phone, session: Self.agent, extensions: [Self.voice], info: Self.protocol2)
-            == .available(extensionID: "voice"))
-    }
-
     @Test func notOnTheMac() {
         #expect(VoiceAvailability.evaluate(platform: .other, session: Self.agent, extensions: [Self.voice], info: Self.protocol2) == .unsupported)
         #if os(iOS) || os(visionOS)

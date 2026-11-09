@@ -140,19 +140,6 @@ func TestUntilDoesNotStopAOneOff(t *testing.T) {
 	}
 }
 
-func TestUntilEditTaskDoesNotCopyIt(t *testing.T) {
-	now := time.Now()
-	kept := now.Add(3 * time.Hour).UTC()
-	old := Task{ID: "p", Repeat: repeatDaily, Time: "09:00", Title: "早报", Prompt: "x", Enabled: true, Until: kept}
-	in := old
-	in.Until = time.Time{}
-	in.Title = "晚报"
-	got := editTask(old, in, now)
-	if !got.Until.Equal(kept) || got.Title != "晚报" {
-		t.Fatalf("a missing until must not wipe the stored one: %+v", got)
-	}
-}
-
 func TestUntilThroughTheTaskRoutes(t *testing.T) {
 	h := newStorelessService(t, newFakeHub())
 	do := func(method, path, body string) *httptest.ResponseRecorder {

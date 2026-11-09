@@ -52,11 +52,29 @@ func TestExplainARejectedPairingLink(t *testing.T) {
 	}
 }
 
-func TestExplainSaysRejectedWhenOneCandidateAnswered(t *testing.T) {
-	// One address refused the connection, the other was the hub saying no: the token is what to fix.
-	err := errors.Join(refused("https://192.0.2.10:18662"), errors.New("https://hub.example.com:18662: hub 拒绝了：invalid token"))
-	if got := explain(err); !strings.HasPrefix(got, "hub 不认这条配对链接") {
-		t.Fatalf("explain:\n%s", got)
+func TestExplainPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		prefix string
+	}{
+		// One address refused the connection, the other was the hub saying no: the token is what to fix.
+		{"rejected when one candidate answered",
+			errors.Join(refused("https://192.0.2.10:18662"), errors.New("https://hub.example.com:18662: hub 拒绝了：invalid token")),
+			"hub 不认这条配对链接"},
+		{"a name that does not resolve",
+			fmt.Errorf("配对失败：%w", &url.Error{Op: "Post", URL: "https://hub.example.invalid:443/api/v1/auth/tokens",
+				Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "hub.example.invalid", IsNotFound: true}}}),
+			"连不上 hub（hub.example.invalid:443）："},
+		{"a hub that times out",
+			fmt.Errorf("配对失败：%w", &url.Error{Op: "Post", URL: "https://192.0.2.10:18662/api/v1/auth/tokens", Err: context.DeadlineExceeded}),
+			"连不上 hub（192.0.2.10:18662）："},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := explain(tc.err); !strings.HasPrefix(got, tc.prefix) {
+				t.Fatalf("explain:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -107,14 +125,6 @@ func refused(base string) error {
 	return &url.Error{Op: "Post", URL: base + "/api/v1/auth/tokens", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}
 }
 
-func TestExplainANameThatDoesNotResolve(t *testing.T) {
-	err := fmt.Errorf("配对失败：%w", &url.Error{Op: "Post", URL: "https://hub.example.invalid:443/api/v1/auth/tokens",
-		Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "hub.example.invalid", IsNotFound: true}}})
-	if got := explain(err); !strings.HasPrefix(got, "连不上 hub（hub.example.invalid:443）：") {
-		t.Fatalf("explain:\n%s", got)
-	}
-}
-
 func TestNodeHint(t *testing.T) {
 	if got := nodeHint("dial unix /x/node.sock: connect: connection refused"); !strings.Contains(got, "persona-link node status") {
 		t.Fatalf("hint %q", got)
@@ -122,13 +132,6 @@ func TestNodeHint(t *testing.T) {
 	// The link's own words already say how to run the node.
 	if got := nodeHint("本机的" + link.NodeDownMarker + "（/x/node.sock 连不上）：persona-link node install（systemd 用户服务）"); got != "" {
 		t.Fatalf("hint %q", got)
-	}
-}
-
-func TestExplainAHubThatTimesOut(t *testing.T) {
-	err := fmt.Errorf("配对失败：%w", &url.Error{Op: "Post", URL: "https://192.0.2.10:18662/api/v1/auth/tokens", Err: context.DeadlineExceeded})
-	if got := explain(err); !strings.HasPrefix(got, "连不上 hub（192.0.2.10:18662）：") {
-		t.Fatalf("explain:\n%s", got)
 	}
 }
 

@@ -16,7 +16,12 @@ import (
 
 func fixture(t *testing.T) (*Controller, Plan) {
 	t.Helper()
-	home := t.TempDir()
+	// Resolved: the controller rejects a path that goes through a link (canonical), and a Mac's temp dir is under
+	// one (/var -> /private/var).
+	home, e := filepath.EvalSymlinks(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
 	dir := filepath.Join(home, "manager")
 	bin := filepath.Join(dir, "bin", "personad")
 	plist := filepath.Join(home, "Library", "LaunchAgents", "com.persona.manager.m-test.plist")

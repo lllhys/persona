@@ -108,8 +108,10 @@ func TestAuthorityWireReadsPersistedIdentityWithoutMigrationOrWrites(t *testing.
 	}
 	before := tree(t, c.Home)
 	result, readErr := c.ReadAuthority(context.Background(), p)
+	// A read that never connected must fail the test, not leave the fake in Accept and the package at go test's timeout.
+	_ = listener.Close()
 	if err := <-finished; err != nil {
-		t.Fatal(err)
+		t.Fatalf("fake Postgres: %v (ReadAuthority: %v)", err, readErr)
 	}
 	if readErr != nil || result.Main != "persisted-main" || result.MachineID != "original-machine" || result.ManagerID != p.ManagerID || len(result.Revision) != 64 {
 		t.Fatalf("persisted authority: %+v %v", result, readErr)

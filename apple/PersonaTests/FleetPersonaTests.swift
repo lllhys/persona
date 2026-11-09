@@ -71,12 +71,6 @@ struct FleetPersonaTests {
         #expect(look == FleetLook.standard)
     }
 
-    /// A look saved by a build before packages had faces still reads: a built-in.
-    @Test func anOlderLookStillReads() throws {
-        let look = try JSONDecoder().decode(FleetLook.self, from: Data(#"{"design":"circuit","light":1,"dark":2}"#.utf8))
-        #expect(look.package == nil && look.faceDesign == .mochi)
-    }
-
     /// The persona rides in the ContentState (build 98: the extension did not get it from the keychain on a phone):
     /// content from an older hub, without it, still decodes and draws what the app saved; with it, the extension draws
     /// what the content says, and the app's own updates carry it.

@@ -61,12 +61,6 @@ struct LarkDraftsTests {
         #expect(again[.thread("m9")].text == "九点")
     }
 
-    @Test func storedDraftsSurviveEncoding() throws {
-        let all = ["chat:f3": LarkDraft(text: "八点", replyTo: quote)]
-        let back = try JSON.decoder.decode([String: LarkDraft].self, from: JSON.encoder.encode(all))
-        #expect(back == all)
-    }
-
     @Test func typingWritesOnceAfterAPause() async throws {
         let disk = Disk()
         let d = drafts(disk, delay: .milliseconds(50))

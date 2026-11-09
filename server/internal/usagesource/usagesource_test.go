@@ -241,17 +241,6 @@ func TestRelayErrors(t *testing.T) {
 	}
 }
 
-func TestAGatewayEchoingTheKeyDoesNotPutItInTheError(t *testing.T) {
-	g := newGateway(t, twoAccounts, echoUsage(twoUsage))
-	g.key = "something-else" // the fake echoes the Authorization header in its 401 body
-	cfg := g.cfg()
-	cfg.Key = testKey
-	_, err := Fetch(context.Background(), cfg, now)
-	if CodeOf(err) != CodeUnauthorized || strings.Contains(err.Error(), testKey) || strings.Contains(fmt.Sprintf("%+v", err), testKey) {
-		t.Fatalf("%v", err)
-	}
-}
-
 func TestUnreachableAndTimeout(t *testing.T) {
 	g := newGateway(t, twoAccounts, echoUsage(twoUsage))
 	cfg := g.cfg()

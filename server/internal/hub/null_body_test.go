@@ -5,54 +5,34 @@ import (
 	"testing"
 )
 
-func TestNullBodyReturns400(t *testing.T) {
-	h := newTestHub(t)
-	h.store = newSentStore()
-	pipeNode(t, h, "box", func(context.Context) error { return nil })
-	mux := h.routes()
-	tok := h.cfg.Token
-
+// A literal JSON null body is refused with 400; any JSON object, empty or not, gets through.
+func TestProxyBodyRefusesOnlyANullBody(t *testing.T) {
 	cases := []struct {
-		name   string
-		method string
-		path   string
+		name    string
+		path    string
+		body    string
+		want400 bool
 	}{
-		{"proxyBody", "POST", "/api/v1/sessions/box/s1/attach"},
-		{"sendMessage", "POST", sendPath},
-		{"renameSession", "POST", "/api/v1/sessions/box/s1/rename"},
+		{"null/proxyBody", "/api/v1/sessions/box/s1/attach", "null", true},
+		{"null/sendMessage", sendPath, "null", true},
+		{"null/renameSession", "/api/v1/sessions/box/s1/rename", "null", true},
+		{"emptyObject", "/api/v1/sessions/box/s1/attach", "{}", false},
+		{"normalObject", "/api/v1/sessions/box/s1/attach", `{"foo":"bar"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			code, out := call(t, mux, tc.method, tc.path, tok, "null")
-			if code != 400 {
-				t.Fatalf("null body: got %d, want 400; body: %v", code, out)
+			h := newTestHub(t)
+			h.store = newSentStore()
+			pipeNode(t, h, "box", func(context.Context) error { return nil })
+			mux := h.routes()
+
+			code, out := call(t, mux, "POST", tc.path, h.cfg.Token, tc.body)
+			if tc.want400 && code != 400 {
+				t.Fatalf("body %s: got %d, want 400; body: %v", tc.body, code, out)
+			}
+			if !tc.want400 && code == 400 {
+				t.Fatalf("body %s should not be rejected, got %d", tc.body, code)
 			}
 		})
-	}
-}
-
-func TestEmptyObjectBodySucceeds(t *testing.T) {
-	h := newTestHub(t)
-	h.store = newSentStore()
-	pipeNode(t, h, "box", func(context.Context) error { return nil })
-	mux := h.routes()
-	tok := h.cfg.Token
-
-	code, _ := call(t, mux, "POST", "/api/v1/sessions/box/s1/attach", tok, "{}")
-	if code == 400 {
-		t.Fatalf("empty object should not be rejected, got %d", code)
-	}
-}
-
-func TestNormalObjectBodySucceeds(t *testing.T) {
-	h := newTestHub(t)
-	h.store = newSentStore()
-	pipeNode(t, h, "box", func(context.Context) error { return nil })
-	mux := h.routes()
-	tok := h.cfg.Token
-
-	code, _ := call(t, mux, "POST", "/api/v1/sessions/box/s1/attach", tok, `{"foo":"bar"}`)
-	if code == 400 {
-		t.Fatalf("normal object should not be rejected, got %d", code)
 	}
 }

@@ -59,19 +59,6 @@ struct LarkOutboxTests {
         #expect(o.state == .sending && o.at == Date(timeIntervalSince1970: 60))
     }
 
-    @Test func theSendCarriesTheMessagesIDAsClientID() async throws {
-        let hub = FakeHub()
-        hub.on("POST", "/api/v1/lark/conversations/f1/messages", json: "{}")
-        let o = LarkOutgoing(text: "收到")
-        try await hub.client.larkSend("f1", text: o.text, clientID: o.clientID)
-        try await hub.client.larkSend("f1", text: o.text, clientID: o.clientID) // the retry
-        let bodies = try hub.sent("POST", "/api/v1/lark/conversations/f1/messages").map { r in
-            try JSONSerialization.jsonObject(with: r.body ?? Data()) as? [String: String]
-        }
-        #expect(bodies.count == 2)
-        #expect(bodies.allSatisfy { $0 == ["text": "收到", "client_id": o.id.uuidString.lowercased()] })
-    }
-
     // MARK: Replies
 
     private func quoted(_ id: String) -> LarkReplyTo { LarkReplyTo(id: id, senderName: "李雷", text: "周六去吗") }

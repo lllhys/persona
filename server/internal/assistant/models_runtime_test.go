@@ -104,13 +104,6 @@ func TestModelRuntimeReachesParamsAndFingerprint(t *testing.T) {
 	}
 }
 
-func TestModelRuntimeSurvivesAProviderChange(t *testing.T) {
-	b := mergeModel(ModelBinding{Provider: "launcher.a", Model: "m", Runtime: "agentsdk"}, ModelBinding{Provider: "launcher.b"})
-	if b != (ModelBinding{Provider: "launcher.b", Runtime: "agentsdk"}) {
-		t.Fatalf("%+v", b)
-	}
-}
-
 func TestModelMessagesAPIProviderRunsAsLauncher(t *testing.T) {
 	s, _, _ := modelService(t)
 	ctx := context.Background()

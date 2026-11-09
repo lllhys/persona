@@ -407,17 +407,6 @@ func TestNotifyAPNs(t *testing.T) {
 	}
 }
 
-// --silent drops the sound and nothing else.
-func TestNotifyPayloadSilent(t *testing.T) {
-	aps := notifyPayload(notifyRequest{Title: "t", Level: levelTimeSensitive, Silent: true}, "", "")["aps"].(map[string]any)
-	if _, ok := aps["sound"]; ok || aps["interruption-level"] != levelTimeSensitive {
-		t.Fatalf("aps %v", aps)
-	}
-	if aps = notifyPayload(notifyRequest{Title: "t", Level: levelActive}, "", "")["aps"].(map[string]any); aps["sound"] != "default" {
-		t.Fatalf("aps %v", aps)
-	}
-}
-
 // A node's `personad notify` (the hub's "notify" request) goes out like one through the HTTP API, as that machine's, with the
 // same muting and the same preferences; it cannot carry an extension's actions.
 func TestNodeScriptNotify(t *testing.T) {

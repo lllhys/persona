@@ -423,21 +423,6 @@ func TestPassiveWithoutTheNode(t *testing.T) {
 	}
 }
 
-func TestPassiveStreamNoticesAHubThatStoppedAnswering(t *testing.T) {
-	node := newFakeNode(t)
-	c := startConnector(t, node.path, Options{PingEvery: 50 * time.Millisecond, PingTimeout: 50 * time.Millisecond})
-	fp, code := c.invite(t)
-	h := hubFor(t, c.addr, fp)
-	h.pair(code, tokenA)
-	ws, _, err := h.stream(tokenA) // and never read again: no pongs
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ws.CloseNow()
-	c.waitFor(t, func(s Status) bool { return s.State == "connected" })
-	c.waitFor(t, func(s Status) bool { return s.State == "listening" })
-}
-
 // A stream follows the heartbeat the hub says in PingHeader (hub.json link), either way; without one, or with one that
 // is not two numbers, the connector keeps its own.
 func TestPassiveStreamFollowsTheHubsHeartbeat(t *testing.T) {

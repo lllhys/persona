@@ -47,62 +47,80 @@ func keptAs(t *testing.T, what string, r *Registry, store *memStore, at time.Tim
 	}
 }
 
-func TestInstalledAtIsKeptByAnUpgrade(t *testing.T) {
-	ctx := context.Background()
-	r, store, _, at := installedOnAMovingClock(t)
-	pkg2 := t.TempDir()
-	writePackage(t, pkg2, func(m map[string]any) { m["version"] = "1.3.0" })
-	pv, err := r.Preview(ctx, pkg2, "example-notes")
-	if err != nil {
-		t.Fatal(err)
+func TestInstalledAtIsKeptByChanges(t *testing.T) {
+	upgrade := func(t *testing.T, r *Registry) {
+		t.Helper()
+		ctx := context.Background()
+		pkg2 := t.TempDir()
+		writePackage(t, pkg2, func(m map[string]any) { m["version"] = "1.3.0" })
+		pv, err := r.Preview(ctx, pkg2, "example-notes")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Upgrade(ctx, "example-notes", pv.ID, "", "cli"); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := r.Upgrade(ctx, "example-notes", pv.ID, "", "cli"); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		// step applies the change; it calls keptAs itself for any check it makes along the way.
+		step func(t *testing.T, r *Registry, store *memStore, at time.Time)
+		what string
+	}{
+		{
+			name: "upgrade",
+			step: func(t *testing.T, r *Registry, _ *memStore, _ time.Time) {
+				upgrade(t, r)
+				if r.Get("example-notes").Record.Version != "1.3.0" {
+					t.Fatal("not upgraded")
+				}
+			},
+			what: "after an upgrade",
+		},
+		{
+			name: "config change",
+			step: func(t *testing.T, r *Registry, _ *memStore, _ time.Time) {
+				if err := r.SetConfig(context.Background(), "example-notes", json.RawMessage(`{"folders": ["a"]}`), "device:x"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			what: "after a config change",
+		},
+		{
+			name: "disabling and enabling",
+			step: func(t *testing.T, r *Registry, store *memStore, at time.Time) {
+				ctx := context.Background()
+				if err := r.SetEnabled(ctx, "example-notes", false, "cli"); err != nil {
+					t.Fatal(err)
+				}
+				keptAs(t, "disabled", r, store, at)
+				if err := r.SetEnabled(ctx, "example-notes", true, "cli"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			what: "enabled again",
+		},
+		{
+			name: "rollback",
+			step: func(t *testing.T, r *Registry, _ *memStore, _ time.Time) {
+				upgrade(t, r)
+				if _, err := r.Rollback(context.Background(), "example-notes", "cli"); err != nil {
+					t.Fatal(err)
+				}
+				if r.Get("example-notes").Record.Version != "1.2.0" {
+					t.Fatal("not rolled back")
+				}
+			},
+			what: "after a rollback",
+		},
 	}
-	if r.Get("example-notes").Record.Version != "1.3.0" {
-		t.Fatal("not upgraded")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, store, _, at := installedOnAMovingClock(t)
+			tc.step(t, r, store, at)
+			keptAs(t, tc.what, r, store, at)
+		})
 	}
-	keptAs(t, "after an upgrade", r, store, at)
-}
-
-func TestInstalledAtIsKeptByAConfigChange(t *testing.T) {
-	ctx := context.Background()
-	r, store, _, at := installedOnAMovingClock(t)
-	if err := r.SetConfig(ctx, "example-notes", json.RawMessage(`{"folders": ["a"]}`), "device:x"); err != nil {
-		t.Fatal(err)
-	}
-	keptAs(t, "after a config change", r, store, at)
-}
-
-func TestInstalledAtIsKeptByDisablingAndEnabling(t *testing.T) {
-	ctx := context.Background()
-	r, store, _, at := installedOnAMovingClock(t)
-	if err := r.SetEnabled(ctx, "example-notes", false, "cli"); err != nil {
-		t.Fatal(err)
-	}
-	keptAs(t, "disabled", r, store, at)
-	if err := r.SetEnabled(ctx, "example-notes", true, "cli"); err != nil {
-		t.Fatal(err)
-	}
-	keptAs(t, "enabled again", r, store, at)
-}
-
-func TestInstalledAtIsKeptByARollback(t *testing.T) {
-	ctx := context.Background()
-	r, store, _, at := installedOnAMovingClock(t)
-	pkg2 := t.TempDir()
-	writePackage(t, pkg2, func(m map[string]any) { m["version"] = "1.3.0" })
-	pv, _ := r.Preview(ctx, pkg2, "example-notes")
-	if _, err := r.Upgrade(ctx, "example-notes", pv.ID, "", "cli"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Rollback(ctx, "example-notes", "cli"); err != nil {
-		t.Fatal(err)
-	}
-	if r.Get("example-notes").Record.Version != "1.2.0" {
-		t.Fatal("not rolled back")
-	}
-	keptAs(t, "after a rollback", r, store, at)
 }
 
 // A restart reads the row back: the registry loads what the store has, and changes made after that still keep it.

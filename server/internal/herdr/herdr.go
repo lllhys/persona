@@ -36,6 +36,8 @@ type Client struct {
 
 	seq   atomic.Int64
 	trips episode
+	// noServer backs off the CLI while it, too, finds no server (call).
+	noServer cliBackoff
 	// snapshotCut is separate from transport failures: successful smaller calls do not end a truncation streak.
 	snapshotCut atomic.Bool
 	now         func() time.Time // the clock note reads; nil: time.Now (tests set it)
@@ -147,12 +149,87 @@ var errNoSocket = errors.New("herdr socket unavailable")
 
 // call runs one API method and decodes its result into out. cli is the same call as herdr CLI arguments, used when
 // the socket is not reachable or does not know the method (an older herdr); nil means there is no CLI equivalent.
+//
+// With no socket, the CLI is run only while it may find a server the socket does not: once it says there is none
+// (server_not_running), calls without a socket get that answer again, without running herdr, for 1 s, then 2 s, …
+// up to 30 s (cliBackoff). A node polls herdr about twice a second, so a computer with herdr installed and no server
+// running used to start two herdr processes a second. A socket that answers, or a CLI that does, ends the backoff: a
+// server the CLI reaches and the socket does not is never backed off.
 func (c *Client) call(ctx context.Context, method string, params any, out any, cli ...string) error {
 	err := c.rpc(ctx, method, params, out)
-	if err == nil || len(cli) == 0 || !fallback(err) {
+	if err == nil {
+		c.noServer.reset()
+		return nil
+	}
+	if len(cli) == 0 || !fallback(err) {
 		return err
 	}
-	return c.run(ctx, out, cli...)
+	noSocket := errors.Is(err, errNoSocket)
+	if noSocket {
+		if last := c.noServer.skip(c.clock()); last != nil {
+			return last
+		}
+	}
+	err = c.run(ctx, out, cli...)
+	if err == nil {
+		c.noServer.reset()
+	} else if noSocket && serverNotRunning(err) {
+		c.noServer.failed(err, c.clock())
+	}
+	return err
+}
+
+// clock is the time call and note read: c.now when a test set it.
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// serverNotRunning: the CLI found no herdr server to talk to.
+func serverNotRunning(err error) bool {
+	var he *Error
+	return errors.As(err, &he) && he.Code == "server_not_running"
+}
+
+// cliBackoff is how long the CLI is not run again after it found no server: the gap doubles from cliBackoffFirst to
+// cliBackoffMax with each such answer, and err is that answer, returned meanwhile.
+type cliBackoff struct {
+	mu    sync.Mutex
+	until time.Time
+	gap   time.Duration
+	err   error
+}
+
+const (
+	cliBackoffFirst = time.Second
+	cliBackoffMax   = 30 * time.Second
+)
+
+// skip is the CLI's last answer while it is backed off at now, nil when it may run.
+func (b *cliBackoff) skip(now time.Time) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil && now.Before(b.until) {
+		return b.err
+	}
+	return nil
+}
+
+// failed records that the CLI found no server at now (err): it is not run again for a gap twice the last one.
+func (b *cliBackoff) failed(err error, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.gap = min(max(2*b.gap, cliBackoffFirst), cliBackoffMax)
+	b.until, b.err = now.Add(b.gap), err
+}
+
+// reset: herdr answered, so the next call without a socket tries the CLI again at once.
+func (b *cliBackoff) reset() {
+	b.mu.Lock()
+	b.until, b.gap, b.err = time.Time{}, 0, nil
+	b.mu.Unlock()
 }
 
 // fallback: errors the CLI might not have (no socket here, a method this herdr does not know).

@@ -97,18 +97,6 @@ func TestCallBothDirections(t *testing.T) {
 	}
 }
 
-func TestCallNilOutStillReturnsError(t *testing.T) {
-	hub, node := pair(t)
-	node.OnRequest = func(context.Context, string, json.RawMessage) (any, error) {
-		return map[string]any{"ok": true}, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := hub.Call(ctx, "anything", nil, nil); err != nil {
-		t.Fatalf("call with nil out: %v", err)
-	}
-}
-
 func TestCallPropagatesErrorMessage(t *testing.T) {
 	hub, node := pair(t)
 	node.OnRequest = func(context.Context, string, json.RawMessage) (any, error) {

@@ -266,47 +266,35 @@ func TestProviderDiscoveryRejectsUnsafeOrRepeatedPagination(t *testing.T) {
 	}
 }
 
-func TestChatProbeRejectsUnfinishedStreams(t *testing.T) {
-	for _, body := range []string{
-		`{"error":"not a stream"}`,
-		`data: {"error":{"message":"failed"}}` + "\n\n",
-		`data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n\n",
-		`data: [DONE]` + "\n\n",
-		`data: {"choices":[{"finish_reason":"stop"}]}` + "\n\n",
-		`data: {"choices":[{"delta":{"content":"  "}}]}` + "\n\ndata: [DONE]\n\n",
-		`data: {"choices":[{"index":1,"delta":{"content":"other"},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n",
-		`data: {"choices":[{"finish_reason":"content_filter"}]}` + "\n\n",
-		`data: {"choices":[{"delta":{"refusal":"No"}}]}` + "\n\n",
-		`data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"stop"}]}` + "\n\ndata: {\"error\":{\"message\":\"failed\"}}\n\n",
-		`data: {invalid}` + "\n\n",
-	} {
-		if chatProbeCompleted(strings.NewReader(body)) {
-			t.Fatalf("accepted %q", body)
-		}
-	}
-}
-
-func TestChatProbeRejectsEmptyResponse(t *testing.T) {
-	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer gw.Close()
-	s, _ := launcherTestService(t)
-	out := s.providerTest(i18n.With(context.Background(), i18n.En), probeInput{BaseURL: gw.URL, Model: "m", API: "chat"})
-	if out["ok"] != false || out["error"] == nil {
-		t.Fatalf("empty response reported success: %v", out)
-	}
-}
-
 func TestChatProbeCompleted(t *testing.T) {
-	for _, body := range []string{
-		`data: {"choices":[{"delta":{"content":"pong"}}]}` + "\n\ndata: [DONE]\n\n",
-		`data: {"choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":"length"}]}` + "\n\n",
-		`data: {"choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":"stop"}]}` + "\n\ndata: {\"choices\":[],\"usage\":{}}\n\n",
+	// A response after the eight MiB budget must not count as a successful probe.
+	overBudget := strings.Repeat(": ignored\n", (8<<20)/len(": ignored\n")+1) +
+		`data: {"choices":[{"delta":{"content":"pong"},"finish_reason":"stop"}]}` + "\n\n"
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"not a stream", `{"error":"not a stream"}`, false},
+		{"error event", `data: {"error":{"message":"failed"}}` + "\n\n", false},
+		{"partial without finish", `data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n\n", false},
+		{"done only", `data: [DONE]` + "\n\n", false},
+		{"stop without content", `data: {"choices":[{"finish_reason":"stop"}]}` + "\n\n", false},
+		{"blank content", `data: {"choices":[{"delta":{"content":"  "}}]}` + "\n\ndata: [DONE]\n\n", false},
+		{"other choice index", `data: {"choices":[{"index":1,"delta":{"content":"other"},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n", false},
+		{"content filter", `data: {"choices":[{"finish_reason":"content_filter"}]}` + "\n\n", false},
+		{"refusal", `data: {"choices":[{"delta":{"refusal":"No"}}]}` + "\n\n", false},
+		{"error after answer", `data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"stop"}]}` + "\n\ndata: {\"error\":{\"message\":\"failed\"}}\n\n", false},
+		{"invalid json", `data: {invalid}` + "\n\n", false},
+		{"over budget", overBudget, false},
+		{"content then done", `data: {"choices":[{"delta":{"content":"pong"}}]}` + "\n\ndata: [DONE]\n\n", true},
+		{"finish length", `data: {"choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":"length"}]}` + "\n\n", true},
+		{"stop then usage", `data: {"choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":"stop"}]}` + "\n\ndata: {\"choices\":[],\"usage\":{}}\n\n", true},
 	} {
-		if !chatProbeCompleted(strings.NewReader(body)) {
-			t.Fatalf("rejected %q", body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := chatProbeCompleted(strings.NewReader(tc.body)); got != tc.want {
+				t.Fatalf("chatProbeCompleted = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -333,15 +321,6 @@ func TestChatProbeMultilineEvents(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestChatProbeResponseLimit(t *testing.T) {
-	// A response after the eight MiB budget must not count as a successful probe.
-	stream := strings.Repeat(": ignored\n", (8<<20)/len(": ignored\n")+1) +
-		`data: {"choices":[{"delta":{"content":"pong"},"finish_reason":"stop"}]}` + "\n\n"
-	if chatProbeCompleted(strings.NewReader(stream)) {
-		t.Fatal("accepted a response beyond the probe budget")
 	}
 }
 

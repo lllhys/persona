@@ -557,15 +557,19 @@ private struct ExtensionFieldRow: View {
                     set: { page.set($0.isEmpty ? nil : .string($0), at: path) }), templates: templates)
             }
             if let text = field.description, !text.isEmpty {
-                Text(text).font(Theme.Font.label).foregroundStyle(.secondary)
+                Text(text).font(Theme.Font.label).foregroundStyle(.secondary).accessibilityIdentifier(identifier)
             }
             if let e = page.fieldError(path) {
-                Text(e).font(Theme.Font.label).foregroundStyle(Theme.danger)
+                Text(e).font(Theme.Font.label).foregroundStyle(Theme.danger).accessibilityIdentifier(identifier)
             }
         }
         .padding(.vertical, Theme.Space.xxs)
-        .accessibilityIdentifier("plugin-field-\(path.joined(separator: "."))")
+        // On the whole row, except for a list of machines: there it would replace its machines' own (their setup links,
+        // #2446), so the list puts it on its title and switches itself.
+        .modifier(ExtensionFieldIdentifier(id: field.items?.format == "machine" ? nil : identifier))
     }
+
+    private var identifier: String { "plugin-field-\(path.joined(separator: "."))" }
 
     private var title: String { field.required == true && field.default == nil ? String(localized: "\(field.label) (required)") : field.label }
 
@@ -692,11 +696,21 @@ private struct ExtensionChoicePicker: View {
     }
 }
 
+/// A field's accessibility identifier on all of a row, or on none of it (`nil`: its parts carry it).
+private struct ExtensionFieldIdentifier: ViewModifier {
+    var id: String?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let id { content.accessibilityIdentifier(id) } else { content }
+    }
+}
+
 /// A list of the hub's machines (schema format machine, docs/extensions/extensions.md): a switch per machine of the systems the field
 /// names, by its name and how it is, in effect at once (`ExtensionModel.saveNow`), the same setting as where else it
 /// shows (the Control Computer switch on a Mac's page). A value that names no machine still shows, to be turned off.
 private struct ExtensionMachineSwitches: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.splitPush) private var splitPush
     var field: ExtensionField
     var title: String
     var path: [String]
@@ -719,20 +733,14 @@ private struct ExtensionMachineSwitches: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text(title).font(Theme.Font.labelStrong).foregroundStyle(.secondary).lineLimit(2)
+            Text(title).font(Theme.Font.labelStrong).foregroundStyle(.secondary).lineLimit(2).accessibilityIdentifier(identifier)
             if machines.isEmpty && unknown.isEmpty {
                 Text(field.items?.os == ["darwin"] ? String(localized: "This hub doesn't have a Mac yet.") : String(localized: "This hub doesn't have any machines yet."))
-                    .font(Theme.Font.secondary).foregroundStyle(.secondary)
+                    .font(Theme.Font.secondary).foregroundStyle(.secondary).accessibilityIdentifier(identifier)
             }
             ForEach(machines) { m in
                 row(m.id, name: m.name, status: nodeStatus(m) ?? (browsers ? Self.browserStatus(m) : Self.status(m, computers: computers)))
-                if computers || browsers {
-                    NavigationLink(value: MachineDetailRoute(m.ref)) {
-                        Label("Set Up [Extensions Views 1224]", systemImage: Theme.Icon.settings)
-                            .font(Theme.Font.label).lineLimit(1)
-                    }
-                    .accessibilityIdentifier("extension-machine-setup-\(m.id)")
-                }
+                if computers || browsers { setUp(m) }
             }
             ForEach(unknown, id: \.self) { id in
                 row(id, name: id, status: String(localized: "Can't find this machine"))
@@ -749,6 +757,24 @@ private struct ExtensionMachineSwitches: View {
             Text(field.confirm ?? "")
         }
     }
+
+    /// Its machine page, where the plugin is set up there. A button pushing that page alone: the Macs share one row, and
+    /// links in one row all open at once, every Mac's page on one tap (#2446).
+    @ViewBuilder private func setUp(_ m: Machine) -> some View {
+        let label = Label("Set Up [Extensions Views 1224]", systemImage: Theme.Icon.settings).font(Theme.Font.label).lineLimit(1)
+        Group {
+            if let splitPush {
+                Button { splitPush.push(MachineDetailRoute(m.ref)) } label: { label }
+            } else {
+                NavigationLink(value: MachineDetailRoute(m.ref)) { label }
+            }
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("extension-machine-setup-\(m.id)")
+    }
+
+    /// The field's identifier, on its title and switches (the row leaves it to them: a setup link keeps its own).
+    private var identifier: String { "plugin-field-\(path.joined(separator: "."))" }
 
     /// The field picking where the plugin's program runs: a machine switched on says how the program is there.
     private func nodeStatus(_ m: Machine) -> String? {
@@ -777,6 +803,7 @@ private struct ExtensionMachineSwitches: View {
             }
         }
         .disabled(page.saving)
+        .accessibilityIdentifier(identifier)
     }
 
     /// Online / Offline, then how ego lite is on it (Ready is the switch worth turning on).

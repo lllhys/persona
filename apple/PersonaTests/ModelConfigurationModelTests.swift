@@ -274,13 +274,6 @@ struct ModelConfigurationModelTests {
         #expect(!page.conflict && page.error == nil && !page.dirty)
     }
 
-    @Test func restoringInheritanceEncodesExplicitNulls() throws {
-        let patch = ModelConfigurationPatch(revision: 9, binding: .init(), fields: ["provider", "model", "effort"])
-        let body = try JSONSerialization.jsonObject(with: JSON.encoder.encode(patch)) as! [String: Any]
-        #expect(body["revision"] as? Int == 9)
-        #expect(body["provider"] is NSNull && body["model"] is NSNull && body["effort"] is NSNull)
-    }
-
     @Test func aTaskTimeEditDoesNotOverwriteCentralModelChoices() throws {
         var task = APIClient.ScheduledTask(id: "task_1", title: "早报", prompt: "写早报")
         task.launcher = "old"

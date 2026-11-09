@@ -228,20 +228,34 @@ func TestConfigureNodeSaysBotmux(t *testing.T) {
 	}
 }
 
-// Connecting tells the node whether it may start herdr's server when it is not running (#1879): yes unless hub.json
-// says machines[].herdr_autostart false.
-func TestConfigureNodeSaysHerdrAutostart(t *testing.T) {
-	_, _, m, _ := dirsHub(t)
-	f := connectDirsNode(t, m)
-	ctx := context.Background()
-	m.configureNode(ctx, m.peer, nil, true)
+// hub.json machines[] switches reach the node on every connect, each going from its default to the configured value:
+// herdr_autostart (#1879) and usage_windows (#2432) are on unless they say false; claude_global_hooks is off unless set, and
+// the node needs the false to take the entries out again.
+func TestConfigureNodeSaysMachineSwitches(t *testing.T) {
 	off := false
-	m.cfg.HerdrAutostart = &off
-	m.configureNode(ctx, m.peer, nil, true)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.configure) != 2 || string(f.configure[0]["herdr_autostart"]) != "true" || string(f.configure[1]["herdr_autostart"]) != "false" {
-		t.Fatalf("herdr_autostart in node.configure: %v", f.configure)
+	for _, tc := range []struct {
+		name          string
+		set           func(*MachineConfig)
+		key           string
+		before, after string
+	}{
+		{"herdr_autostart", func(c *MachineConfig) { c.HerdrAutostart = &off }, "herdr_autostart", "true", "false"},
+		{"claude_global_hooks", func(c *MachineConfig) { c.ClaudeGlobalHooks = true }, "claude_global_hooks", "false", "true"},
+		{"usage_windows", func(c *MachineConfig) { c.UsageWindows = &off }, "usage_windows", "true", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, m, _ := dirsHub(t)
+			f := connectDirsNode(t, m)
+			ctx := context.Background()
+			m.configureNode(ctx, m.peer, nil, true)
+			tc.set(&m.cfg)
+			m.configureNode(ctx, m.peer, nil, true)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.configure) != 2 || string(f.configure[0][tc.key]) != tc.before || string(f.configure[1][tc.key]) != tc.after {
+				t.Fatalf("%s in node.configure: %v", tc.key, f.configure)
+			}
+		})
 	}
 }
 
@@ -261,38 +275,6 @@ func TestConfigureNodeSaysClaudeStartDir(t *testing.T) {
 	}
 	if !slices.Contains(m.claudeDirs(ctx), "~/.config/claude-code/profiles/work") {
 		t.Fatalf("not looked in: %v", m.claudeDirs(ctx))
-	}
-}
-
-// hub.json machines[].claude_global_hooks reaches the node on every connect, off unless set: the node needs the false
-// to take the entries out again.
-func TestConfigureNodeSaysClaudeGlobalHooks(t *testing.T) {
-	_, _, m, _ := dirsHub(t)
-	f := connectDirsNode(t, m)
-	ctx := context.Background()
-	m.configureNode(ctx, m.peer, nil, true)
-	m.cfg.ClaudeGlobalHooks = true
-	m.configureNode(ctx, m.peer, nil, true)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.configure) != 2 || string(f.configure[0]["claude_global_hooks"]) != "false" || string(f.configure[1]["claude_global_hooks"]) != "true" {
-		t.Fatalf("claude_global_hooks in node.configure: %v", f.configure)
-	}
-}
-
-// hub.json machines[].usage_windows reaches the node on every connect: on unless it says false (#2432).
-func TestConfigureNodeSaysUsageWindows(t *testing.T) {
-	_, _, m, _ := dirsHub(t)
-	f := connectDirsNode(t, m)
-	ctx := context.Background()
-	m.configureNode(ctx, m.peer, nil, true)
-	off := false
-	m.cfg.UsageWindows = &off
-	m.configureNode(ctx, m.peer, nil, true)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.configure) != 2 || string(f.configure[0]["usage_windows"]) != "true" || string(f.configure[1]["usage_windows"]) != "false" {
-		t.Fatalf("usage_windows in node.configure: %v", f.configure)
 	}
 }
 

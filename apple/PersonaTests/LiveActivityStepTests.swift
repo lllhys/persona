@@ -11,31 +11,39 @@ struct LiveActivityStepTests {
         return s
     }
 
-    @Test func theAssistantAnsweringKeepsARunningActivity() {
+    struct Case: Sendable, CustomTestStringConvertible {
+        let label: String
+        var phase: FleetState.Phase = .none
+        var assistant = false
+        var island: IslandSlot = .assistant
+        let running: Bool
+        let active: Bool
+        let expected: LiveActivityController.Step
+        var testDescription: String { label }
+    }
+
+    static let cases: [Case] = [
         // No agent working, nothing unread: only the assistant answering, its side on the island (Thinking).
-        #expect(LiveActivityController.step(state(assistant: true), running: true, active: true) == .update)
-        #expect(LiveActivityController.step(state(assistant: true), running: true, active: false) == .update)
-    }
-
-    @Test func onceTheAssistantIsDoneTheMinuteRunsAsBefore() {
-        #expect(LiveActivityController.step(state(assistant: false), running: true, active: true) == .endSoon)
-    }
-
-    @Test func anIslandThatDoesNotShowTheAssistantHasNothingToShow() {
-        #expect(LiveActivityController.step(state(assistant: true, island: .tokens), running: true, active: true) == .endSoon)
-    }
-
-    @Test func theAssistantAloneStartsNoActivity() {
+        Case(label: "assistant answering, running, active", assistant: true, running: true, active: true, expected: .update),
+        Case(label: "assistant answering, running, inactive", assistant: true, running: true, active: false, expected: .update),
+        // Once the assistant is done the minute runs as before.
+        Case(label: "assistant done, running", running: true, active: true, expected: .endSoon),
+        // An island that does not show the assistant has nothing to show.
+        Case(label: "assistant on a tokens island", assistant: true, island: .tokens, running: true, active: true, expected: .endSoon),
         // A product decision left open in #4628: only an activity already on is kept.
-        #expect(LiveActivityController.step(state(assistant: true), running: false, active: true) == .nothing)
-    }
+        Case(label: "assistant alone, not running", assistant: true, running: false, active: true, expected: .nothing),
+        // Agents start and update as before.
+        Case(label: "working, not running, active", phase: .working, running: false, active: true, expected: .start),
+        Case(label: "working, not running, inactive", phase: .working, running: false, active: false, expected: .nothing),
+        Case(label: "done, not running", phase: .done, running: false, active: true, expected: .nothing),
+        Case(label: "needs you, running", phase: .needsYou, running: true, active: true, expected: .update),
+        Case(label: "empty, not running", running: false, active: true, expected: .nothing),
+    ]
 
-    @Test func agentsStartAndUpdateAsBefore() {
-        #expect(LiveActivityController.step(state(phase: .working), running: false, active: true) == .start)
-        #expect(LiveActivityController.step(state(phase: .working), running: false, active: false) == .nothing)
-        #expect(LiveActivityController.step(state(phase: .done), running: false, active: true) == .nothing)
-        #expect(LiveActivityController.step(state(phase: .needsYou), running: true, active: true) == .update)
-        #expect(LiveActivityController.step(state(), running: false, active: true) == .nothing)
+    @Test(arguments: cases)
+    func stepFollowsTheFleetAndTheActivity(_ c: Case) {
+        let s = state(phase: c.phase, assistant: c.assistant, island: c.island)
+        #expect(LiveActivityController.step(s, running: c.running, active: c.active) == c.expected, "\(c.label)")
     }
 
     @Test func showsNothingFollowsTheIslandsSides() {

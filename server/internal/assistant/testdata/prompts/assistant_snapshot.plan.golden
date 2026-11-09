@@ -9,5 +9,5 @@
   - 修横屏布局（todo_4）：在做，mac-a session_id=e1f2a3b4：先复现；计划 3/5：Reproducing the crash in landscape；它最近向你汇报（11 分钟前）：进度：在找视图
   - 修竖屏（todo_2）：在做，mac-a session_id=e1f2a3b4：先复现；它最近向你汇报（2 分钟前）：进度，第 4/5 步：崩溃复现了，在改
   - 没有计划（todo_3）：在做，mac-a session_id=c1：在看
-- iPhone：App 不在前台，phone_* 工具会先尝试在后台唤醒 App，失败就请他打开 App
+- iPhone：App 不在前台，phone_* 工具会先尝试在后台唤醒 App，失败就请用户打开 App；要手机确认的写操作可以带 queue_if_offline 先排队（phone_write_queue_list 查看）
 - 已安排的跟进：没有

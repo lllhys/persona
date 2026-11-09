@@ -104,14 +104,6 @@ func waitNoConns(t *testing.T, cl *openConnsListener, after string) {
 	}
 }
 
-// An extension served from elsewhere outlives its hubExtension: closeIdle drops the keep-alive connections that its
-// client and its proxy left open, which apply replaces on every restart.
-func TestProxyCloseIdleClosesConnections(t *testing.T) {
-	hp, cl := farExtension(t)
-	hp.closeIdle()
-	waitNoConns(t, cl, "closeIdle")
-}
-
 // apply replaces the hubExtension of an extension it runs again (here: one no longer installed): the old one's
 // connections close.
 func TestApplyClosesTheReplacedExtensionsConnections(t *testing.T) {

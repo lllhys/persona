@@ -138,6 +138,40 @@ struct ChatLayoutTests {
         #expect(!state.open([], height: 600, top: 60, at: 0))
     }
 
+    /// Letting go is a choice only once the finger has gone past the slop to another tick (#2615): the tick the
+    /// navigator opens on is just where the finger happened to be.
+    @Test func onlyAMoveToAnotherTickIsAChoice() throws {
+        let state = EdgeScrubState()
+        let marks = (0..<5).map { EdgeMark(id: "m\($0)", text: "\($0)") }
+        #expect(state.open(marks, height: 600, top: 60, at: 0))
+        #expect(!state.moved)
+        let column = try #require(state.column)
+        #expect(!state.move(to: column.y(of: 0) + 1)) // still the tick it opened on
+        #expect(!state.moved)
+        #expect(state.move(to: column.y(of: 2)))
+        #expect(state.moved)
+        #expect(state.move(to: column.y(of: 0))) // back to where it opened, on purpose: still a choice
+        #expect(state.moved)
+        #expect(state.close()?.id == "m0")
+        #expect(!state.moved)
+        // A finger held still trembles: over the line between two ticks it picks the next one (a haptic tick), but
+        // within the slop that is no choice; going on past the slop is, even without another tick.
+        let line = column.y(of: 2) + column.gap / 2 - 1
+        #expect(state.open(marks, height: 600, top: 60, at: line))
+        #expect(state.pickedMark?.id == "m2")
+        #expect(state.move(to: line + 2))
+        #expect(state.pickedMark?.id == "m3")
+        #expect(!state.moved)
+        #expect(!state.move(to: line + Theme.Space.s + 2))
+        #expect(state.pickedMark?.id == "m3")
+        #expect(state.moved)
+        state.close()
+        // The next slide starts without a choice, even on another tick.
+        #expect(state.open(marks, height: 600, top: 60, at: 10_000))
+        #expect(state.pickedMark?.id == "m4")
+        #expect(!state.moved)
+    }
+
     // MARK: Exchanges and boxes
 
     @Test func linksInAnExchangeOpen() {

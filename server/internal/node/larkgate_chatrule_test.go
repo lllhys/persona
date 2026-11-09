@@ -47,6 +47,8 @@ func TestServedChatRuleIsReadByTheNodesGate(t *testing.T) {
 		{"a path that climbs out of the conversation", served, "", `ex POST /conversations/7123/messages/../../8456/messages '{"text":"hi"}'`, false, 1},
 		{"an encoded id", served, "", `ex POST /conversations/71%32%33/messages '{"text":"hi"}'`, false, 1},
 		{"a health conversation's write", served, health, `ex POST /conversations/7123/messages '{"text":"hi"}'`, false, 1},
+		// The hook's directory is where the model's last `cd` left it (#2368): a folder inside the space is the space.
+		{"a health conversation's write from its reports", served, filepath.Join(health, "reports"), `ex POST /conversations/7123/messages '{"text":"hi"}'`, false, 1},
 		{"a hand-written deny first", append([]proto.LarkRule{{Method: "POST", Path: "/conversations/7123/messages", Action: "deny"}}, served...), "",
 			`ex POST /conversations/7123/messages '{"text":"hi"}'`, false, 0},
 		{"a hand-written confirm first", append([]proto.LarkRule{{Method: "POST", Path: "/conversations/*/messages", Action: "confirm"}}, served...), "",

@@ -62,49 +62,44 @@ type failingChannelLogout struct{ signInConnector }
 
 func (*failingChannelLogout) Logout(context.Context) error { return errors.New("logout failed") }
 
-func TestConnectorLogoutClearsOnlyItsChannels(t *testing.T) {
-	h, a := newConnectorChannels(t, "example")
-	c := &signInConnector{secrets: h.secretsFor("example")}
-	if err := h.addConnector(c); err != nil {
-		t.Fatal(err)
-	}
-	if code, out := call(t, h.routes(), "POST", "/api/v1/connectors/example/logout", h.cfg.Token, ""); code != http.StatusOK {
-		t.Fatalf("logout: %d %v", code, out)
-	}
-	if !c.out {
-		t.Fatal("the connector was not signed out")
-	}
-	if got := unboundChannels(t, a); !slices.Equal(got, []string{"first_chat", "second_chat"}) {
-		t.Fatalf("cleared channels = %v", got)
-	}
-}
-
-func TestConnectorLogoutFailurePreservesChannels(t *testing.T) {
-	h, a := newConnectorChannels(t, "example")
-	if err := h.addConnector(&failingChannelLogout{}); err != nil {
-		t.Fatal(err)
-	}
-	if code, _ := call(t, h.routes(), "POST", "/api/v1/connectors/example/logout", h.cfg.Token, ""); code != http.StatusBadGateway {
-		t.Fatalf("logout failure: %d", code)
-	}
-	if got := unboundChannels(t, a); len(got) != 0 {
-		t.Fatalf("failed logout cleared channels: %v", got)
-	}
-}
-
-func TestConnectorLogoutReportsChannelCleanupFailure(t *testing.T) {
-	h, a := newConnectorChannels(t, "example")
-	if err := h.addConnector(&signInConnector{secrets: h.secretsFor("example")}); err != nil {
-		t.Fatal(err)
-	}
-	a.on(assistantwire.MethodChannelUnbound, func(json.RawMessage) (any, error) {
-		return nil, errors.New("channel state unavailable")
-	})
-	if code, _ := call(t, h.routes(), "POST", "/api/v1/connectors/example/logout", h.cfg.Token, ""); code != http.StatusBadGateway {
-		t.Fatalf("cleanup failure: %d", code)
-	}
-	if got := unboundChannels(t, a); !slices.Equal(got, []string{"first_chat", "second_chat"}) {
-		t.Fatalf("cleanup must attempt every affected channel: %v", got)
+func TestConnectorLogoutChannelCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		logoutFail    bool
+		cleanupFail   bool
+		wantCode      int
+		wantSignedOut bool
+		wantUnbound   []string
+	}{
+		{name: "clears only its channels", wantCode: http.StatusOK, wantSignedOut: true, wantUnbound: []string{"first_chat", "second_chat"}},
+		{name: "logout failure preserves channels", logoutFail: true, wantCode: http.StatusBadGateway},
+		{name: "reports channel cleanup failure", cleanupFail: true, wantCode: http.StatusBadGateway, wantUnbound: []string{"first_chat", "second_chat"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, a := newConnectorChannels(t, "example")
+			signIn := &signInConnector{secrets: h.secretsFor("example")}
+			var c connector.Connector = signIn
+			if tc.logoutFail {
+				c = &failingChannelLogout{}
+			}
+			if err := h.addConnector(c); err != nil {
+				t.Fatal(err)
+			}
+			if tc.cleanupFail {
+				a.on(assistantwire.MethodChannelUnbound, func(json.RawMessage) (any, error) {
+					return nil, errors.New("channel state unavailable")
+				})
+			}
+			if code, out := call(t, h.routes(), "POST", "/api/v1/connectors/example/logout", h.cfg.Token, ""); code != tc.wantCode {
+				t.Fatalf("logout: %d, want %d: %v", code, tc.wantCode, out)
+			}
+			if tc.wantSignedOut && !signIn.out {
+				t.Fatal("the connector was not signed out")
+			}
+			if got := unboundChannels(t, a); !slices.Equal(got, tc.wantUnbound) {
+				t.Fatalf("cleared channels = %v, want %v", got, tc.wantUnbound)
+			}
+		})
 	}
 }
 

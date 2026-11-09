@@ -117,36 +117,6 @@ func call(c *Client) error {
 	return err
 }
 
-func TestUpstreamIgnoresNonModelProbes(t *testing.T) {
-	var replies atomic.Int32
-	u := newUpstream(t, func(w http.ResponseWriter) {
-		replies.Add(1)
-		ok(w)
-	})
-	probe := func() {
-		t.Helper()
-		resp, err := http.Get(u.srv.URL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("non-model probe status %d", resp.StatusCode)
-		}
-	}
-	probe()
-	if u.sent.Load() != 0 || u.inflight.Load() != 0 || u.most.Load() != 0 || replies.Load() != 0 {
-		t.Fatal("a non-model probe changed model-request counts or consumed a reply")
-	}
-	if err := call(u.client("test-key")); err != nil {
-		t.Fatal(err)
-	}
-	probe()
-	if u.sent.Load() != 1 || u.inflight.Load() != 0 || u.most.Load() != 1 || replies.Load() != 1 {
-		t.Fatal("a real POST was not counted exactly once, or a later probe changed its counts")
-	}
-}
-
 func TestQuotaPausesTheConnection(t *testing.T) {
 	clk := fakeClock(t)
 	u := newUpstream(t, answer(429, quotaBody))

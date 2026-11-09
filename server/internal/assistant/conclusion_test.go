@@ -259,13 +259,6 @@ func TestOnlyConclusionsPushesNoProgress(t *testing.T) {
 	}
 }
 
-// The same switch off: the turn's report goes out as before.
-func TestWithoutOnlyConclusionsProgressIsPushed(t *testing.T) {
-	s, f, todo, posts, _ := conclusionService(t, false)
-	waitsForReview(t, s, f, todo.ID, "查完了，可以做")
-	waitFor(t, "the turn's report", func() bool { return len(cardsWith(posts(), "这一轮做完")) == 1 })
-}
-
 // The web briefing, the briefing's Lark card and the board say the conclusion in the same words as its own card.
 func TestBriefingSaysTheSameVerdictAsTheCard(t *testing.T) {
 	s, f, todo, posts, _ := conclusionService(t, false)

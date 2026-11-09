@@ -7,7 +7,8 @@
 // Messages (iMessage) adds "Hand to Persona" and deleting what the hub kept (iOS MessagesConnectorView, /api/v1/imessage…).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
-import { otherManager, pinManagerAt, sameManager } from "../../lib/manager-choice";
+import { otherManager, ownedSub, pinManagerAt, sameManager } from "../../lib/manager-choice";
+import { groupByManager, useRoster } from "../../lib/managers";
 import {
   canSendStep, CI_MODES, deleteIMessageData, imessageAIFooter, imessageStatus, setIMessageAI, connectorBrand, connectorLogin, connectorLogout, connectorState, connectorSummary, connectorTone, deleteConnectorArchive,
   deleteConnectorData, deletedLine, feedsFooter, fieldInput, githubAuth, githubInboxFooter, githubMachineLine, githubMachineWarns, githubOptions,
@@ -23,6 +24,7 @@ import { Button, copyText, cx, Dialog, IconButton, Loading, Spinner, toast } fro
 import { BrandMark } from "../../ui/BrandMark";
 import { Icon } from "../../ui/icons";
 import { t } from "../../i18n";
+import { ManagerHeading } from "../ManagerParts";
 import { ChannelLink } from "./Channels";
 import { QRLinkStep, QRStep, UnsupportedStep, useStepPolling } from "./LoginSteps";
 import { Group, Row, Switch } from "./SettingsParts";
@@ -58,22 +60,33 @@ export function ConnectorList({ onOpen }: { onOpen: (id: string) => void }) {
       .catch((e) => setError(errorText(e)));
   }, []);
   const list = useMemo(() => all && otherConnectors(all, lark), [all, lark]);
+  // with several managers, each one's connectors under its name (each has its own built-ins, docs/assistant/managers.md
+  // "Clients"), and a row opens that manager's copy; one: as before
+  const roster = useRoster();
+  const groups = list && groupByManager(list, roster, (c) => c.manager);
   if (list?.length === 0) return null;
   return (
     <Group title={t("settings-hubconnector.more_title")} footer={t("settings-hubconnector.more_footer")}>
       {!list && !error && <div className="px-4 py-3"><Loading /></div>}
       {error && <p className="px-4 py-3 text-[12.5px] text-red">{t("settings-hubconnector.list_failed", { error })}</p>}
-      {list?.map((c) => (
-        <button key={c.id} type="button" onClick={() => onOpen(c.id)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left whitespace-nowrap transition-colors hover:bg-hover">
-          <Mark id={c.id} size={32} />
-          <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{c.name}</span>
-          <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-ink-2">
-            <span aria-hidden className={cx("size-1.5 shrink-0 rounded-full", DOT[connectorTone(c)])} />
-            <span className="truncate">{connectorSummary(c)}</span>
-          </span>
-          <Icon name="chevronRight" size={12} stroke={2} className="shrink-0 text-ink-3" />
-        </button>
-      ))}
+      {(groups ?? [{ manager: null, items: list ?? [] }]).map((g) => [
+        g.manager && (
+          <div key={`h:${g.manager.id}`} className="bg-inset px-4 py-1.5">
+            <ManagerHeading manager={g.manager} count={g.items.length} />
+          </div>
+        ),
+        ...g.items.map((c) => (
+          <button key={`${c.manager ?? ""}:${c.id}`} type="button" onClick={() => onOpen(ownedSub(c.id, c.manager))} className="flex w-full items-center gap-3 px-4 py-2.5 text-left whitespace-nowrap transition-colors hover:bg-hover">
+            <Mark id={c.id} size={32} />
+            <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{c.name}</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-ink-2">
+              <span aria-hidden className={cx("size-1.5 shrink-0 rounded-full", DOT[connectorTone(c)])} />
+              <span className="truncate">{connectorSummary(c)}</span>
+            </span>
+            <Icon name="chevronRight" size={12} stroke={2} className="shrink-0 text-ink-3" />
+          </button>
+        )),
+      ])}
     </Group>
   );
 }

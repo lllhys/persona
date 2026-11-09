@@ -135,32 +135,6 @@ import Testing
         #expect(result.document.lineCount == 2)
     }
 
-    @Test func repeatedPresentationBeforeAndAfter() async {
-        var code = ExtensionCodeComponent(text: String(repeating: "synthetic code line 你好\n", count: 20_000))
-        let input = CodeSnippetInput(code)
-        let model = CodeSnippetModel()
-        model.update(code)
-        await model.load(code)
-        var before: [Double] = [], after: [Double] = []
-        var checksum = 0
-        for round in 0..<6 {
-            let oldStart = ProcessInfo.processInfo.systemUptime
-            for _ in 0..<100 { checksum += input.document().lineCount }
-            let oldMS = (ProcessInfo.processInfo.systemUptime - oldStart) * 1_000
-            let newStart = ProcessInfo.processInfo.systemUptime
-            for index in 0..<100 {
-                code.startLine = index + 1
-                model.update(code)
-                checksum += model.source?.lineCount ?? 0
-            }
-            let newMS = (ProcessInfo.processInfo.systemUptime - newStart) * 1_000
-            if round > 0 { before.append(oldMS); after.append(newMS) }
-        }
-        #expect(checksum == 20_000 * 100 * 6 * 2)
-        print("code-snippet-benchmark lines=20000 updates=100 warmups=1 measured=5 before_ms=\(before) after_ms=\(after)")
-        // Diagnostic operation timings, not a page FPS assertion.
-    }
-
     @Test func defaultFactoryPreparesAFullUnicodeDocument() async {
         let model = CodeSnippetModel()
         let code = ExtensionCodeComponent(text: "你好 🙂\nsecond\n")

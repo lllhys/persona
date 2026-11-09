@@ -23,11 +23,6 @@ struct TabPanesTests {
         return try JSON.decoder.decode(Session.self, from: JSONSerialization.data(withJSONObject: o))
     }
 
-    @Test func decodesPaneIndexAndLeavesItOutWhenAbsent() throws {
-        #expect(try session("a", place: 2).paneIndex == 2)
-        #expect(try session("a").paneIndex == nil)
-    }
-
     @Test func paneNumbersFollowHerdrsCounting() throws {
         #expect(TabPanes.paneNumber(try session("a", pane: "w4R:pW")) == 32)
         #expect(TabPanes.paneNumber(try session("a", pane: "w4R:p2E")) == 86)

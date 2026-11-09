@@ -7,17 +7,16 @@ import Testing
 struct AgentSyncPacingTests {
     let t0 = Date(timeIntervalSinceReferenceDate: 1000)
 
-    @Test func retainedHiddenChatsWaitForVisibility() {
-        #expect(!AgentSyncPacing.prefetchAllowed(hasRetainedStore: true, isSubscribed: false))
-    }
-
-    @Test func visibleSubscriptionOwnersDoNotGetDuplicatePrefetch() {
-        #expect(!AgentSyncPacing.prefetchAllowed(hasRetainedStore: true, isSubscribed: true))
-        #expect(!AgentSyncPacing.prefetchAllowed(hasRetainedStore: false, isSubscribed: true))
-    }
-
-    @Test func unseenRecentChatsStillWarmTheirDiskCache() {
-        #expect(AgentSyncPacing.prefetchAllowed(hasRetainedStore: false, isSubscribed: false))
+    /// Retained hidden chats wait for visibility, visible subscription owners get no duplicate prefetch, and unseen
+    /// recent chats still warm their disk cache.
+    @Test(arguments: [
+        (retained: true, subscribed: false, allowed: false), // retained hidden chat waits for visibility
+        (retained: true, subscribed: true, allowed: false), // visible subscription owner: no duplicate prefetch
+        (retained: false, subscribed: true, allowed: false), // subscribed without a retained store: no duplicate prefetch
+        (retained: false, subscribed: false, allowed: true), // unseen recent chat still warms its disk cache
+    ])
+    func prefetchAllowedOnlyForUnretainedUnsubscribedChats(_ c: (retained: Bool, subscribed: Bool, allowed: Bool)) {
+        #expect(AgentSyncPacing.prefetchAllowed(hasRetainedStore: c.retained, isSubscribed: c.subscribed) == c.allowed)
     }
 
     @Test func aWorkingAgentWaitsForItsTurn() {

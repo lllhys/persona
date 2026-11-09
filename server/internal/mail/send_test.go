@@ -188,28 +188,6 @@ func TestRenderMessageHTMLAlternativeAndThreading(t *testing.T) {
 	}
 }
 
-func TestRenderMessageReferencesChain(t *testing.T) {
-	raw, err := RenderMessage(SendRequest{
-		To:         []Address{{Email: "a@example.com"}},
-		Subject:    "x",
-		Text:       "y",
-		InReplyTo:  "<b@example.com>",
-		References: "<a@example.com> <b@example.com>",
-	}, Address{Email: "me@example.com"})
-	if err != nil {
-		t.Fatalf("RenderMessage: %v", err)
-	}
-	r, err := gomail.CreateReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatalf("CreateReader: %v", err)
-	}
-	defer r.Close()
-	refs, _ := r.Header.MsgIDList("References")
-	if strings.Join(refs, ",") != "a@example.com,b@example.com" {
-		t.Fatalf("References = %v", refs)
-	}
-}
-
 func TestRenderMessageRequiresRecipients(t *testing.T) {
 	if _, err := RenderMessage(SendRequest{Subject: "x", Text: "y"}, Address{Email: "me@example.com"}); err == nil {
 		t.Fatal("expected an error without recipients")

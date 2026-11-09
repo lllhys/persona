@@ -26,4 +26,22 @@ func TestHealthCardPushHidesContent(t *testing.T) {
 	if o := alert(proto.Interaction{Kind: proto.IxPermission, SessionTitle: "Persona", Cwd: "/home/me/.persona/assistant", Summary: "发周报"}); o["body"] != "发周报" {
 		t.Fatalf("assistant's own card: %v", o)
 	}
+	// A card from a folder of the health space (a hook after the model's `cd`, #2368) is the space's too: no content,
+	// no answer buttons. A directory that only starts the same, or a folder named health elsewhere, is not.
+	ask := func(cwd string) proto.Interaction {
+		return proto.Interaction{Kind: proto.IxQuestion, ToolName: "AskUserQuestion", SessionTitle: "报告", Cwd: cwd,
+			Questions: []proto.Question{{Question: "血糖偏高要记下吗？", Options: []proto.QuestionOption{{Label: "记"}, {Label: "不记"}}}}}
+	}
+	for cwd, hidden := range map[string]bool{
+		"/home/me/.persona/health/reports": true,
+		"/home/me/.persona/health-bin":     false,
+		"/tmp/health":                      false,
+	} {
+		payload := interactionPayload(ask(cwd), "server")
+		body := payload["aps"].(map[string]any)["alert"].(map[string]any)["body"].(string)
+		_, buttons := payload["ask"]
+		if hidden != !strings.Contains(body, "血糖") || hidden == buttons {
+			t.Errorf("%s: body %q, answer buttons %v; want hidden %v", cwd, body, buttons, hidden)
+		}
+	}
 }

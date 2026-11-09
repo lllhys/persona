@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/compat"
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/nodeclient"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -75,11 +76,13 @@ func (c *codexConn) decide(ctx context.Context, method string, raw json.RawMessa
 	var r codexRequest
 	_ = json.Unmarshal(raw, &r)
 	mode, _ := n.modesOf(p.id)
-	cwd := firstNonEmpty(r.Cwd, p.cwd)
+	cwd := firstNonEmpty(r.Cwd, p.cwd) // where the request runs: what the gate and the memory checks go by
+	// The card is the conversation's: placed in its directory, where it started, not a subfolder the request runs in
+	// (identity.CardCwd, #2368).
 	ix := proto.Interaction{
-		ID: codexInteractionID(p.id, method, r.ItemID, r.ApprovalID, r.ServerName), SessionID: p.id, Cwd: cwd,
+		ID: codexInteractionID(p.id, method, r.ItemID, r.ApprovalID, r.ServerName), SessionID: p.id, Cwd: identity.CardCwd(p.cwd, cwd),
 		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(nodeclient.HookTimeout).UTC(), ToolUseID: r.ItemID,
-		SessionTitle: n.assistantTitle(p.id, cwd),
+		SessionTitle: n.assistantTitle(p.id, firstNonEmpty(p.cwd, r.Cwd)),
 	}
 	switch method {
 	case "item/commandExecution/requestApproval":

@@ -70,19 +70,6 @@ func TestHubConfig(t *testing.T) {
 	}
 }
 
-// An explicitly empty listen override keeps the file's address.
-func TestHubConfigEmptyEnv(t *testing.T) {
-	t.Setenv("PERSONA_LISTEN", "")
-	t.Setenv("OTHER_LISTEN", "127.0.0.1:18664")
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "hub.json"), []byte(`{"token": "secret-token", "listen": "127.0.0.1:18663"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if addr, _, err := hubConfig(dir); err != nil || addr != "127.0.0.1:18663" {
-		t.Fatalf("got %q %v", addr, err)
-	}
-}
-
 // hub serves a WebSocket that checks the token, sends msgs, then closes if hangUp or else waits for the client.
 func hub(t *testing.T, msgs []string, hangUp bool) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

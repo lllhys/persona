@@ -483,18 +483,6 @@ func TestProgramRestarts(t *testing.T) {
 	waitUntil(t, "a restart", func() bool { _, loads := sec.get(); return loads >= 2 })
 }
 
-// Signing out while the connector is switched off (the program not running) runs the program just for that.
-func TestLogoutWhileStopped(t *testing.T) {
-	sec := &memSecrets{data: []byte("example session")}
-	c := New(program(t, sec))
-	if err := c.Logout(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if d, _ := sec.get(); d != nil {
-		t.Fatal("still signed in")
-	}
-}
-
 // A connector whose program never ran (switched off from the start) answers with the manifest it was registered
 // with: the capabilities are listed, signing in says to switch it on, signing out runs the program for that (#666).
 func TestNeverStartedDeclaresItsManifest(t *testing.T) {

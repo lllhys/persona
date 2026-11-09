@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -115,7 +117,8 @@ func parseCount(num, unit string) int {
 	return int(math.Round(f))
 }
 
-// liveEvery is how often a watched, working Claude's status line is read; liveReadTimeout bounds one read.
+// liveEvery is how often a watched, working Claude's status line is read (in whole ticks of the watch pump,
+// session_watch.go); liveReadTimeout bounds one read.
 var (
 	liveEvery       = time.Second
 	liveReadTimeout = 3 * time.Second
@@ -124,35 +127,77 @@ var (
 // liveLines is how much of the visible screen is read: the status line sits right above the input box at the bottom.
 const liveLines = 60
 
-// watchLive pushes a watched Claude's status line as session.live until ctx ends: about once a second while the agent
-// works, only when it changed (At aside), and live: null once the turn stops, the line goes or the watch ends (when
-// something was sent). Its own goroutine, so a slow screen read never holds up the transcript (watchLoop).
-func (n *Node) watchLive(ctx context.Context, id string) {
-	t := time.NewTicker(liveEvery)
-	defer t.Stop()
-	var last *proto.SessionLive
-	push := func(l *proto.SessionLive) {
-		last = l
-		if n.peer != nil {
-			_ = n.peer.Notify("session.live", map[string]any{"session_id": id, "live": l})
+// liveTicks is liveEvery in ticks of the watch pump (at least one).
+func liveTicks() int { return max(1, int(liveEvery/watchEvery)) }
+
+// liveWatch is a watch's status line: whether a read is under way, and what went out last.
+type liveWatch struct {
+	reading atomic.Bool // a read is under way: the pump does not start another
+	mu      sync.Mutex  // orders the pushes, so a read that ends after the watch did sends nothing
+	last    *proto.SessionLive
+	ended   bool
+}
+
+// pumpLive is a watch's status line, read once every liveTicks ticks of the pump: about once a second while the agent
+// works, pushed as session.live only when it changed (At aside), and live: null once the turn stops or the line goes
+// (when something was sent; endLive sends it when the watch ends). The read runs in a goroutine of its own, one at a
+// time per watch, so a slow screen read holds up neither the transcript nor another session; an agent at rest with
+// nothing out costs no goroutine.
+func (n *Node) pumpLive(w *watch) {
+	lw := &w.live
+	if lw.reading.Load() {
+		return // the last read is still under way: this one is skipped, as a busy ticker's was
+	}
+	pane := n.livePane(w.id)
+	if pane == "" {
+		lw.mu.Lock()
+		shown := lw.last != nil
+		lw.mu.Unlock()
+		if !shown {
+			return
 		}
 	}
-	defer func() {
-		if last != nil {
-			push(nil)
+	lw.reading.Store(true)
+	go func() {
+		defer lw.reading.Store(false)
+		var l *proto.SessionLive
+		if pane != "" {
+			var ok bool
+			if l, ok = n.readLive(w.ctx, pane); !ok {
+				return
+			}
 		}
+		n.setLive(w, l)
 	}()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		l, ok := n.readLive(ctx, id)
-		if !ok || sameLive(l, last) {
-			continue
-		}
-		push(l)
+}
+
+// setLive pushes l as the watch's status line, unless it is the one that went out last (At aside) or the watch ended.
+func (n *Node) setLive(w *watch, l *proto.SessionLive) {
+	lw := &w.live
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	if lw.ended || sameLive(l, lw.last) {
+		return
+	}
+	lw.last = l
+	n.pushLive(w.id, l)
+}
+
+// endLive: the watch ended (session.unwatch, or its connection closed). A line that went out ends with null.
+func (n *Node) endLive(w *watch) {
+	lw := &w.live
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	lw.ended = true
+	if lw.last != nil {
+		lw.last = nil
+		n.pushLive(w.id, nil)
+	}
+}
+
+func (n *Node) pushLive(id string, l *proto.SessionLive) {
+	if n.peer != nil {
+		_ = n.peer.Notify("session.live", map[string]any{"session_id": id, "live": l})
 	}
 }
 
@@ -161,17 +206,23 @@ func (n *Node) watchLive(ctx context.Context, id string) {
 // no screen of its own.
 var liveHosts = map[string]bool{host.Herdr: true, host.HerdrCore: true, host.Orca: true}
 
-// readLive is the session's status line now: nil when it is not a working Claude on a screen it can read or shows no line; ok is
-// false when the screen could not be read (keep what was sent; a failing read is not logged, it would be every second).
-func (n *Node) readLive(ctx context.Context, id string) (*proto.SessionLive, bool) {
+// livePane is the pane whose status line is read for session id: "" when it is not a working Claude on a screen
+// readLive can read (then the line is null).
+func (n *Node) livePane(id string) string {
 	a, found := n.agent(id)
 	if !found || a.Agent != "claude" || a.AgentStatus != proto.StatusWorking || a.PaneID == "" ||
 		!liveHosts[n.hosts.Ref(a.PaneID).Kind] || n.isAssistantSession(id) {
-		return nil, true
+		return ""
 	}
+	return a.PaneID
+}
+
+// readLive is the status line on pane now: nil when it shows none; ok is false when the screen could not be read (keep
+// what was sent; a failing read is not logged, it would be every second).
+func (n *Node) readLive(ctx context.Context, pane string) (*proto.SessionLive, bool) {
 	rctx, cancel := context.WithTimeout(ctx, liveReadTimeout)
 	defer cancel()
-	text, err := n.readPane(rctx, a.PaneID, "visible", liveLines)
+	text, err := n.readPane(rctx, pane, "visible", liveLines)
 	if err != nil {
 		return nil, false
 	}

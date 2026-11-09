@@ -59,6 +59,13 @@ func TestMain(m *testing.M) {
 	// Nor the user's Claude config directory (claude under a profile, or these tests run from inside a Claude Code
 	// session): the node's own default is then ~/.claude of the test's home (#2140; a test that wants one sets its own).
 	os.Unsetenv("CLAUDE_CONFIG_DIR")
+	// Nor the user's state directory (these tests run from inside a Persona conversation, or a shell that set it): the
+	// state directory of a test's node is the one under its own home. A PERSONA_HOME, or its former name, left in the
+	// environment won over it, and the health uploads' tests wrote their fake reports into the user's real health
+	// space. A test that wants one sets its own.
+	for _, k := range []string{"PERSONA_HOME", legacyEnv("PERSONA_HOME")} {
+		os.Unsetenv(k)
+	}
 	// Nor the user's login shell: herdr's panes run zsh, whatever the machine's is (a test that wants another sets it).
 	herdrPaneShell = func() string { return "/bin/zsh" }
 	// A send looks at the box once after typing and confirms nothing: most fakes never write what was typed into the

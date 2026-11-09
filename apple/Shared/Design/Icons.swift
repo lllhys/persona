@@ -128,7 +128,8 @@ extension Theme {
         static let gitBranch = "arrow.triangle.branch"
         /// The spaces a host nests under another (Orca's child worktrees,「N 个子项」, #3075).
         static let childSpaces = "square.3.layers.3d.down.right"
-        static let workspaceUnread = "bell.fill"
+        /// A notification that needs attention, in a workspace or from a background task.
+        static let notification = "bell.fill"
         /// Where a workspace comes from (its source host): the same plug as a hub plugin.
         static let workspaceHost = plugins
         /// Branch to New Chat: a new conversation from a reply (#2137).

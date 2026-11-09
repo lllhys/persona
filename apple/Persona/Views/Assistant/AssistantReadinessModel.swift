@@ -20,6 +20,8 @@ final class AssistantReadinessModel {
     @ObservationIgnored private var asked = 0
     @ObservationIgnored private var answered = 0
     @ObservationIgnored private var inflight: Task<Void, Never>?
+    /// Moves on each `forget`: an answer, a probe's too, about the manager shown before doesn't land.
+    @ObservationIgnored private var generation = 0
 
     /// How long an answer is good for before a visit asks again.
     static let fresh: TimeInterval = 5
@@ -45,17 +47,18 @@ final class AssistantReadinessModel {
         if !probe, !force, let inflight { await inflight.value; return }
         asked += 1
         let mine = asked
+        let gen = generation
         if probe { probing = true }
         let task = Task { [weak self] in
             do {
                 let r = try await api.assistantReadiness(probe: probe)
-                guard let self, probe || mine > self.answered else { return }
+                guard let self, gen == self.generation, probe || mine > self.answered else { return }
                 self.answered = max(self.answered, mine)
                 self.land(r)
                 if probe { self.probe = r.probe } else if r.probe == nil { self.probe = nil }
             } catch {
                 // 404: an older hub. 503 assistant_offline and the rest: keep what was there, ask again next time.
-                guard let self, (error as? APIError)?.status == 404, probe || mine > self.answered else { return }
+                guard let self, gen == self.generation, (error as? APIError)?.status == 404, probe || mine > self.answered else { return }
                 self.answered = max(self.answered, mine)
                 self.unsupported = true
                 self.readiness = nil
@@ -64,7 +67,7 @@ final class AssistantReadinessModel {
         }
         if !probe { inflight = task }
         await task.value
-        if probe { probing = false }
+        if probe, gen == generation { probing = false }
         if inflight == task { inflight = nil }
     }
 
@@ -73,6 +76,16 @@ final class AssistantReadinessModel {
         guard let api else { return }
         try? await api.dismissAssistantReadiness()
         readiness?.dismissed = true
+    }
+
+    /// The Persona page shows another manager: what was read of the one before, and an answer about it still on its way,
+    /// are not this one's.
+    func forget() {
+        generation += 1
+        answered = asked
+        inflight = nil
+        probing = false
+        reset()
     }
 
     /// For tests and screenshots.

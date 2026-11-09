@@ -211,35 +211,6 @@ struct MarkdownTablePreparationTests {
         #expect(measurements == 2)
     }
 
-    @Test func repeatedTablePreparationBeforeAndAfter() {
-        let rows = (0..<80).map { "| \($0) | **Synthetic task \($0)** | See [reference](https://example.com) and `value_\($0)` |" }
-        let content = MarkdownContent("| # | Task | Note |\n| --- | --- | --- |\n" + rows.joined(separator: "\n"))
-        let preparation = MarkdownTablePreparation()
-        let expected = MarkdownTableText.measure(content.renderMarkdown(), fontSize: 15)
-        _ = preparation.measure(content, fontSize: 15)
-        var before: [Double] = [], after: [Double] = []
-        var checksum: CGFloat = 0
-        for round in 0..<6 {
-            let oldStart = ProcessInfo.processInfo.systemUptime
-            for _ in 0..<200 {
-                let result = MarkdownTableText.measure(content.renderMarkdown(), fontSize: 15)
-                checksum += result.natural.reduce(0, +)
-            }
-            let oldMS = (ProcessInfo.processInfo.systemUptime - oldStart) * 1_000
-            let newStart = ProcessInfo.processInfo.systemUptime
-            for _ in 0..<200 {
-                let result = preparation.measure(content, fontSize: 15)
-                checksum += result.natural.reduce(0, +)
-            }
-            let newMS = (ProcessInfo.processInfo.systemUptime - newStart) * 1_000
-            if round > 0 { before.append(oldMS); after.append(newMS) }
-        }
-        #expect(checksum > 0)
-        #expect(preparation.measure(content, fontSize: 15).natural == expected.natural)
-        print("table-preparation-benchmark rows=80 layouts=200 warmups=1 measured=5 before_ms=\(before) after_ms=\(after)")
-        // Operation timings are diagnostic evidence, not a simulator FPS assertion.
-    }
-
     @Test func changedContentReplacesTheCurrentTableEvenAtTheSameFontSize() {
         var renders = 0, measurements = 0
         let preparation = MarkdownTablePreparation(render: { content in
