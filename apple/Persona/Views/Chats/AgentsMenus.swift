@@ -59,7 +59,12 @@ struct AgentsListMenu: View {
     private var shownGrouping: DevGrouping { DevGrouping.resolved(grouping, supportsTodos: TodoStore.shared.isSupported) }
     private var groupingChoice: Binding<DevGrouping> { Binding(get: { shownGrouping }, set: { grouping = $0 }) }
     @StoredValue("dev.sort") private var sort: AgentSort = .state
+    #if os(iOS)
+    /// The rows' style or Compact List (#2530), as Settings › Appearance › Layout sets it.
+    private let display = AgentListDisplayChoice()
+    #else
     @StoredValue("dev.compact") private var compact = false
+    #endif
 
     /// The shell (docs/apple/ios.md「新外壳」) shows these inside its Work switch's menu: the items, without a button of their own.
     var inline = false
@@ -91,10 +96,17 @@ struct AgentsListMenu: View {
                     ForEach(AgentSort.allCases) { o in Label(o.title, systemImage: o.symbol).tag(o) }
                 }
             }
+            #if os(iOS)
+            Picker("Display", selection: display.binding) {
+                ForEach(AgentListDisplay.allCases) { d in Label(d.title, systemImage: d.symbol).tag(d) }
+            }
+            #else
+            // The Mac and Apple Vision Pro keep their rows (#2530): cards or Compact List.
             Picker("Display", selection: $compact) {
                 Label("Cards", systemImage: Theme.Icon.cardView).tag(false)
                 Label("Compact List [Agents Menus 06829c]", systemImage: Theme.Icon.listView).tag(true)
             }
+            #endif
             if shownGrouping != .recent {
                 Section {
                     Button {
@@ -292,7 +304,7 @@ struct AgentRowMenu: View, Equatable {
 }
 
 extension AgentRowMenu {
-    /// The menu of a row's agent: its long-press menu and, on iOS, its ⋯ (`AgentRowMoreButton`) are the same one. With
+    /// The menu of a row's agent, its long-press menu (on iOS the only way to it since the row's ⋯ went, #2530). With
     /// the rows' swipes gone there (#1244), Interrupt and Mark as Seen are here too.
     @MainActor init(_ s: Session, model: AppModel, actions: Actions) {
         self.init(key: s.key, pinned: model.isPinned(s.key), muted: model.isMuted(s), looping: s.loop != nil, live: s.state.isLive,

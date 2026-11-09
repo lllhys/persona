@@ -9,11 +9,13 @@ nonisolated enum MacOpenURL {
         /// `persona://link?…`: a computer's pairing link, for Persona Link on the computer joining the hub; this app
         /// hands it over (or says to install Persona Link) and never pairs with it (#4198).
         case computerLink
+        case sentRecords
         case ignore
     }
 
     static func route(_ url: URL) -> Route {
         guard HubNaming.accepts(scheme: url.scheme) else { return .ignore }
+        if SentSettingsLink.matches(url) { return .sentRecords }
         switch url.host()?.lowercased() {
         case "open":
             // The same query as the iPhone's Live Activity links (FleetLink).

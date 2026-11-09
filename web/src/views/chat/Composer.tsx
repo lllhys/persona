@@ -245,11 +245,42 @@ export const Composer = memo(function Composer({
           requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
           return;
         }
-        if (e.type === "replace" && replaceNeedsConfirm(draftNow.current, e.text) && !confirm(t("chat-composer.replace_confirm"))) return;
         // "Edit" a message sent with a quote: the quote goes back to the bar, the words to the input
         const split = e.type === "replace" ? splitQuotes(e.text) : null;
-        if (e.type === "replace") setQuotes(draftKey, split ? parseQuotes(split.quotes) : []);
+        const nextQuotes = e.type === "replace" ? (split ? parseQuotes(split.quotes) : []) : null;
         const next = split ? split.rest : applyDraft(draftNow.current, e);
+        // "Edit" or a rewind over unsent words, quotes or comments puts the message in at once, with no question first:
+        // the notice's Undo brings back what was typed, the quotes on the bar and where the caret was (#2450). An empty
+        // bar, or one that would send the same blocks, loses nothing.
+        const before = getQuotes(draftKey).list;
+        const dropsQuotes = before.length > 0 && withQuoteBlock(before, "") !== withQuoteBlock(nextQuotes ?? [], "");
+        const kept =
+          nextQuotes && (replaceNeedsConfirm(draftNow.current, next) || dropsQuotes)
+            ? { text: draftNow.current, quotes: before, caret: input.current?.selectionStart ?? draftNow.current.length }
+            : null;
+        if (kept) {
+          toast(t("chat-composer.replaced"), "ok", {
+            label: t("chat-composer.undo"),
+            run: () => {
+              setQuotes(draftKey, kept.quotes);
+              // the box went away or shows another conversation: the words go back to this one's stored draft
+              if (!mounted.current || keyNow.current !== draftKey) {
+                storeDraft(draftKey, kept.text);
+                return;
+              }
+              setDraft(kept.text);
+              setDismissed(false);
+              requestAnimationFrame(() => {
+                const el = input.current;
+                if (!el) return;
+                el.focus({ preventScroll: true });
+                el.setSelectionRange(kept.caret, kept.caret);
+                setCaret(kept.caret);
+              });
+            },
+          });
+        }
+        if (nextQuotes) setQuotes(draftKey, nextQuotes);
         setDraft(next);
         setDismissed(false);
         requestAnimationFrame(() => {

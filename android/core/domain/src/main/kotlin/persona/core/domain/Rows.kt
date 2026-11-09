@@ -123,7 +123,7 @@ private fun genericToolVerb(n: String): Key? {
 }
 
 private fun personaToolVerb(n: String): Key? = when (n) {
-    // Agents on the user's computers (docs/assistant/assistant.md "Agents and Lark tools").
+    // Agents on the user's computers (docs/assistant/assistant.md "Current structure", Agents).
     "agent_read" -> Key.ToolAgentRead
     "agent_send", "send_to_agent" -> Key.ToolAgentSend
     "agents_list", "list_agents" -> Key.ToolAgentsList

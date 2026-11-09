@@ -1,5 +1,7 @@
 {
   "elicitation_title": "An MCP request needs you",
+  "elicitation_server_title": "MCP server {server} needs you",
+  "elicitation_body": "Open Persona to respond",
   "question_title": "Claude has a question",
   "plan_title": "A plan needs your approval",
   "permission_title": "Permission needed",

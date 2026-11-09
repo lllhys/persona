@@ -45,7 +45,7 @@ def report(name, a, b):
 
 def setup(t):
     mock(t.c, "reset")
-    t.c.call("defaults", remove=["dev.machineFilter", "dev.grouping", "dev.compact", "dev.folded"])
+    t.c.call("defaults", remove=["dev.machineFilter", "dev.grouping", "dev.compact", "dev.folded", "agents.rowStyle"])
 
 
 def at_list(t, row_in_view=False, row=True):
@@ -99,9 +99,10 @@ def row_menu_holds_still(t):
 
 
 def row_more_menu_stays_open(t):
-    """A row's ⋯ menu (#1244: the rows do not swipe) stays open while its agent keeps working."""
+    """A row's menu (#1244: the rows do not swipe; its long press since the ⋯ went, #2530) stays open while its agent
+    keeps working."""
     at_list(t, row_in_view=True)
-    t.c.tap(id="agents.row.more", labelContains="给天气 App 加主屏幕小组件")
+    t.c.longpress(**ROW)
     t.see("the row's menu", label="关闭 Agent…", trait="button", timeout=5)
     churn(t)
     t.true(t.find(label="关闭 Agent…", trait="button"), "the menu is still open")

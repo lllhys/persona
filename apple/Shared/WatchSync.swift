@@ -16,6 +16,12 @@ nonisolated struct WatchConfigs: Codable, Sendable, Equatable {
     var features: [String: [String]]? = nil
 }
 
+nonisolated extension Interaction {
+    /// Whether the phone passes it to the watch: not an MCP form or link, which the watch can't fill in, and which a
+    /// watch build from before the kind would fail to decode, losing the whole summary with it.
+    var showsOnWatch: Bool { kind != .elicitation }
+}
+
 /// What the watch needs to render without its own WebSocket: live sessions and pending interactions.
 
 nonisolated struct WatchSummary: Codable, Sendable {

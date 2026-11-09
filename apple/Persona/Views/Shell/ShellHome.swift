@@ -282,7 +282,7 @@ struct ShellNeedsYou: View {
             Button { model.open(ix.sessionKey) } label: {
                 BUIListRow(agentName(ix), detail: oneLine(ix.summary ?? ix.questions?.first?.question ?? ix.title),
                            accessory: .disclosure, detailLines: 1) {
-                    IconTile(ix.kind.symbol, tint: Theme.needsYou)
+                    IconTile(ix.symbol, tint: Theme.needsYou)
                 }
             }
             .buttonStyle(.plain)
@@ -339,7 +339,7 @@ struct ShellNeedsYou: View {
         case .agent(let ix):
             Button { model.open(ix.sessionKey) } label: {
                 HStack(spacing: Theme.Space.m) {
-                    ThemedIcon(ix.kind.symbol)
+                    ThemedIcon(ix.symbol)
                         .font(Theme.Font.heading)
                         .foregroundStyle(Theme.needsYou)
                         .scaledFrame(width: Theme.Size.icon)

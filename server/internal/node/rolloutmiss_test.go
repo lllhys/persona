@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,6 +90,14 @@ func TestRolloutPathArchived(t *testing.T) {
 	const other = "55555555-5555-5555-5555-555555555555"
 	if p := rolloutPath(codex, other); p != "" {
 		t.Fatalf("no rollout: %q", p)
+	}
+	// The archived rollout's metadata must identify the thread being looked up as well as its filename.
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(strings.ReplaceAll(string(data), id, other)), 0600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.Rename(src, filepath.Join(filepath.Dir(dst), "rollout-"+day.Format("2006-01-02T15-04-05")+"-"+other+".jsonl")); err != nil {
 		t.Fatal(err)

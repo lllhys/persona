@@ -108,16 +108,6 @@ func (r *RewindScreen) Choice(label string) *RewindChoice {
 	return nil
 }
 
-// HasCode: the screen offers to restore the code, so there are code changes after the prompt.
-func (r *RewindScreen) HasCode() bool {
-	for _, c := range r.Choices {
-		if strings.HasPrefix(c.Label, "Restore code") {
-			return true
-		}
-	}
-	return false
-}
-
 // ParseRewind reads the /rewind panel at the bottom of a plain screen, nil when the screen shows none.
 func ParseRewind(plain string) *RewindScreen {
 	lines := strings.Split(strings.ReplaceAll(plain, "\r", ""), "\n")

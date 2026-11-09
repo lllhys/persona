@@ -1765,7 +1765,9 @@ nonisolated struct Item: Codable, Identifiable, Hashable, Sendable {
 }
 
 nonisolated enum InteractionKind: String, Codable, Sendable {
-    case question, plan, permission, screen
+    /// `elicitation`: an MCP server's form or link (docs/protocol/protocol.md "MCP elicitation"). The hub sends it only to an
+    /// app that declared it in `client_hello` (the iOS app, `LiveConnection.helloFeatures`).
+    case question, plan, permission, screen, elicitation
 }
 
 nonisolated struct QuestionOption: Codable, Hashable, Sendable {
@@ -1832,8 +1834,9 @@ nonisolated struct Interaction: Codable, Identifiable, Hashable, Sendable {
     var secret: Bool?
     var fields: [InteractionField]?
     /// Something to fill in before it can be allowed: every quick Allow (lists, menus, Siri, the watch) is off. The
-    /// password card counts even without its field, so no path allows it without a password.
-    var requiresInput: Bool { !(fields ?? []).isEmpty || isSecretRun }
+    /// password card counts even without its field, so no path allows it without a password, and so does an MCP form or
+    /// link, answered only on its card.
+    var requiresInput: Bool { !(fields ?? []).isEmpty || isSecretRun || kind == .elicitation }
     /// Who asks when it is not Claude Code: "codex" / "traex" (a card read off a Codex TUI, docs/integrations/codex.md「提问和审批」).
     var agent: String?
     /// Why the agent asks for this permission, in its words.
@@ -1865,6 +1868,13 @@ nonisolated struct Interaction: Codable, Identifiable, Hashable, Sendable {
     /// The manager that reported it (docs/protocol/protocol.md "Per-manager routing"). Once it is no longer pending
     /// the hub routes by the manager a request names, so Change Answer names this one.
     var manager: String?
+    /// An `elicitation` card's form or link, and who asks: the MCP server, where it is configured, and the subagent that
+    /// called it, each only when the source gave it.
+    var elicitation: ElicitationRequest?
+    var mcpServerName: String?
+    var mcpConfigSource: String?
+    var agentID: String?
+    var agentType: String?
 
     var sessionKey: SessionKey { SessionKey(group: group, machineID: machineID, sessionID: sessionID) }
     var machineRef: MachineRef { MachineRef(group: group, id: machineID) }
@@ -1884,7 +1894,8 @@ nonisolated struct Interaction: Codable, Identifiable, Hashable, Sendable {
         case machineID = "machine_id", sessionID = "session_id", sessionTitle = "session_title", taskTitle = "task_title",
              createdAt = "created_at", expiresAt = "expires_at", toolName = "tool_name", toolUseID = "tool_use_id",
              toolInput = "tool_input", alwaysLabel = "always_label", alwaysKeys = "always_keys", agentLabelHint = "agent_label", hubGroup = "app_hub_group",
-             mutedFlag = "muted"
+             mutedFlag = "muted", elicitation, mcpServerName = "mcp_server_name", mcpConfigSource = "mcp_config_source",
+             agentID = "agent_id", agentType = "agent_type"
     }
 }
 
@@ -1957,9 +1968,12 @@ nonisolated struct Resolution: Codable, Sendable {
     var answeredBy: String?
     /// Why the assistant answered so (with `answeredBy`).
     var reason: String?
+    /// An MCP form or link (`Elicitation.resolution`): accept, decline or cancel, and with a form's accept what was filled in.
+    var action: String?
+    var content: [String: JSONValue]?
 
     enum CodingKeys: String, CodingKey {
-        case answers, approve, mode, feedback, allow, always, message, keys, text, dismiss, option, options, values, reason
+        case answers, approve, mode, feedback, allow, always, message, keys, text, dismiss, option, options, values, reason, action, content
         case preKeys = "pre_keys", answeredBy = "answered_by"
     }
 

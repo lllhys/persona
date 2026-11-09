@@ -26,6 +26,7 @@ type codexRegistry struct {
 	byPane       map[string]string
 	threads      map[string]codexSource
 	remotes      map[string]*codexRemote
+	retries      map[string]codexRetry // server id -> attempts that did not connect (codex_backoff.go)
 	report       func(proto.CodexConfig)
 	kick         chan struct{}
 	scan         func() []codexProcess
@@ -152,11 +153,19 @@ func (n *Node) rememberCodex() {
 }
 
 func (n *Node) registerCodex(home, thread, path string) string {
+	if n.codices == nil || !validID(thread) {
+		return ""
+	}
+	return n.registerCanonicalCodex(canonicalCodexHome(home, n.home), thread, path)
+}
+
+// registerCanonicalCodex is registerCodex for a home canonicalCodexHome already resolved: the loops that register every
+// rollout of a home resolve it once, not once per rollout (each resolution walks the home's path with a stat per part).
+func (n *Node) registerCanonicalCodex(home, thread, path string) string {
 	r := n.codices
 	if r == nil || !validID(thread) {
 		return ""
 	}
-	home = canonicalCodexHome(home, n.home)
 	if n.sessionScope != nil && !sameScopePath(home, n.sessionScope.codex) {
 		return ""
 	}
@@ -169,6 +178,13 @@ func (n *Node) registerCodex(home, thread, path string) string {
 	old := r.threads[id]
 	if path == "" {
 		path = old.path
+	} else if old.path != "" && old.path != path {
+		// A process may still hold an older segment. Do not replace the current transcript with it.
+		if previous, err := os.Stat(old.path); err == nil {
+			if next, err := os.Stat(path); err == nil && (previous.ModTime().After(next.ModTime()) || previous.ModTime().Equal(next.ModTime()) && old.path > path) {
+				path = old.path
+			}
+		}
 	}
 	r.threads[id] = codexSource{home, thread, path}
 	return id
@@ -241,9 +257,8 @@ func (n *Node) discoverCodex() {
 				if !pathWithin(path, home) { // Windows paths do not tell case apart (codex_desktop.go)
 					continue
 				}
-				match := rolloutIDRe.FindStringSubmatch(path)
-				if match != nil {
-					id := n.registerCodex(home, match[1], path)
+				if thread := rolloutThreadID(home, path); thread != "" {
+					id := n.registerCodex(home, thread, path)
 					liveRollouts[id] = holder
 				}
 			}
@@ -327,9 +342,7 @@ func (n *Node) runCodex(ctx context.Context) {
 		}
 		cfg := n.codexInventory()
 		for _, home := range cfg.Homes {
-			for _, f := range rollouts(home) {
-				n.registerCodex(home, f.id, f.path)
-			}
+			n.registerRollouts(home)
 		}
 		for _, s := range cfg.Servers {
 			n.ensureCodexRemote(ctx, s)
@@ -345,6 +358,18 @@ func (n *Node) runCodex(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
+	}
+}
+
+// registerRollouts registers the rollouts rollouts(home) lists, with home resolved once for all of them.
+func (n *Node) registerRollouts(home string) {
+	list := rollouts(home)
+	if len(list) == 0 {
+		return
+	}
+	canonical := canonicalCodexHome(home, n.home)
+	for _, f := range list {
+		n.registerCanonicalCodex(canonical, f.id, f.path)
 	}
 }
 
@@ -369,8 +394,8 @@ const (
 const codexHeldIdle = 24 * time.Hour
 
 // heldRecently: the rollout at path was written within codexHeldIdle (its last line's time or its mtime, the later).
-func heldRecently(m quickMeta, path string) bool {
-	st, err := os.Stat(path)
+func heldRecently(m quickMeta, path string, pass *codexListPass) bool {
+	st, err := pass.stat(path)
 	if err != nil {
 		return false
 	}
@@ -381,15 +406,86 @@ func heldRecently(m quickMeta, path string) bool {
 	return time.Since(at) < codexHeldIdle
 }
 
+// codexListPass holds what one codexSessions pass looks up once instead of once per thread. The list is rebuilt every
+// second, and with a few hundred rollouts each thread resolved its directory's symlinks (a stat per part of the path,
+// a readlink per link), stat'ed its rollout up to three times, looked for the Codex App's socket and rebuilt the
+// assistant's project name with a regexp: about 19 stat calls per rollout per pass. It lives for one pass of one caller,
+// so nothing in it is shared or needs invalidating. A nil pass looks everything up each time.
+type codexListPass struct {
+	real    map[string]string    // directory → realPath
+	stats   map[string]codexStat // rollout path → os.Stat
+	desktop map[string]bool      // Codex home → codexDesktopAvailable
+	own     string               // assistantProject, once ownSet
+	ownSet  bool
+}
+
+type codexStat struct {
+	info os.FileInfo
+	err  error
+}
+
+func newCodexListPass() *codexListPass {
+	return &codexListPass{real: map[string]string{}, stats: map[string]codexStat{}, desktop: map[string]bool{}}
+}
+
+func (p *codexListPass) realPath(dir string) string {
+	if p == nil {
+		return realPath(dir)
+	}
+	real, ok := p.real[dir]
+	if !ok {
+		real = realPath(dir)
+		p.real[dir] = real
+	}
+	return real
+}
+
+func (p *codexListPass) stat(path string) (os.FileInfo, error) {
+	if p == nil {
+		return os.Stat(path)
+	}
+	st, ok := p.stats[path]
+	if !ok {
+		st.info, st.err = os.Stat(path)
+		p.stats[path] = st
+	}
+	return st.info, st.err
+}
+
+func (p *codexListPass) desktopAvailable(home string) bool {
+	if p == nil {
+		return codexDesktopAvailable(home)
+	}
+	up, ok := p.desktop[home]
+	if !ok {
+		up = codexDesktopAvailable(home)
+		p.desktop[home] = up
+	}
+	return up
+}
+
+func (p *codexListPass) assistantProject(n *Node) string {
+	if p == nil {
+		return n.assistantProject()
+	}
+	if !p.ownSet {
+		p.own, p.ownSet = n.assistantProject(), true
+	}
+	return p.own
+}
+
 func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
+	return n.codexSessionsIn(seen, newCodexListPass())
+}
+
+// codexSessionsIn lists the Codex threads as offline rows, looking up through pass (nil: each time).
+func (n *Node) codexSessionsIn(seen map[string]bool, pass *codexListPass) []proto.Session {
 	if n.codices == nil {
 		return nil
 	}
 	cfg := n.codexInventory()
 	for _, home := range cfg.Homes {
-		for _, f := range rollouts(home) {
-			n.registerCodex(home, f.id, f.path)
-		}
+		n.registerRollouts(home)
 	}
 	n.codices.mu.Lock()
 	sources := make(map[string]codexSource, len(n.codices.threads))
@@ -404,11 +500,11 @@ func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
 	var out []proto.Session
 	projects := map[string]string{}
 	for id, src := range sources {
-		src, visible := n.listedCodexSource(id, src)
-		if !visible || seen[id] || n.isAssistantSession(id) || n.ownedAssistantSource(src.thread) {
+		src, visible := n.listedCodexSource(id, src, pass)
+		if !visible || seen[id] || n.isAssistantSessionIn(id, pass) || n.ownedAssistantSource(src.thread) {
 			continue
 		}
-		if n.programRun(id, src) {
+		if n.programRun(id, src, pass) {
 			continue
 		}
 		if n.agentFiltered("codex", src.path) && !n.keptSessions()[id] { // another platform's runs (agentfilters.go)
@@ -418,7 +514,7 @@ func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
 			Capabilities: &proto.SessionCapabilities{Read: true}, ReadOnlyReason: "仅查看：未发现可共享的 app-server 入口，请在电脑上打开会话"}
 		var m quickMeta
 		if src.path != "" {
-			if st, err := os.Stat(src.path); err == nil {
+			if st, err := pass.stat(src.path); err == nil {
 				m = n.meta(src.path, st)
 				if !n.sessionScopeAllows(m.cwd) {
 					continue
@@ -435,7 +531,7 @@ func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
 			}
 		}
 		s.AgentName = filepath.Base(src.home)
-		if holder := liveRollouts[id]; holder != "" && heldRecently(m, src.path) {
+		if holder := liveRollouts[id]; holder != "" && heldRecently(m, src.path, pass) {
 			// A stdio app-server (the Codex desktop App's own) has no way in, but the rollout it holds open says
 			// whether a turn runs; unknown put a desktop task at work under the app's quiet spaces.
 			s.Status = proto.StatusUnknown
@@ -479,7 +575,7 @@ func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
 				s.AgentName, s.ParentThreadID, s.AgentSurface = "Codex App", o.parent, transcript.SurfaceDesktop
 				s.ReadOnlyReason = "仅查看：这个子 Agent 由父 Agent 驱动"
 				n.placeCodexDesktop(&s, src, o.parent, true)
-			case codexDesktopChat(src):
+			case codexDesktopChatIn(src, pass):
 				// The Codex App on this machine runs it (codex_desktop.go): sendable while the App has the thread loaded.
 				s.AgentName, s.AgentSurface = "Codex App", transcript.SurfaceDesktop
 				s.Capabilities.Send = true
@@ -490,7 +586,7 @@ func (n *Node) codexSessions(seen map[string]bool) []proto.Session {
 			s.AgentName, s.AgentSurface = "Codex CLI", transcript.SurfaceCLI
 		}
 		n.decorateCodexSession(&s, src, cfg.LegacyHome, projects)
-		if s.SourceKind == "codex_history" && !s.Capabilities.Send && !s.IsSubagent && n.codexResumable(id) {
+		if s.SourceKind == "codex_history" && !s.Capabilities.Send && !s.IsSubagent && n.codexResumableIn(id, pass) {
 			// Nothing has it open: a message resumes it in a new tab (codex_resume.go).
 			s.Capabilities.Send = true
 			s.ReadOnlyReason = ""

@@ -3,7 +3,6 @@ package assistant
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -345,7 +344,7 @@ func (s *Service) nodeConnected(machine string, at time.Time) {
 // tokenSync is one machine's marks: its latest session list, what its node was last told, one send at a time.
 type tokenSync struct {
 	mu       sync.Mutex
-	sessions []proto.Session
+	sessions []tokenRow // nil: no list from its node since the assistant started
 	dirty    bool
 	sending  bool
 	last     map[string]map[string]string
@@ -375,7 +374,7 @@ func (s *Service) syncTodoTokens(machine string, sessions []proto.Session) {
 	ts := s.tokenSyncOf(machine)
 	ts.mu.Lock()
 	if sessions != nil {
-		ts.sessions = slices.Clone(sessions)
+		ts.sessions = tokenRows(sessions)
 	}
 	ts.dirty = true
 	if ts.sending {
@@ -403,7 +402,7 @@ func (s *Service) syncTodoTokens(machine string, sessions []proto.Session) {
 				if err != nil {
 					continue
 				}
-				list = got
+				list = tokenRows(got)
 			}
 
 			expected := s.expectedTodoTokens(machine, list)
@@ -463,10 +462,26 @@ func (s *Service) syncLinkedTodoTokens() {
 	}
 }
 
+// tokenRow is what of a session its marks are worked out from (expectedTodoTokens): a list of these is kept for each
+// machine while the todos are loaded, not a copy of its whole sessions.
+type tokenRow struct {
+	SessionID, Status, PaneID, SpaceKind string
+}
+
+// tokenRows are list's token rows; non-nil for a non-nil list, even an empty one.
+func tokenRows(list []proto.Session) []tokenRow {
+	out := make([]tokenRow, 0, len(list))
+	for i := range list { // by index: a range value copies every (large) session it passes
+		out = append(out, tokenRow{SessionID: list[i].SessionID, Status: list[i].Status, PaneID: list[i].PaneID,
+			SpaceKind: list[i].SpaceKind})
+	}
+	return out
+}
+
 // expectedTodoTokens are the marks of machine's online herdr panes whose agents work for open todos, by session id
 // (#873).
-func (s *Service) expectedTodoTokens(machine string, list []proto.Session) map[string]map[string]string {
-	byID := make(map[string]proto.Session, len(list))
+func (s *Service) expectedTodoTokens(machine string, list []tokenRow) map[string]map[string]string {
+	byID := make(map[string]tokenRow, len(list))
 	for _, c := range list {
 		byID[c.SessionID] = c
 	}

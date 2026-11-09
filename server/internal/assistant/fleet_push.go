@@ -210,10 +210,15 @@ func (s *Service) noteStop(machine, sid string, p map[string]any) {
 	}
 }
 
-// notifyFinished decides, after the delay, whether this end of a turn is worth a push and to which devices.
+// notifyFinished decides, after the delay, whether this end of a turn is worth a push and to which devices. The delay
+// is a timer: a goroutine asleep through it would hold a stack per pending turn end (#2472).
 func (s *Service) notifyFinished(machine, id string, gen int) {
 	t := s.notifyTimings()
-	time.Sleep(t.doneDelay())
+	time.AfterFunc(t.doneDelay(), func() { s.notifyFinishedNow(machine, id, gen, t) })
+}
+
+// notifyFinishedNow is notifyFinished once its delay is over, with the timings it was read with.
+func (s *Service) notifyFinishedNow(machine, id string, gen int, t fleetTimings) {
 	sess, ok := s.decoratedSession(machine, id)
 	if ok && s.completionChildrenRunning(machine, sess) {
 		// Only the completion decision uses this copy; session state and reports stay intact.

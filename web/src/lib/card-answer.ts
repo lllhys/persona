@@ -52,9 +52,11 @@ export async function answerCard(ix: Interaction, body: Resolution): Promise<Car
       keepDelegated(ix, r);
       return { ok: true, already };
     }
-    // Handed back now, or the hub says it was handed back already: the agent waits on the computer (#4877).
+    // Handed back now, or the hub says it was handed back already: the agent waits on the computer (#4877). A hand back
+    // leaves a receipt too, as an answer does: the hub takes no other answer for this card any more, so the card must
+    // not just vanish (answered-lookup still counts the agent as waiting).
     const handedBack = already ? res.status === "dismissed" : r.dismiss === true;
-    endInteraction(ix.id, r.dismiss === true && !already ? undefined : { ix, resolution: r, already, handedBack });
+    endInteraction(ix.id, { ix, resolution: r, already, handedBack });
     return { ok: true, already };
   } catch (e) {
     if (e instanceof ApiError && e.status === 410) {

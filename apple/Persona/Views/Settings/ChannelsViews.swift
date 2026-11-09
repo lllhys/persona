@@ -457,10 +457,17 @@ struct ChannelDetailView: View {
     @ViewBuilder private func more(_ c: HubChannel) -> some View {
         if let dest = ChannelText.page(page.detail?.settingsURL) {
             Section {
-                NavigationLink(value: dest) {
-                    Label { Text(moreTitle(dest)).lineLimit(1) } icon: { ThemedIcon(Theme.Icon.options) }
+                if dest == .sent {
+                    Button { model.openSentRecords() } label: {
+                        Label { Text("Records sent as you").lineLimit(1) } icon: { ThemedIcon(Theme.Icon.sentAsYou) }
+                    }
+                    .accessibilityIdentifier("channel-more")
+                } else {
+                    NavigationLink(value: dest) {
+                        Label { Text(moreTitle(dest)).lineLimit(1) } icon: { ThemedIcon(Theme.Icon.options) }
+                    }
+                    .accessibilityIdentifier("channel-more")
                 }
-                .accessibilityIdentifier("channel-more")
             }
         }
     }

@@ -19,7 +19,7 @@ import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcons
 
 /**
- * The Outlook part of "Add mail account" (iOS `OutlookSignInSection`, docs/extensions/mail.md "Connecting Outlook"): while the hub has no client
+ * The Outlook part of "Add mail account" (iOS `OutlookSignInSection`, docs/extensions/mail.md "Outlook: Sign In with Microsoft"): while the hub has no client
  * ID (or the user changes it), the field for the one they registered in Microsoft Entra with the steps and the redirect URI
  * to register; then "Sign in with a Microsoft account", the same flow as Google's.
  */

@@ -19,7 +19,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// sendAllowed is the kind of rule that stops confirming sends in a conversation (docs/assistant/assistant.md "Gate").
+// sendAllowed is the kind of rule that stops confirming sends in a conversation (docs/assistant/assistant.md "Lark: skill supplied by the Lark extension", Gate).
 var sendAllowed = proto.LarkRule{Method: "POST", Path: "/conversations/*/messages", Action: "allow"}
 
 // spaceRig is a node on a fake hub, with the proxied example gate (the given rules first) and a phone that says yes to

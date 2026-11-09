@@ -6,6 +6,34 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// featureElicitation is what a phone registers with (POST /api/v1/devices `features`) when it shows MCP forms and
+// links and opens one from its push (#2433): such a card is pushed to it, and waits for it while no app is connected.
+// Only the iPhone app registers it; an older hub drops the name, so nothing waits and nothing is pushed there.
+const featureElicitation = "elicitation"
+
+// takesElicitation: d registered for MCP forms and links by push.
+func takesElicitation(d Device) bool { return hasFeature(d, featureElicitation) }
+
+// pushesElicitation: a card's push would reach a phone that shows MCP forms and links now (fleet.clients
+// `elicitation_push`). That is one registered for them, with a way to push it (its route is not none) and "Needs you"
+// on, and not holding pushes back for an open desktop app (Phone Muted), as sendFrom decides for every card. An
+// agent's mute is the manager's to add (assistant/fleet_ix.go elicitationReachable).
+func (p *Pusher) pushesElicitation(desktopOnline bool) bool {
+	if p == nil {
+		return false
+	}
+	wanted := alertWanted(pushWants{Kind: "input"}.fn(), desktopOnline)
+	for _, d := range p.list() {
+		if !takesElicitation(d) || p.routeOf(d).Route == pushNone || p.desktopOpen != nil && p.desktopOpen(d.DeviceID) {
+			continue
+		}
+		if wanted(devicePrefs(d.Prefs)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) hasElicitationClient() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

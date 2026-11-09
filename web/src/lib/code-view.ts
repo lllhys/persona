@@ -3,6 +3,7 @@
 // between hunks, the threads at their lines, and syntax highlighting (highlight.js's common grammars through lowlight,
 // loaded the first time a code or diff is drawn; plain until then). Drawn by views/extensions/CodeViews.tsx.
 import { useEffect, useState } from "react";
+import { commonLowlight } from "./lowlight";
 
 export type FileStatus = "added" | "modified" | "deleted" | "renamed" | string;
 
@@ -303,10 +304,9 @@ let loading: Promise<Lowlight> | null = null;
 const waiting = new Set<() => void>();
 
 function loadLowlight(): Promise<Lowlight> {
-  // Destructured so Rollup drops the entry's `all` re-export (every grammar, ~780 kB) and shares the common-grammar
-  // chunk rehype-highlight loads.
-  loading ??= import("lowlight").then(({ createLowlight, common }) => {
-    lowlight = createLowlight(common) as unknown as Lowlight;
+  // the instance the chat's code blocks use too (lowlight.ts)
+  loading ??= commonLowlight().then((shared) => {
+    lowlight = shared as unknown as Lowlight;
     waiting.forEach((f) => f());
     waiting.clear();
     return lowlight;

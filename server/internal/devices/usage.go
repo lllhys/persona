@@ -25,6 +25,15 @@ const (
 	// usageNodeWindow is how far back a node's whole window ("full") goes (node/usage.go's usageWindow): from then on
 	// what it sent is the record.
 	usageNodeWindow = 26 * time.Hour
+	// usageGather: how long usageLoop takes the writes that come after one, to store them with it in one transaction
+	// (one commit, so one WAL flush, not one a write): each node reports on a 10 s tick of its own, so with several
+	// machines a window takes several. It waits only while another machine has written in the last usageActive (a
+	// single busy machine's writes are stored at once); a chart's finest step is a minute. usageGatherBuckets bounds a
+	// transaction when the nodes send their whole windows at once (a manager that came back).
+	usageGather        = 5 * time.Second
+	usageActive        = 25 * time.Second
+	usageGatherBuckets = 4096
+	usageWriteTimeout  = 30 * time.Second
 )
 
 type usageStore interface {
@@ -32,6 +41,12 @@ type usageStore interface {
 	RollupUsage(ctx context.Context, before time.Time) (int64, error)
 	PruneUsage(ctx context.Context, before time.Time) (int64, error)
 	UsageSeries(ctx context.Context, machine string, from, to time.Time, step int) ([]db.UsageRow, error)
+}
+
+// usageBatchStore stores several writes in one transaction, in order (db.PutUsages); a store without it gets one
+// PutUsage a write.
+type usageBatchStore interface {
+	PutUsages(ctx context.Context, writes []db.UsageWrite) (rejected []error, err error)
 }
 
 func (d *Devices) usageStore() usageStore {
@@ -71,12 +86,13 @@ func (d *Devices) onUsage(machine string, params json.RawMessage, now time.Time)
 	}
 }
 
-// usageLoop writes the notifications in the order they came, and each minute rolls up the minute rows past 27 hours
-// and drops what is older than a week.
+// usageLoop writes the notifications in the order they came (those within usageGather of each other together, when
+// the store can), and each minute rolls up the minute rows past 27 hours and drops what is older than a week.
 func (d *Devices) usageLoop(ctx context.Context) {
 	st := d.usageStore()
 	tidy := time.NewTicker(metricsTidyEach)
 	defer tidy.Stop()
+	active := map[string]time.Time{} // when each machine's last write came
 	for {
 		select {
 		case <-ctx.Done():
@@ -85,11 +101,14 @@ func (d *Devices) usageLoop(ctx context.Context) {
 			if st == nil {
 				continue
 			}
-			wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			if err := st.PutUsage(wctx, w.machine, w.buckets, w.replaceFrom); err != nil && ctx.Err() == nil {
-				d.logf("[%s] save usage: %v", w.machine, err)
+			writes := []usageWrite{w}
+			if _, ok := st.(usageBatchStore); ok {
+				writes = d.gatherUsage(ctx, w, active)
 			}
-			cancel()
+			if ctx.Err() != nil { // stopping: as with what is queued, the nodes' next whole window (a reconnect) writes them
+				return
+			}
+			d.saveUsage(ctx, st, writes)
 		case <-tidy.C:
 			if st == nil {
 				continue
@@ -101,6 +120,81 @@ func (d *Devices) usageLoop(ctx context.Context) {
 			if _, err := st.PruneUsage(ctx, now.Add(-usageKeep)); err != nil && ctx.Err() == nil {
 				d.logf("usage prune: %v", err)
 			}
+		}
+	}
+}
+
+// gatherUsage is first, what is queued after it, and, while another machine wrote lately (active), the writes that
+// come within d.usageWait of it: in order, usageGatherBuckets at most. nil when ctx ended while it waited.
+func (d *Devices) gatherUsage(ctx context.Context, first usageWrite, active map[string]time.Time) []usageWrite {
+	now := time.Now()
+	others := false
+	for m, at := range active {
+		if now.Sub(at) > usageActive {
+			delete(active, m)
+		} else if m != first.machine {
+			others = true
+		}
+	}
+	active[first.machine] = now
+	writes, buckets := []usageWrite{first}, len(first.buckets)
+	var wait <-chan time.Time // nil: take only what is queued
+	if others {
+		t := time.NewTimer(d.usageWait)
+		defer t.Stop()
+		wait = t.C
+	}
+	for buckets < usageGatherBuckets {
+		var w usageWrite
+		select {
+		case w = <-d.usageWrites: // what is queued first
+		default:
+			if wait == nil {
+				return writes
+			}
+			select {
+			case w = <-d.usageWrites:
+			case <-wait:
+				return writes
+			case <-ctx.Done():
+				return nil
+			}
+		}
+		writes, buckets = append(writes, w), buckets+len(w.buckets)
+		active[w.machine] = time.Now()
+	}
+	return writes
+}
+
+// saveUsage stores writes in order: in one transaction when the store can, else one PutUsage each.
+func (d *Devices) saveUsage(ctx context.Context, st usageStore, writes []usageWrite) {
+	bs, ok := st.(usageBatchStore)
+	if !ok {
+		for _, w := range writes {
+			wctx, cancel := context.WithTimeout(ctx, usageWriteTimeout)
+			if err := st.PutUsage(wctx, w.machine, w.buckets, w.replaceFrom); err != nil && ctx.Err() == nil {
+				d.logf("[%s] save usage: %v", w.machine, err)
+			}
+			cancel()
+		}
+		return
+	}
+	batch := make([]db.UsageWrite, len(writes))
+	for i, w := range writes {
+		batch[i] = db.UsageWrite{Machine: w.machine, Buckets: w.buckets, ReplaceFrom: w.replaceFrom}
+	}
+	wctx, cancel := context.WithTimeout(ctx, usageWriteTimeout)
+	defer cancel()
+	rejected, err := bs.PutUsages(wctx, batch)
+	if ctx.Err() != nil {
+		return
+	}
+	for i, w := range writes {
+		if e := err; e != nil || (rejected != nil && rejected[i] != nil) {
+			if e == nil {
+				e = rejected[i]
+			}
+			d.logf("[%s] save usage: %v", w.machine, e)
 		}
 	}
 }

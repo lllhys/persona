@@ -5,6 +5,8 @@
   "task_no_machine": "「{task}」：コンピューター{machine}がありません",
   "no_machine": "コンピューター{machine}がありません",
   "fixed_launcher_unhealthy": "固定コンピューター {machine} のランチャー {launcher} は利用できません：{reason}。タスクはこのコンピューターに残ります。正常に戻ってから再試行してください。",
+  "launcher_not_on_machine": "{machine} にランチャー {launcher} がないため、何も起動していません。このコンピューターで使えるランチャー：{launchers}",
+  "launcher_swapped": "{machine} に {launcher} がないため、{to}（既定のモデル）で実行します",
   "start_identity_conflict": "起動応答で、指定したコンピューター上のセッションを確認できませんでした。",
   "failed_start": "開始できませんでした：{reason}",
   "task_failed_title": "「{name}」を開始できませんでした",

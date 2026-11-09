@@ -248,6 +248,9 @@ export interface TodoProjectGroup {
   state: TreeState;
   todos: Todo[];
   folded: boolean;
+  /** A knowledge-base project (an area of work, #2581): open to-dos the user keeps there, so it never folds for being
+   *  quiet, and "Done" (no agent at work) is not said of it. */
+  area?: boolean;
 }
 
 /** A todo's agents that are still on it, as the lookup has them. */
@@ -255,24 +258,29 @@ function liveAgents(td: Todo, lookup: SessionLookup): Session[] {
   return (td.agents ?? []).filter((a) => !a.released_at).map((a) => lookup(a.machine_id, a.session_id)).filter((s): s is Session => Boolean(s));
 }
 
-export function groupTodosByProject(todos: Todo[], lookup: SessionLookup, now = Date.now()): TodoProjectGroup[] {
-  const map = new Map<string, Todo[]>();
+/** Open to-dos by project (#2526, #2581): the knowledge-base project a to-do was put in first (named by projectName),
+ *  else the repository its agents work in; those with neither last ("Unsorted"). Groups that need the user come
+ *  first within each of the three; the to-dos keep their order. */
+export function groupTodosByProject(todos: Todo[], lookup: SessionLookup, now = Date.now(), projectName: (slug: string) => string = (slug) => slug): TodoProjectGroup[] {
+  const map = new Map<string, { name: string; tier: number; list: Todo[] }>();
   for (const td of todos) {
-    const name = projectOfTodo(td, lookup);
-    map.set(name, [...(map.get(name) ?? []), td]);
+    const repo = td.project ? "" : projectOfTodo(td, lookup);
+    const [key, name, tier] = td.project
+      ? [`todos-kb:${td.project}`, projectName(td.project), 0]
+      : repo
+        ? [`todos-project:${repo}`, repo, 1]
+        : ["todos-project:\u0000", t("lib-todo-tree.unsorted"), 2];
+    const g = map.get(key) ?? { name, tier, list: [] };
+    g.list.push(td);
+    map.set(key, g);
   }
-  const groups = [...map.entries()].map(([name, list]) => {
+  const groups = [...map.entries()].map(([key, { name, tier, list }]) => {
     const states = list.map((td) => todoTreeState(todoStatus(td, lookup), liveAgents(td, lookup)));
     const state = worst(states);
     const sessions = list.flatMap((td) => (td.agents ?? []).filter((a) => !a.released_at).map((a) => lookup(a.machine_id, a.session_id)).filter((s): s is Session => Boolean(s)));
     const touched = Math.max(latest(sessions), ...list.map((td) => Date.parse(td.updated_at) || 0));
-    return {
-      key: `todos-project:${name || "\u0000"}`,
-      name: name || t("lib-todo-tree.no_agent"),
-      state,
-      todos: list,
-      folded: state === "done" && now - touched > STALE_MS,
-    };
+    const area = tier === 0;
+    return { group: { key, name, state, todos: list, folded: !area && state === "done" && now - touched > STALE_MS, ...(area && { area }) }, tier };
   });
-  return groups.sort((a, b) => Number(a.key.endsWith("\u0000")) - Number(b.key.endsWith("\u0000")) || TREE_RANK[a.state] - TREE_RANK[b.state]);
+  return groups.sort((a, b) => a.tier - b.tier || TREE_RANK[a.group.state] - TREE_RANK[b.group.state]).map((g) => g.group);
 }

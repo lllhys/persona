@@ -54,9 +54,9 @@ class ShareTargetsShotsTest {
         // In the list's own order (needs you, working, done, idle).
         val rows = listOf(
             ShareTargetRow(SessionKey("laptop", "a"), "重构登录流程", "MacBook"),
-            ShareTargetRow(SessionKey("devbox", "b"), "排查 /orders 接口变慢", "开发机"),
+            ShareTargetRow(SessionKey("<test-hub>", "b"), "排查 /orders 接口变慢", "开发机"),
             ShareTargetRow(SessionKey("laptop", "c"), "天气 App 发 1.3 版", "MacBook"),
-            ShareTargetRow(SessionKey("devbox", "d"), "博客迁移到 Astro", "开发机"),
+            ShareTargetRow(SessionKey("<test-hub>", "d"), "博客迁移到 Astro", "开发机"),
         )
         // Shared to c two hours ago, to the main chat yesterday morning, to d the day before.
         val recents = listOf(RecentShareTarget(rows[2].key, now - 2 * hour), RecentShareTarget(null, now - 30 * hour),

@@ -85,7 +85,7 @@ node <Persona repository>/integrations/dsh/companion.mjs --dsh <DSH installation
 
 ### Automatic updates
 
-The plugin has two layers (generic approach in `docs/integrations/runtimes.md`, "Automatic updates"): DSH loads `index.js`, a stable loader; each version of plugin code (`lib/plugin.js`, `lib/dsh.js`… and
+The plugin has two layers (generic approach in `docs/integrations/runtimes.md`, "Auto-update"): DSH loads `index.js`, a stable loader; each version of plugin code (`lib/plugin.js`, `lib/dsh.js`… and
 `runtime-sdk`) lives in `~/.persona/runtime-packages/persona-dsh-runtime/<hash>/`, imported by the loader. personad embeds these files in its binary at build time.
 The plugin reports its hash when connecting to node; if node ships a different hash, it offers the package. The plugin fetches and verifies it, waits until it has no cards on the phone, stops the old version, and loads the new one. DSH sessions and Web GUI are unaffected
 (the plugin is only an observer; the phone list pauses for a few seconds during switching). This bypasses DSH plugin management and hot reload entirely: symlinked plugins are outside the hot-reload watch directory, so file changes do not take effect;
@@ -173,7 +173,7 @@ DSH authorization has only "Allow once"; the Lark gate's "Always allow in this c
 ## Subagents and background tasks
 
 DSH Agents often delegate work before ending a turn: background subagents (the `subagent` tool returns results to the parent and wakes it on completion), workflows, and background commands.
-The parent session itself is "Complete" when its turn ends, but the work is not finished. The plugin attaches these to the parent row using the same fields as Claude sessions (`docs/integrations/runtimes.md`, "Subagents and background tasks"):
+The parent session itself is "Complete" when its turn ends, but the work is not finished. The plugin attaches these to the parent row using the same fields as Claude sessions (`docs/integrations/runtimes.md`, "Sub-Agents and background tasks"):
 
 | Persona | DSH |
 | --- | --- |
@@ -187,7 +187,7 @@ The hub sends "Complete" notifications only after those finish and the parent's 
 
 Subagents are read-only, with no sending or renaming (returns `unsupported`): they are controlled by the parent, so give instructions there.
 
-Authorization and questions: when DSH delegates, it pins the child authorization policy to `never` (`captureDelegatedPolicyOverrides` in DSH); operations requiring authorization are rejected directly, and `ask_user_question` fails with
+Authorization and questions: when DSH delegates, it pins the child authorization policy to `never`; operations requiring authorization are rejected directly, and `ask_user_question` fails with
 `DELEGATED_CALLER`. These requests never enter a response chain, reach neither phone nor Web GUI, and do not block waiting for a user. If a child policy is changed back to `ask` in DSH,
 its authorization cards attach to the **parent session** on the phone (which lists the parent), with a `reason` prefix identifying the child ("Subagent ‘<name>’: …"); denial text is not steered (subagents do not accept interjections).
 

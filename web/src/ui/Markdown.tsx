@@ -1,4 +1,4 @@
-import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, memo, startTransition, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "./remark-gfm-parse";
 import remarkCjkFriendly from "remark-cjk-friendly/parseOnly";
@@ -18,13 +18,15 @@ import { rehypePathLinks, textPaths, writtenText } from "./PathLinks";
 import { usePathLinks } from "../lib/path-presence";
 import { StreamChunk } from "./stream/Chunk";
 import { splitChunks } from "./stream/chunks";
-import { hasLanguageFence, useHighlight } from "./stream/highlight";
+import { codeHighlight, hasLanguageFence, HighlightWanted, useAskHighlight, useBlockHighlight, useHighlight } from "./stream/highlight";
 import { useMath } from "./stream/math";
 import { useReplyMotion } from "./stream/motion";
 import { repairStreamingMarkdown } from "./stream/repair";
+import { remarkSoftBreaks, replyBreaks } from "./reply-breaks";
 import { useThrottledText } from "./stream/throttle";
 import { whenIdle } from "./stream/idle";
 import { createWordFadeState, rememberShown, remainingMs, shownBefore, type WordFadeState } from "./stream/wordFade";
+import { cachedMarkdown, markdownCache, markdownKey } from "./markdown-cache";
 import "./stream/stream.css";
 
 // A link ends at whitespace or any non-ASCII character (Chinese text, full-width punctuation), without trailing
@@ -405,10 +407,18 @@ function textOf(node: React.ReactNode): string {
   return "";
 }
 
+// The same element at every render, so a block that colors itself does not draw its icon again.
+const COPY_ICON = <Icon name="copy" size={13} />;
+
+// A fenced block colors itself once the grammars are in and it is near the viewport (stream/highlight.ts, #2465): its
+// <code> takes rehype-highlight's classes and tokens. Copying takes its text, which highlighting does not change.
 function CodeBlock({ children }: { children: React.ReactNode }) {
+  const pre = useRef<HTMLPreElement>(null);
+  const code = Array.isArray(children) ? (children.length === 1 ? children[0] : null) : children;
+  const lit = useBlockHighlight(pre, isValidElement(code) ? codeClass(code) : undefined, textOf(children));
   return (
     <div className="group/code relative">
-      <pre>{children}</pre>
+      <pre ref={pre}>{lit && isValidElement(code) ? cloneElement(code as ReactElement<{ className?: string }>, lit) : children}</pre>
       <button
         type="button"
         aria-label={t("ui-markdown.copy_code")}
@@ -416,7 +426,7 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
         onClick={() => copyText(textOf(children).replace(/\n$/, ""))}
         className="absolute top-1.5 right-1.5 flex size-6 touch-hit items-center justify-center rounded-[6px] bg-surface text-ink-3 opacity-0 shadow-btn transition-opacity duration-150 group-hover/code:opacity-100 hover:text-ink focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        <Icon name="copy" size={13} />
+        {COPY_ICON}
       </button>
     </div>
   );
@@ -479,6 +489,29 @@ function TableBlock({ children, ref: _ref, ...rest }: React.ComponentProps<"tabl
   );
 }
 
+// A conversation's link components (paths on its machine open in the file panel), one object per machine and directory:
+// a kept tree (markdown-cache.ts) and a fresh one then use the same component types, so swapping one for the other
+// does not mount the links again.
+const linkComponents = new Map<string, Components>();
+
+function componentsFor(mid: string, cwd: string | undefined): Components {
+  const k = `${mid}\0${cwd ?? "\u0001"}`;
+  let c = linkComponents.get(k);
+  if (!c) {
+    c = {
+      ...markdownComponents,
+      a: ({ href, children, node }) => {
+        const line = Number(node?.properties?.dataLine) || undefined;
+        const title = typeof node?.properties?.title === "string" ? node.properties.title : undefined;
+        return <Link href={href} mid={mid} cwd={cwd} line={line} title={title}>{children}</Link>;
+      },
+    };
+    linkComponents.set(k, c);
+    if (linkComponents.size > 64) linkComponents.delete(linkComponents.keys().next().value!);
+  }
+  return c;
+}
+
 // `compact`: a few lines inside a card (a task's receipt): body size in the card's color, headings as bold body text,
 // tight blocks, so a parent's line-clamp shows as much as it can.
 // With `mid` (a conversation's machine) the paths the text names that are there link to the file panel; while
@@ -487,23 +520,26 @@ function TableBlock({ children, ref: _ref, ...rest }: React.ComponentProps<"tabl
 // (only the last is parsed again), what the growing end leaves open closed for the moment, its words fading in.
 // `fade`: a block that just arrived whole: its words fade in once, then it is rendered plain. Neither fades with
 // "Reply animation" off or reduced motion; once streaming ends it is plain Markdown again, without the fade's spans.
-export const Markdown = memo(function Markdown({ text: raw, small, compact, mid, cwd, streaming, fade }: { text: string; small?: boolean; compact?: boolean; mid?: string; cwd?: string; streaming?: boolean; fade?: boolean }) {
-  const components = useMemo<Components>(() => mid ? {
-    ...markdownComponents,
-    a: ({ href, children, node }) => {
-      const line = Number(node?.properties?.dataLine) || undefined;
-      const title = typeof node?.properties?.title === "string" ? node.properties.title : undefined;
-      return <Link href={href} mid={mid} cwd={cwd} line={line} title={title}>{children}</Link>;
-    },
-  } : markdownComponents, [mid, cwd]);
+// `lineBreaks`: a reply, read line by line as it was written (#2088, `reply-breaks.ts`): a single line break is one,
+// and steps numbered on from 5 right under a line of text are a list.
+export const Markdown = memo(function Markdown({ text: raw, small, compact, mid, cwd, streaming, fade, lineBreaks }: { text: string; small?: boolean; compact?: boolean; mid?: string; cwd?: string; streaming?: boolean; fade?: boolean; lineBreaks?: boolean }) {
+  const components = useMemo<Components>(() => (mid ? componentsFor(mid, cwd) : markdownComponents), [mid, cwd]);
   const text = useThrottledText(raw, Boolean(streaming));
   const motion = useReplyMotion();
   const wordFade = useWordFade(Boolean(streaming) && motion, Boolean(fade && !streaming) && motion, text);
   const settled = streaming ? writtenText(text) : text;
   const paths = useMemo(() => (mid ? textPaths(settled) : []), [settled, mid]);
   const { linkable, key } = usePathLinks(mid, cwd, paths);
-  const highlight = useHighlight(useMemo(() => hasLanguageFence(text), [text]));
-  const md = useMemo(() => linkify(normalizeMath(streaming ? repairStreamingMarkdown(text) : text), { math: true }), [text, streaming]);
+  // Code is highlighted by its blocks (CodeBlock), or with the switch off by rehype-highlight over the whole reply.
+  const fenced = useMemo(() => hasLanguageFence(text), [text]);
+  const inBlock = codeHighlight.inBlock;
+  const highlight = useHighlight(fenced && !inBlock);
+  useAskHighlight(fenced && inBlock);
+  const md = useMemo(() => {
+    const lines = lineBreaks ? replyBreaks(text) : text;
+    return linkify(normalizeMath(streaming ? repairStreamingMarkdown(lines) : lines), { math: true });
+  }, [text, streaming, lineBreaks]);
+  const remarkPlugins = lineBreaks ? REMARK_LINES : REMARK;
   const wantsMath = useMemo(() => hasMath(md), [md]);
   const katex = useMath(wantsMath);
   const rehypePlugins = useMemo<PluggableList>(
@@ -512,23 +548,36 @@ export const Markdown = memo(function Markdown({ text: raw, small, compact, mid,
     [key, highlight, katex],
   );
   const chunks = useMemo(() => (streaming ? splitChunks(md) : wordFade ? [{ start: 0, content: md }] : null), [md, streaming, wordFade]);
+  // A finished block: its tree from the cache when this text was drawn with the same plugins and links before.
+  const tree = useMemo(
+    () =>
+      chunks || !markdownCache.on
+        ? null
+        : cachedMarkdown(markdownKey(md, `${katex ? "katex" : ""}|${highlight ? "highlight" : ""}|${key}`, mid, cwd), { children: md, remarkPlugins, rehypePlugins, components, urlTransform: markdownUrl }),
+    [chunks, md, katex, highlight, key, mid, cwd, remarkPlugins, rehypePlugins, components],
+  );
   return (
-    <div className={`prose-j ${small ? "prose-sm" : ""} ${compact ? "prose-compact" : ""}`}>
-      {chunks ? (
-        chunks.map((c) => (
-          <StreamChunk key={c.start} start={c.start} content={c.content} remarkPlugins={REMARK} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrl} fade={wordFade} plain={!streaming} wholeDocument={chunks.length === 1} />
-        ))
-      ) : (
-        <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrl}>
-          {md}
-        </ReactMarkdown>
-      )}
-    </div>
+    <HighlightWanted.Provider value={fenced && inBlock}>
+      <div className={`prose-j ${small ? "prose-sm" : ""} ${compact ? "prose-compact" : ""}`}>
+        {chunks ? (
+          chunks.map((c) => (
+            <StreamChunk key={c.start} start={c.start} content={c.content} remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrl} fade={wordFade} plain={!streaming} wholeDocument={chunks.length === 1} />
+          ))
+        ) : tree ? (
+          tree
+        ) : (
+          <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrl}>
+            {md}
+          </ReactMarkdown>
+        )}
+      </div>
+    </HighlightWanted.Provider>
   );
 });
 
 // remark-cjk-friendly: **bold** right next to full-width CJK punctuation is still emphasis (CommonMark's flanking rules miss it).
 const REMARK: PluggableList = [remarkGfm, remarkMath, remarkCjkFriendly];
+const REMARK_LINES: PluggableList = [...REMARK, remarkSoftBreaks];
 
 /**
  * The message's fade timeline: while it streams (a fresh one per stream), or for a block that arrived whole until its

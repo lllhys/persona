@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -77,5 +79,63 @@ func TestMachineUsage(t *testing.T) {
 	}
 	if rows, _ := d.UsageSeries(ctx, "m2", now.Add(-2*time.Hour), now, 60); len(rows) != 1 || rows[0].Output != 1000 {
 		t.Fatalf("m2 = %+v", rows)
+	}
+}
+
+// Several nodes' writes in one transaction (PutUsages) come out as one at a time, in order: a whole window replaces
+// the minutes an older write left, what changed after it replaces its minute. A write Postgres rejects costs only
+// itself.
+func TestPutUsagesOneTransaction(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	now := time.Now().Truncate(time.Hour)
+	b := func(ago time.Duration, model, launcher string, out int64) proto.UsageBucket {
+		return proto.UsageBucket{Minute: now.Add(-ago).Unix(), Model: model, Launcher: launcher, Output: out, Requests: 1}
+	}
+	writes := []UsageWrite{
+		{Machine: "m1", Buckets: []proto.UsageBucket{b(time.Hour, "opus", "", 10), b(30*time.Hour, "opus", "", 100)}},
+		{Machine: "m2", Buckets: []proto.UsageBucket{b(time.Hour, "opus", "claude", 1000)}},
+		{Machine: "m1", Buckets: []proto.UsageBucket{b(time.Hour, "opus", "claude", 10), b(time.Hour, "gpt", "codex", 5)},
+			ReplaceFrom: now.Add(-26 * time.Hour)},
+		{Machine: "m1", Buckets: []proto.UsageBucket{b(time.Hour, "gpt", "codex", 7)}},
+	}
+	if rejected, err := d.PutUsages(ctx, writes); err != nil || rejected != nil {
+		t.Fatal(rejected, err)
+	}
+	var rows map[string]int64
+	read := func() {
+		rows = map[string]int64{}
+		for _, m := range []string{"m1", "m2"} {
+			list, err := d.UsageSeries(ctx, m, now.Add(-31*time.Hour), now, 60)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range list {
+				rows[fmt.Sprint(m, " ", (r.Minute-now.Unix())/3600, "h ", r.Model, " ", r.Launcher)] += r.Output
+			}
+		}
+	}
+	read()
+	want := map[string]int64{"m1 -30h opus ": 100, "m1 -1h opus claude": 10, "m1 -1h gpt codex": 7, "m2 -1h opus claude": 1000}
+	if !maps.Equal(rows, want) {
+		t.Fatalf("rows = %v, want %v", rows, want)
+	}
+	var xmins int
+	if err := d.pool.QueryRow(ctx, `SELECT count(DISTINCT xmin::text) FROM machine_usage`).Scan(&xmins); err != nil || xmins != 1 {
+		t.Fatalf("%d transactions (%v), want one", xmins, err)
+	}
+
+	bad := proto.UsageBucket{Minute: 1 << 50, Model: "opus", Launcher: "claude", Output: 1, Requests: 1} // no such time
+	rejected, err := d.PutUsages(ctx, []UsageWrite{
+		{Machine: "m1", Buckets: []proto.UsageBucket{b(time.Hour, "gpt", "codex", 8)}},
+		{Machine: "m2", Buckets: []proto.UsageBucket{b(time.Hour, "opus", "claude", 2000), bad}},
+		{Machine: "m2", Buckets: []proto.UsageBucket{b(2*time.Hour, "opus", "claude", 3)}},
+	})
+	if err != nil || len(rejected) != 3 || rejected[0] != nil || rejected[1] == nil || rejected[2] != nil {
+		t.Fatal(rejected, err)
+	}
+	read()
+	want["m1 -1h gpt codex"], want["m2 -2h opus claude"] = 8, 3
+	if !maps.Equal(rows, want) {
+		t.Fatalf("rows = %v, want %v", rows, want)
 	}
 }

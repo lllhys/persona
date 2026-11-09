@@ -13,6 +13,8 @@ data class LineItem(
     val item: Item, val fold: Fold? = null, val task: TaskNote? = null,
     /** Set by [foldCompactions] on the notice that stands for a compaction; the chat draws it as one divider. */
     val compaction: Compaction? = null,
+    /** A hub fold's original exchange anchor, retained when its first actual step replaces it. Not a wire ID. */
+    val exchangeId: String? = null,
 ) {
     val id get() = item.id
     val seq get() = item.seq
@@ -93,6 +95,16 @@ sealed interface WorkItem {
 
 data class ChatRow(val type: String, val item: LineItem? = null, val steps: List<WorkItem> = emptyList()) {
     val id get() = item?.id ?: "tools-" + steps.firstOrNull()?.id.orEmpty()
+    internal val exchangeId: String get() {
+        val first = item ?: when (val step = steps.firstOrNull()) {
+            is WorkItem.Tool -> step.call.use
+            is WorkItem.Thought -> step.item
+            is WorkItem.Folded -> step.item
+            is WorkItem.Narration -> step.item
+            null -> null
+        }
+        return first?.exchangeId ?: id
+    }
     val isUserInput get() = type == "user" ||
         (type == "image" && item?.item?.role == "user" && item.item.toolUseId == null)
     val start get() = item?.time ?: steps.firstNotNullOfOrNull { it.start }
@@ -118,6 +130,8 @@ data class ChatTurn(
 
 sealed interface ChatLine {
     val id: String
+    /** Stable composition identity; a turn's latest reply replaces its predecessor without changing wire identity. */
+    val contentKey: String get() = id
     val isInput: Boolean get() = false
     fun holds(messageId: String?): Boolean = messageId != null && when (this) {
         is Row -> row.id == messageId
@@ -125,7 +139,7 @@ sealed interface ChatLine {
         else -> false
     }
 
-    data class Row(val row: ChatRow) : ChatLine {
+    data class Row(val row: ChatRow, override val contentKey: String = row.id) : ChatLine {
         override val id get() = row.id
         override val isInput get() = row.type == "user"
     }
@@ -203,12 +217,6 @@ data class LineOptions(
     val pendingInteractionIds: List<String>? = null,
     /** The agent is at work (working or blocked on you): the last turn is the running one, see [chatLines]. */
     val live: Boolean = false,
-    /**
-     * A running work line is open unless its id is in [liveFolded] (Persona's own chat, #1614): every step shows as it
-     * arrives. Off (the Agents chat), a running line is open only when its id is in [openWork], like any other.
-     */
-    val openLive: Boolean = false,
-    val liveFolded: Set<String> = emptySet(),
 )
 data class ChatFooter(val interactionIds: List<String>) {
     val placement get() = "above_composer"

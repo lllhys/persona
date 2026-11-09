@@ -34,6 +34,8 @@ var bgSyncLimit int64 = 4 << 20
 // bgSlot lets one big first read run at a time.
 var bgSlot = make(chan struct{}, 1)
 
+// bgMarkers name the lines that can start or finish a background task; scanBackground looks for them together with
+// transcript's goal, ultracode and plan markers (bgMatch).
 var bgMarkers = [][]byte{[]byte("ScheduleWakeup"), []byte("Next wakeup scheduled"), []byte("CronCreate"), []byte("CronDelete"),
 	[]byte("run_in_background"), []byte("in background with ID"), []byte("moved to the background"), []byte("Async agent launched"),
 	[]byte("task-notification"), []byte(`"name":"Agent"`), []byte(`"name":"Task"`), []byte(`"TaskStop"`), []byte(`"KillShell"`),
@@ -141,6 +143,7 @@ func scanBackground(f *os.File, off *int64, m *transcript.Meta, size int64) {
 	}()
 	at, long := *off, false
 	var refusalLine []byte
+	match := bgMatch()
 	for {
 		line, err := r.ReadSlice('\n')
 		at += int64(len(line))
@@ -160,9 +163,9 @@ func scanBackground(f *os.File, off *int64, m *transcript.Meta, size int64) {
 			return
 		}
 		// api-request blobs repeat everything; skip them
+		// The static markers (bgMarkers and transcript's goal, ultracode and plan ones) in one pass over the line (bgmatch.go).
 		// A plan tool's result line does not name the tool: it is the line with the call's id.
-		if !long && len(line) <= 64<<10 && (containsAny(line, bgMarkers) || containsAny(line, transcript.GoalMarkers) || containsAny(line, transcript.UltracodeMarkers) ||
-			containsAny(line, transcript.PlanMarkers) || containsAny(line, m.PlanPending())) {
+		if !long && len(line) <= 64<<10 && (match.match(line) || containsAny(line, m.PlanPending())) {
 			transcript.ParseLine(0, bytes.TrimSuffix(line, []byte("\n")), m)
 		} else if !long {
 			m.ObserveModelFallback(bytes.TrimSuffix(line, []byte("\n")))

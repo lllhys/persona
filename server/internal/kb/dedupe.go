@@ -17,7 +17,7 @@ import (
 	"github.com/nwverse/persona/server/internal/prompts"
 )
 
-// Project dedupe (docs/assistant/knowledge.md "Project dedupe"). The same work is often discussed in several groups under different
+// Project dedupe (docs/assistant/knowledge.md "Project deduplication"). The same work is often discussed in several groups under different
 // names, and a chat's compression only sees project names: each group grew its own project (2026-11-01: two names
 // for the same work with no word in common, 10 people in common). Pairs of live projects that share people, chats
 // or name words go to the model with both profiles; the ones it calls the same are merged. Each pair's verdict is

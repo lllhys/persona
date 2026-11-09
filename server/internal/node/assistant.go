@@ -131,7 +131,10 @@ func (p *assistantProc) alive() bool {
 }
 
 // isAssistantSession tells assistant conversations (headless) apart from herdr sessions.
-func (n *Node) isAssistantSession(id string) bool {
+func (n *Node) isAssistantSession(id string) bool { return n.isAssistantSessionIn(id, nil) }
+
+// isAssistantSessionIn is isAssistantSession with the assistant's project name taken once per list pass (codexListPass).
+func (n *Node) isAssistantSessionIn(id string, pass *codexListPass) bool {
 	n.mu.Lock()
 	_, ok := n.procs[id]
 	a := n.agents[id]
@@ -148,7 +151,7 @@ func (n *Node) isAssistantSession(id string) bool {
 		return true
 	}
 	if p := n.transcriptPath(id); p != "" && (compat.IsAssistantTranscript(filepath.Base(filepath.Dir(p))) ||
-		isAssistantProject(filepath.Base(filepath.Dir(p)), n.assistantProject())) {
+		isAssistantProject(filepath.Base(filepath.Dir(p)), pass.assistantProject(n))) {
 		return true
 	}
 	// A conversation an agent runtime runs (assistant_runtime.go), listed before this node kept its state.
@@ -744,15 +747,20 @@ func (n *Node) assistantSessions() []proto.Session {
 	return out
 }
 
-// notifySessions pushes the session list right away instead of waiting for the next poll.
+// notifySessions pushes the session list right away instead of waiting for the next poll. A list the manager holds
+// already, byte for byte, does not go again (sessions_sent.go).
 func (n *Node) notifySessions() {
 	if n.peer == nil {
 		return
 	}
-	list := n.sessionList(context.Background(), false)
+	n.notifyList(n.sessionList(context.Background(), false))
+}
+
+// notifyList is notifySessions with the list built.
+func (n *Node) notifyList(list []proto.Session) {
 	n.mu.Lock()
 	n.lastList = listKey(list)
 	n.revsChanged(list)
 	n.mu.Unlock()
-	_ = n.peer.Notify("sessions.changed", map[string]any{"sessions": list})
+	n.sendSessions(list)
 }

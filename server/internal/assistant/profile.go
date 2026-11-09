@@ -19,7 +19,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The assistant's own settings (settings `assistant`, docs/assistant/assistant.md "Boundary with the hub"): the machine its
+// The assistant's own settings (settings `assistant`, docs/assistant/assistant.md "Boundary with hub"): the machine its
 // conversations run on, its launcher, the user's time zone, "About me", the main conversation and the ones it replaced,
 // and whether tasks from the main conversation are told only there. Only the assistant reads and writes them; hub.json's
 // assistant section is their default (the hub's hello). It reports what the hub's own features need of them in every

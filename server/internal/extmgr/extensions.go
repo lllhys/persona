@@ -1263,7 +1263,11 @@ func (ps *extensions) remoteManifest(ctx context.Context, r extension.Remote) (*
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", r.HTTPSocket)
 		}
-		client := &http.Client{Transport: &http.Transport{DialContext: dial}, Timeout: 10 * time.Second}
+		// One request per transport: nothing reuses its connection, which would otherwise stay idle (and keep its
+		// goroutines and descriptor) until the plugin closes it.
+		tr := &http.Transport{DialContext: dial, DisableKeepAlives: true}
+		defer tr.CloseIdleConnections()
+		client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://plugin/manifest", nil)
 		res, err := client.Do(req)
 		if err != nil {

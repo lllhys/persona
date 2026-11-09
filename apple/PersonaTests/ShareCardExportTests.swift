@@ -1,0 +1,46 @@
+import Foundation
+import Testing
+import UIKit
+@testable import Persona
+
+/// Export as Image of a long reply with a table, a list and code (#2216; made-up text), light and dark. With
+/// PERSONA_SHOTS set the images are written there (`share-<light|dark>.png`) to look at. Its width: `ShareCardWidthTests`.
+@MainActor struct ShareCardExportTests {
+    static let reply = """
+    ## 三个方案对比
+
+    | 方案 | 首屏时间 | 包体积 | 改动量 | 风险 |
+    | --- | --- | --- | --- | --- |
+    | 服务端渲染 | 0.8 s | +120 KB | 大：路由和数据层都要改 | 中：缓存失效要单独处理 |
+    | 静态预渲染 | 0.5 s | +40 KB | 中：只改构建脚本 | 低 |
+    | 懒加载拆包 | 1.4 s | −300 KB | 小：改 12 个页面的导入 | 低 |
+
+    推荐**静态预渲染**，理由：
+
+    1. 首屏最快，用户最在意这一点
+    2. 只动构建脚本，回滚简单
+    3. 和现在的缓存策略不冲突
+
+    构建脚本这样改：
+
+    ```js
+    export default defineConfig({
+      build: { target: "es2020", sourcemap: true },
+      plugins: [prerender({ routes: ["/", "/pricing", "/docs"], renderAfterDocumentEvent: "render-ready" })],
+    })
+    ```
+
+    改完跑一遍 `npm run build && npm run preview`，首页和价格页打开时看一下网络面板里有没有多余的请求。
+    """
+
+    @Test(arguments: [false, true]) func aReplyWithATableAndCode(dark: Bool) throws {
+        let image = try #require(MessageShareCard.render(Self.message, dark: dark))
+        if let dir = ProcessInfo.processInfo.environment["PERSONA_SHOTS"], let png = image.pngData() {
+            try png.write(to: URL(fileURLWithPath: dir).appending(path: "share-\(dark ? "dark" : "light").png"))
+        }
+        #expect(image.size.height > 0)
+    }
+
+    static let message = ShareMessage(text: reply, isUser: false, source: "MacBook · shop-web",
+                                      date: Date(timeIntervalSince1970: 1_793_000_000), agent: "Claude")
+}

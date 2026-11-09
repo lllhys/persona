@@ -79,11 +79,6 @@ func StatusPath(path string) string {
 	return strings.TrimSuffix(path, ".json") + ".status.json"
 }
 
-// LogPath is persona-link's log beside the link.json at path: the menu bar app sends the helper's there too.
-func LogPath(path string) string {
-	return filepath.Join(filepath.Dir(path), "link.log")
-}
-
 // WriteStatus replaces the saved status at once (another process may read it any time). It holds no credential.
 func WriteStatus(path string, s SavedStatus) error {
 	b, err := json.MarshalIndent(s, "", "  ")

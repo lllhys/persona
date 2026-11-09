@@ -2,6 +2,7 @@ package extmgr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,10 +11,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/extwire"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // tokenRecordOn is the manager's database for a test of its tokens' record (#1156), skipped without
@@ -403,5 +407,170 @@ func TestExtensionTokenRecordOrder(t *testing.T) {
 		if live[id] != hash {
 			t.Fatalf("%s: the record's live token %q, the manager's %q", id, live[id], hash)
 		}
+	}
+}
+
+// The hub is told the hash of each token the manager drops, revoked or replaced by the extension's next one, so that it
+// ends what that token has open through it (extwire.HubTokenRevoked); nothing when there was no token to drop.
+func TestDroppedTokensAreToldToTheHub(t *testing.T) {
+	h := newTestManager(t)
+	told := make(chan string, 4)
+	th := hubOf(h)
+	th.mu.Lock()
+	th.app = func(method string, params json.RawMessage) (any, error) {
+		if method == extwire.HubTokenRevoked {
+			var a struct {
+				Hash string `json:"hash"`
+			}
+			_ = json.Unmarshal(params, &a)
+			told <- a.Hash
+		}
+		return map[string]any{}, nil
+	}
+	th.mu.Unlock()
+	want := func(tok, what string) {
+		t.Helper()
+		select {
+		case got := <-told:
+			if got != hashToken(tok) {
+				t.Fatalf("%s: told of %q, want the dropped token's hash", what, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the hub was not told", what)
+		}
+	}
+	first := h.extTokens.issue("example", "Example", []string{extension.ScopeKBRead})
+	second := h.extTokens.issue("example", "Example", []string{extension.ScopeKBRead})
+	want(first, "replaced")
+	h.extTokens.revoke("example", db.ExtensionTokenStopped)
+	want(second, "revoked")
+	h.extTokens.revoke("example", db.ExtensionTokenStopped)
+	select {
+	case got := <-told:
+		t.Fatalf("told of %q with no token left to drop", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A notice that fails on the bus (it timed out, the connection went, the manager was off the bus a moment) is told
+// again, a bounded number of times, until the manager stops; one the hub answered (an older hub without the method) is
+// not.
+func TestDroppedTokenNoticeIsToldAgain(t *testing.T) {
+	h := newTestManager(t)
+	h.droppedWait = time.Millisecond
+	th := hubOf(h)
+	failing := make([]error, tellHubDroppedTries+2)
+	for i := range failing {
+		failing[i] = context.DeadlineExceeded
+	}
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	for i, c := range []struct {
+		name    string
+		fails   []error
+		stopped bool
+		want    int
+	}{
+		{"failed twice", []error{context.DeadlineExceeded, rpc.ErrDropped}, false, 3},
+		{"answered", []error{&rpc.Error{Message: "unknown method"}}, false, 1},
+		{"off the bus a moment", []error{bus.ErrOffline, bus.ErrOffline}, false, 3},
+		{"never told", failing, false, tellHubDroppedTries},
+		{"manager stopped", failing, true, 1},
+	} {
+		h.ctx = nil
+		if c.stopped {
+			h.ctx = stopped
+		}
+		hash := hashToken(fmt.Sprintf("pext_%d", i))
+		var mu sync.Mutex
+		tries := 0
+		th.mu.Lock()
+		th.app = func(method string, params json.RawMessage) (any, error) {
+			var a struct {
+				Hash string `json:"hash"`
+			}
+			_ = json.Unmarshal(params, &a)
+			if method != extwire.HubTokenRevoked || a.Hash != hash {
+				return map[string]any{}, nil
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			tries++
+			if tries <= len(c.fails) {
+				return nil, c.fails[tries-1]
+			}
+			return map[string]any{}, nil
+		}
+		th.mu.Unlock()
+		h.noticeDropped(hash)
+		mu.Lock()
+		n := tries
+		mu.Unlock()
+		if n != c.want {
+			t.Fatalf("%s: asked %d times, want %d", c.name, n, c.want)
+		}
+	}
+}
+
+// A manager with no hub at all has no one to tell, and does not try again (which would end in a log line).
+func TestDroppedTokenNoticeWithNoHub(t *testing.T) {
+	h := newTestManager(t)
+	h.droppedWait = time.Millisecond
+	h.opts.Hub = nil
+	logged := make(chan string, 1)
+	h.opts.Logf = func(format string, args ...any) {
+		if line := fmt.Sprintf(format, args...); strings.Contains(line, "dropped token") {
+			select {
+			case logged <- line:
+			default:
+			}
+		}
+	}
+	h.noticeDropped(hashToken("pext_none"))
+	select {
+	case got := <-logged:
+		t.Fatalf("tried again with no hub: %s", got)
+	default:
+	}
+}
+
+// The notice is told in the background: a hub slow to answer it holds up no revoke, nor the token record after it.
+func TestDroppedTokenNoticeHoldsUpNoRevoke(t *testing.T) {
+	h := newTestManager(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	th := hubOf(h)
+	th.mu.Lock()
+	th.app = func(method string, params json.RawMessage) (any, error) {
+		if method == extwire.HubTokenRevoked {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+		return map[string]any{}, nil
+	}
+	th.mu.Unlock()
+	defer close(release)
+	rec := &fakeTokenRecord{}
+	h.extTokens.keepRecord(rec, "example-manager", nil)
+	tok := h.extTokens.issue("example", "Example", []string{extension.ScopeKBRead})
+	done := make(chan struct{})
+	go func() {
+		h.extTokens.revoke("example", db.ExtensionTokenStopped)
+		close(done)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hub was not told")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("revoking waited for the hub to answer the notice")
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if n := len(rec.calls); n == 0 || rec.calls[n-1] != [3]string{"revoke", hashToken(tok), db.ExtensionTokenStopped} {
+		t.Fatalf("record writes %v", rec.calls)
 	}
 }

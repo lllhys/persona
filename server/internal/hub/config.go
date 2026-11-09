@@ -255,7 +255,7 @@ func LoadConfig() (*Config, error) {
 
 // runningHubConfig is hub.json for the commands that only talk to the hub running on this machine (pair, peer,
 // manager-code, assistant-token). It never writes, not even the state directory: a hub.json one of them made would make
-// a later `persona-hub setup` take this machine for a hub that has already run (setup.go, config).
+// a later `persona-hub setup` take this machine for a hub that has already run (setup_config.go, config).
 func runningHubConfig() (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

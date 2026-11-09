@@ -1,7 +1,7 @@
 // Complete metadata for one active chat. List projection/cursors never become chat detail state.
 import { useEffect, useState } from "react";
 import { api, ApiError, errorText, sessionPath } from "./api";
-import { applyCompleteSessions, getSession, getState, onHubEvent, useStore } from "./store";
+import { applyCompleteSessions, getSession, getState, onHubEvent, subscribe, useStore } from "./store";
 import { SESSIONS_LOOKUP_FEATURE } from "./runtime-list";
 import type { ListPage } from "./session-list";
 import type { Session } from "./types";
@@ -117,6 +117,10 @@ export class SessionDetailLoader {
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => void this.load(), detailRetryMs(++this.failures));
   }
+  /** Read without the exact lookup: an older hub, or one that turned the lookup down. */
+  get onLegacy() {
+    return this.legacy || !this.lookup();
+  }
   restart() {
     if (this.stopped) return;
     this.generation++;
@@ -152,9 +156,20 @@ export function useRuntimeSession(mid: string, sid: string, enabled = true) {
     read();
     const offHello = onHubEvent("hello", () => { if (live && document.visibilityState !== "hidden") void loader.restart(); });
     const offList = onHubEvent("sessions_list", read);
+    // Without the exact lookup only the list carries this chat's row, and on a cold open it can land after the first read
+    // (an older hub pushes `sessions`, not `sessions_list`). Read once more when it does, so the "no details" notice goes
+    // as the sidebar shows the chat (#2450). Watched only until the row is there; the list itself is never asked for.
+    let offRow: () => void = () => {};
+    if (!getSession(mid, sid)) {
+      offRow = subscribe(() => {
+        if (!getSession(mid, sid)) return;
+        offRow();
+        if (loader.onLegacy) read();
+      });
+    }
     const visible = () => { if (document.visibilityState === "visible") read(); };
     document.addEventListener("visibilitychange", visible);
-    return () => { live = false; loader.stop(); offHello(); offList(); document.removeEventListener("visibilitychange", visible); };
+    return () => { live = false; loader.stop(); offHello(); offList(); offRow(); document.removeEventListener("visibilitychange", visible); };
   }, [mid, sid, lookup, online, enabled]);
   const unavailable = detail.missing ? { ...session, machine_id: mid, session_id: sid, title: session?.title ?? sid, cwd: session?.cwd ?? "", status: "idle", state: "unknown", read_only_reason: detail.error } as Session : session;
   return { session: unavailable, detail, retry };

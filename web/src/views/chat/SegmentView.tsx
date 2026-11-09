@@ -1,12 +1,12 @@
-import { Fragment, memo, type ReactNode, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, type ReactNode, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clock } from "../../lib/format";
 import { getSession, getState } from "../../lib/store";
 import { agentStatus, subagentFor } from "../../lib/tasks";
 import { turnImages } from "../../lib/turn-images";
 import { TurnImages } from "./TurnImages";
-import { exchangeSteps, isLoopTick, isOwnMessage, supervisionTool, type Segment, type Step, type UserMessage } from "../../lib/turns";
+import { exchangeSteps, segmentIdentity, isLoopTick, isOwnMessage, type Segment, type UserMessage } from "../../lib/turns";
 import type { Item } from "../../lib/types";
-import { foldsHoldingCalls, planSteps, thinkingDurations, workBlocks, type ToolStep } from "../../lib/work-groups";
+import { thinkingDurations, workBlocks, type ToolStep } from "../../lib/work-groups";
 import { NO_WORKFLOW_CALLS } from "../../lib/workflows";
 import { channelOf, useChannels } from "../../lib/channels";
 import { splitQuotes } from "../../lib/drafts";
@@ -26,7 +26,7 @@ import { QuoteStack } from "./Quote";
 import { PathText } from "../../ui/PathLinks";
 import { Thumb } from "./Steps";
 import { useFoldScroll } from "./fold-scroll";
-import { useChatContext } from "./chat-context";
+import { FreshWords, useChatContext } from "./chat-context";
 import { Icon } from "../../ui/icons";
 import { WorkGroup, WorkNodes, type WorkProps } from "./WorkGroup";
 import { useCallSeeker } from "./jump";
@@ -168,7 +168,7 @@ export const Answer = memo(function Answer({ item, streaming, mid, sid, fade }: 
     return (
       <MessageActions text={text}>
         <div className={ANSWER} data-answer="streaming">
-          <Markdown text={text} mid={mid} cwd={cwd} streaming />
+          <Markdown text={text} mid={mid} cwd={cwd} streaming lineBreaks />
         </div>
       </MessageActions>
     );
@@ -178,13 +178,19 @@ export const Answer = memo(function Answer({ item, streaming, mid, sid, fade }: 
       <div className={ANSWER} data-answer data-items={item?.id}>
         {/* the cards in it are this item's blocks (ui/AssistantCard.tsx): `<item id>/<n>` */}
         <CardItem.Provider value={item?.id ? { id: item.id, text } : null}>
-          <Markdown text={text} mid={mid} cwd={cwd} fade={fade || undefined} />
+          <Markdown text={text} mid={mid} cwd={cwd} fade={fade || undefined} lineBreaks />
         </CardItem.Provider>
       </div>
       {full.more}
       {mid && sid && <ReplyFiles text={text} mid={mid} cwd={cwd} />}
     </MessageActions>
   );
+});
+
+/** Freshness reaches only the single visible persisted text, not every paragraph hidden in its execution summary. */
+const LatestAnswer = memo(function LatestAnswer({ item, streaming, mid, sid }: { item?: Item; streaming?: string; mid: string; sid: string }) {
+  const fresh = useContext(FreshWords);
+  return <Answer item={item} streaming={streaming} mid={mid} sid={sid} fade={streaming === undefined && item ? fresh?.has(item.id) : undefined} />;
 });
 
 export const SegmentView = memo(function SegmentView({
@@ -214,31 +220,34 @@ export const SegmentView = memo(function SegmentView({
   trace?: boolean;
 }) {
   const { subagents, scope, workflowCalls = NO_WORKFLOW_CALLS, lineStyle } = useChatContext();
-  const steps = useMemo(() => planSteps(exchangeSteps(seg)), [seg]);
+  const steps = useMemo(() => exchangeSteps(seg), [seg]);
   const turnStart = seg.user?.ts ?? seg.start;
   const thinking = useMemo(() => thinkingDurations(steps, turnStart), [steps, turnStart]);
   const p = useMemo<WorkProps>(() => {
     const agent = (s: ToolStep) => agentStatus(s.result, subagentFor(subagents, s.use), live);
     return { mid, sid, scope, expandFold, agentStatus: agent, thinking, segment: seg.id, workflowCalls, trace, lineStyle, turnLive: live };
   }, [mid, sid, scope, expandFold, subagents, live, thinking, seg.id, workflowCalls, trace, lineStyle]);
+  const identity = segmentIdentity(seg);
   const nodes = useMemo(
-    () => workBlocks(steps, { live, turnStart, agentStatus: p.agentStatus, workflowCard: (s) => workflowCalls.known.has(s.use.tool_use_id ?? ""), keepTool: seg.supervision ? (s) => Boolean(supervisionTool(s.use.tool_name)) : undefined }),
-    [steps, live, turnStart, p.agentStatus, workflowCalls, seg.supervision],
+    () => workBlocks(steps, { live, turnStart, streaming: streaming !== undefined, identity }),
+    [steps, live, turnStart, streaming !== undefined, identity],
   );
   useCallSeeker(scope, nodes);
-  useWorkflowFolds(steps, workflowCalls.startedAt, expandFold);
   // the pictures the agent looked at this turn, between its work and its last words
   const images = useMemo(() => turnImages(seg, getState().machines.find((m) => m.id === mid)?.name), [seg, mid]);
-  // a finished exchange's last words (the run of them at its end) come after those pictures
+  // The text slot is fixed during the run and after completion. Streamed text replaces persisted narration.
   let cut = nodes.length;
-  for (let n = nodes[cut - 1]; !live && n?.kind === "step" && n.step.kind === "text"; n = nodes[cut - 1]) cut--;
+  const tail = nodes[cut - 1];
+  if (tail?.kind === "step" && tail.step.kind === "text") cut--;
+  const latest = nodes.at(-1);
+  const latestItem = latest?.kind === "step" && latest.step.kind === "text" ? latest.step.item : undefined;
   const working = live && (streaming === undefined || batchedWords) && !nodes.some((n) => n.kind === "group" && n.live);
   const liveRow = working && <WorkGroup g={{ kind: "group", id: `work-live-${seg.id}`, children: [], live: true, startedAt: Date.parse(turnStart ?? "") || undefined }} p={p} />;
   const imageStrip = images.length > 0 && <TurnImages images={images} mid={mid} sid={sid} cwd={getSession(mid, sid)?.cwd} />;
   return (
     <section className="flex flex-col gap-3" data-segment>
       {trace && seg.user?.rawInput ? <RawInjectedInput items={seg.user.rawInput} mid={mid} sid={sid} /> : seg.user && (seg.user.source ? <SourceMessage msg={seg.user} mid={mid} sid={sid} /> : seg.user.injected ? <InjectedHint msg={seg.user} sid={sid} /> : seg.user.parts ? <MergedBubble msg={seg.user} mid={mid} sid={sid} /> : seg.user.from ? <PeerMessage msg={seg.user} /> : isLoopTick(seg.user) ? <LoopTick msg={seg.user} /> : <UserBubble msg={seg.user} mid={mid} sid={sid} />)}
-      {/* while the agent works, its live work stays at the bottom */}
+      {/* Work stays collapsed above the single latest-text slot. */}
       {live && <Fragment key="before-words">{beforeWords}</Fragment>}
       <WorkNodes nodes={nodes.slice(0, cut)} p={p} live={live} fade />
       {/* working with no run of steps going (its words just came, or nothing yet): the live group still shows, under an
@@ -246,9 +255,8 @@ export const SegmentView = memo(function SegmentView({
       {streaming === undefined && liveRow}
       {imageStrip}
       {!live && <Fragment key="before-words">{beforeWords}</Fragment>}
-      <WorkNodes nodes={nodes.slice(cut)} p={p} fade />
-      {streaming !== undefined && <Answer streaming={streaming} mid={mid} sid={sid} />}
       {streaming !== undefined && liveRow}
+      {(latestItem || streaming !== undefined) && <div key="latest-text" data-latest-text><LatestAnswer item={latestItem} streaming={streaming} mid={mid} sid={sid} /></div>}
     </section>
   );
 });
@@ -270,35 +278,4 @@ function RawInjectedText({ item, mid, sid }: { item: Item; mid: string; sid: str
       {full.more}
     </div>
   );
-}
-
-/** After a fold failed to come, the next try waits this long, doubling up to WORKFLOW_FOLD_RETRY_MAX_MS. */
-const WORKFLOW_FOLD_RETRY_MS = 5000;
-const WORKFLOW_FOLD_RETRY_MAX_MS = 60_000;
-
-/** A workflow run's call the hub folded into this exchange's work (the page counted back from the end, #3434): its steps
- *  are fetched, so the run's card comes out of the fold and stays in the open. Kept by this exchange as drawn now, not
- *  for the page: a transcript loaded again (another chat and back, a rewrite) mounts it afresh and brings the same fold
- *  back, which is fetched again. A fold that came is gone from the steps; one that failed is asked for again later. */
-function useWorkflowFolds(steps: Step[], calls: ReadonlyMap<string, number>, expandFold: (f: Item) => Promise<void>) {
-  const folds = useMemo(() => foldsHoldingCalls(steps, calls), [steps, calls]);
-  // asked for (on its way, or come: one that came back empty stays among the steps and is not asked for again)
-  const asked = useRef(new Set<string>());
-  const wait = useRef(WORKFLOW_FOLD_RETRY_MS);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    for (const f of folds) {
-      if (asked.current.has(f.id)) continue;
-      asked.current.add(f.id);
-      expandFold(f).then(
-        () => void (wait.current = WORKFLOW_FOLD_RETRY_MS),
-        () => {
-          asked.current.delete(f.id);
-          const ms = wait.current;
-          wait.current = Math.min(ms * 2, WORKFLOW_FOLD_RETRY_MAX_MS);
-          window.setTimeout(() => setRetry((n) => n + 1), ms);
-        },
-      );
-    }
-  }, [folds, expandFold, retry]);
 }

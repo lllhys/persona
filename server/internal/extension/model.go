@@ -382,6 +382,10 @@ func (r *Registry) ContributionsToContext(ctx context.Context, exporter string) 
 // PreviewOf is a waiting preview (left in place), nil when it expired or was used.
 func (r *Registry) PreviewOf(id string) *Preview { return r.peek(id) }
 
+// DropExpiredPreviews removes the previews past their time with their staged packages. Previews otherwise expire
+// only when another one is made or used, so an abandoned one would keep its package on disk on an idle hub.
+func (r *Registry) DropExpiredPreviews() { r.expire() }
+
 // ContributesTo are the extensions m contributes to (the owners of its exported points).
 func (m *Manifest) ContributesTo() []string {
 	var out []string

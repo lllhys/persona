@@ -277,6 +277,13 @@ describe("chatLines", () => {
     expect(ls[0].kind === "segment" && ls[0].seg.answer?.text).toBe("ok");
   });
 
+  it("marks the original exchange live when a wake arrives after its recap", () => {
+    const ls = chatLines([u(1, "go"), a(2, "waiting"), recap(3, "context"), wake(4, "build"), tool(5, "x")], { live: true });
+    expect(kinds(ls)).toEqual(["segment", "recaps"]);
+    expect(ls[0].kind === "segment" && ls[0].live).toBe(true);
+    expect(ls.some((line) => line.id === "live")).toBe(false);
+  });
+
   it("opens work a wake started on its own with the wake notice", () => {
     const ls = chatLines([wake(1, "build"), tool(2, "x"), res(3, "x"), a(4, "build is up")]);
     expect(kinds(ls)).toEqual(["notice", "segment"]);

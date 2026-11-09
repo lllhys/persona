@@ -28,6 +28,8 @@ Place necessary historical text under its module directory and list it below.
 | `apple/persona-native-6152-acceptance.md` | Apple native naming migration acceptance (#6152) |
 | `apple/persona-native-6152-reversible-acceptance.md` | Apple reversible native-state compatibility acceptance (#6152) |
 | `assistant/assistant-rich-ui-predeployment-2026-11-06.md` | Main chat rich UI: pre-deployment acceptance |
+| `assistant/assistant-records.md` | Main chat before the 2026-10-26 capability upgrade, the tests added for it, and the capability measurements and retest on the production hub (2026-10-26 to 2026-10-31) |
+| `extensions/feishu-records.md` | Lark gateway topic paging: read-only review of the gateway's source (2026-10-31) |
 | `extensions/plan-telegram.md` | Plan: Telegram connector (the user's own account) |
 | `extensions/source-extension-migration-2026-11-07.md` | Server-rendered source extensions: migration and acceptance record |
 | `integrations/codex-project-hierarchy-verification.md` | Codex project and task hierarchy verification |

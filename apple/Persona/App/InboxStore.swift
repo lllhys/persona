@@ -21,6 +21,9 @@ final class InboxStore {
     private(set) var listed = false
     var error: String?
     @ObservationIgnored private var reloading: Task<Void, Never>?
+    /// Done marks the hub may not have yet, by `InboxItem.key`, laid over every list that comes in (#2201): a list from
+    /// before the hub took a mark must not bring a swiped-away item back.
+    @ObservationIgnored private var marks = InboxMarks()
     @ObservationIgnored private let saver = Debouncer(.seconds(1))
     private static let stateName = "inbox-items"
 
@@ -66,10 +69,14 @@ final class InboxStore {
     private func fetch(_ load: (APIClient) async throws -> InboxListing) async {
         guard let api = AppModel.shared.api else { return }
         loading = true
-        defer { loading = false }
+        let seq = marks.beginList()
+        defer {
+            loading = false
+            marks.endList(seq)
+        }
         do {
             let listing = try await load(api)
-            apply(listing.items)
+            apply(marks.lay(listing.items, seq: seq))
             listed = true
             if listing.triage != triage { triage = listing.triage }
             error = nil
@@ -135,7 +142,9 @@ final class InboxStore {
         let targets = InboxBulk.targets(list.compactMap { current[$0.key] }, done: done)
         guard !targets.isEmpty else { return }
         let before = Dictionary(targets.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
-        items = InboxBulk.marking(items, keys: Set(before.keys), done: done, now: .now, by: action)
+        let now = Date.now
+        items = InboxBulk.marking(items, keys: Set(before.keys), done: done, now: now, by: action)
+        let tokens = before.keys.map { ($0, marks.put($0, .init(doneAt: done ? now : nil, doneBy: done ? action.doneBy : nil))) }
         done ? Haptics.success() : Haptics.tap()
         Task {
             do {
@@ -143,6 +152,11 @@ final class InboxStore {
                 items = InboxBulk.settle(items, before: before, result: sent.result)
                 // The managers that failed: their items as they were; the others' stay filed (#1850).
                 let lost = Set(sent.lost.map(\.key))
+                // taken: what it moved and what was already so; the ones it left (new messages, gone) or a failed
+                // manager's are as the hub has them
+                let left = Set(sent.result.skipped.map(\.key)).union(lost)
+                let fresh = Dictionary(sent.result.changed.map { ($0.key, $0) }, uniquingKeysWith: { _, b in b })
+                for (key, token) in tokens { marks.settle(key, token: token, taken: !left.contains(key), hub: fresh[key]) }
                 if !lost.isEmpty { items = InboxBulk.rollback(items, before: before.filter { lost.contains($0.key) }) }
                 let snapshot = items
                 saver.run { StateCache.save(Self.stateName, snapshot) }
@@ -156,7 +170,8 @@ final class InboxStore {
                     AppModel.shared.toast = Toast(head, style: .success, action: button)
                 }
             } catch {
-                items = InboxBulk.rollback(items, before: before)
+                for (key, token) in tokens { marks.settle(key, token: token, taken: false) }
+                items = InboxBulk.rollback(items, before: before.filter { !marks.out($0.key) })
                 AppModel.shared.show(error)
             }
         }
@@ -216,12 +231,20 @@ final class InboxStore {
         let before = items[i]
         items[i].doneAt = done ? .now : nil
         items[i].doneBy = done ? "user" : nil
+        let key = item.key
+        let token = marks.put(key, .init(doneAt: items[i].doneAt, doneBy: items[i].doneBy))
         if haptic { Haptics.tap() }
         Task {
             do {
                 try await AppModel.shared.api?.manager(item.manager).setInboxDone(item.id, done)
+                marks.settle(key, token: token, taken: true)
             } catch {
-                if let j = items.firstIndex(where: { $0.key == item.key }) { items[j] = before }
+                marks.settle(key, token: token, taken: false)
+                // back to the done state it had, on the copy now shown (a list meanwhile may be fresher), unless a newer mark is out
+                if !marks.out(key), let j = items.firstIndex(where: { $0.key == key }) {
+                    items[j].doneAt = before.doneAt
+                    items[j].doneBy = before.doneBy
+                }
                 AppModel.shared.show(error)
             }
         }
@@ -234,18 +257,32 @@ final class InboxStore {
         let covers = { (it: InboxItem) in
             it.source == item.source && it.manager == item.manager && !it.isDone && (it.mutes ?? []).contains { $0.tag == option.tag && $0.value == option.value }
         }
+        var tokens: [(String, Int)] = []
         for i in items.indices where covers(items[i]) {
             items[i].doneAt = .now
             items[i].doneBy = "read"
             items[i].reason = String(localized: "Muted: \(option.name)")
+            tokens.append((items[i].key, marks.put(items[i].key, .init(doneAt: items[i].doneAt, doneBy: "read", reason: items[i].reason))))
         }
         Haptics.success()
         Task {
             do {
                 _ = try await AppModel.shared.api?.manager(item.manager).muteInbox(item.id, tag: option.tag)
+                for (key, token) in tokens { marks.settle(key, token: token, taken: true) }
                 AppModel.shared.toast = Toast(String(localized: "Muted “\(option.name)”. It won’t come to the Inbox anymore."), style: .success)
             } catch {
-                items = before
+                for (key, token) in tokens { marks.settle(key, token: token, taken: false) }
+                // back to how they were, on the copies now shown, unless a newer mark is out
+                let was = Dictionary(before.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+                let marked = Set(tokens.map(\.0))
+                items = items.map { it in
+                    guard marked.contains(it.key), let w = was[it.key], !marks.out(it.key) else { return it }
+                    var it = it
+                    it.doneAt = w.doneAt
+                    it.doneBy = w.doneBy
+                    it.reason = w.reason
+                    return it
+                }
                 AppModel.shared.show(error)
             }
         }
@@ -279,15 +316,21 @@ final class InboxStore {
             items[i].doneAt = .now
             items[i].doneBy = "replied"
         }
+        let token = marks.put(key, .init(doneAt: .now, doneBy: "replied"))
         unsentReplies[key] = nil
         Haptics.tap()
         do {
             try await api.inboxReply(item.id, text: text, changes: changes, card: card)
+            marks.settle(key, token: token, taken: true)
             Haptics.success()
             AppModel.shared.toast = Toast(String(localized: "Sent and marked as done"), style: .success)
             return true
         } catch {
-            if let before, let i = items.firstIndex(where: { $0.key == key }) { items[i] = before }
+            marks.settle(key, token: token, taken: false)
+            if let before, !marks.out(key), let i = items.firstIndex(where: { $0.key == key }) {
+                items[i].doneAt = before.doneAt
+                items[i].doneBy = before.doneBy
+            }
             if !text.isEmpty { unsentReplies[key] = text }
             if let shown = error.shown {
                 AppModel.shared.toast = Toast(String(localized: "Reply not sent: \(shown)"), style: .error)

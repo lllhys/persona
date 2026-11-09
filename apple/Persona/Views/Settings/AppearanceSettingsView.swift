@@ -10,6 +10,9 @@ import SwiftUI
 /// The Appearance section of Settings: one row per scene with what it is set to now.
 struct AppearanceSection: View {
     @Environment(AppModel.self) private var model
+    #if os(iOS)
+    private let layoutDisplay = AgentListDisplayChoice()
+    #endif
 
     var body: some View {
         Section {
@@ -34,6 +37,15 @@ struct AppearanceSection: View {
                                 value: AppLanguage.settingsSummary, look: .oneLine)
                 }
                 .accessibilityIdentifier("settings-language")
+                #if os(iOS)
+                // How the Agents list draws its agents on iPhone and iPad (#2530); the Mac and Vision Pro keep their look.
+                NavigationLink(value: SettingsPage.layout) {
+                    SettingsRow(title: String(localized: "Layout"), symbol: Theme.Icon.listView, tint: Theme.Hue.orange,
+                                value: layoutDisplay.display.title, look: .oneLine)
+                }
+                .settingsListRow(SettingsPage.layout)
+                .accessibilityIdentifier("settings-layout-page")
+                #endif
                 #if os(iOS) || os(visionOS)
                 NavigationLink(value: SettingsPage.colorScheme) {
                     SettingsRow(title: String(localized: "Light & Dark"), symbol: Theme.Icon.colorScheme, tint: Theme.Hue.indigo,

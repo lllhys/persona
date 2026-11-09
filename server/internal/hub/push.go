@@ -52,6 +52,9 @@ type Pusher struct {
 	// desktopOpen: the desktop app with this push device id is connected (Hub.desktopOpen); it posts its own
 	// notifications for agents then (the Mac's MacAttentionWatcher).
 	desktopOpen func(device string) bool
+	// devicesChanged runs after a device was registered, forgotten or reloaded, or its settings changed (Hub:
+	// fleet.clients, whether a phone would be pushed an MCP form). It may run under the Pusher's locks: it must not block.
+	devicesChanged func()
 
 	mu sync.Mutex
 	// sendMu lets maintenance skip an active transport instead of retiring a
@@ -171,6 +174,7 @@ func (p *Pusher) register(d Device) error {
 		return err
 	}
 	d.Registering = false
+	defer p.changed() // after mu is let go
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if d.APNSToken != cur.APNSToken || d.RelayURL != cur.RelayURL {
@@ -290,6 +294,7 @@ func (p *Pusher) forget(d Device) {
 	delete(p.replaced, d.DeviceID)
 	delete(p.acceptedDirty, d.DeviceID)
 	p.mu.Unlock()
+	p.changed()
 	p.deleteRow(d)
 }
 
@@ -338,6 +343,7 @@ func (p *Pusher) forgetIfCurrent(d Device) {
 					}
 				}
 				p.mu.Unlock()
+				p.changed()
 			} else {
 				p.logf("reload push registration after late gone: %v", readErr)
 			}
@@ -353,6 +359,14 @@ func (p *Pusher) forgetIfCurrent(d Device) {
 	delete(p.replaced, d.DeviceID)
 	delete(p.acceptedDirty, d.DeviceID)
 	p.mu.Unlock()
+	p.changed()
+}
+
+// changed tells devicesChanged (nil: nobody) the devices or their settings may differ now.
+func (p *Pusher) changed() {
+	if p.devicesChanged != nil {
+		p.devicesChanged()
+	}
 }
 
 // prefs is a device's notification settings (defaults when it never set any).
@@ -392,6 +406,7 @@ func (p *Pusher) setPrefsBy(id, credential string, prefs NotifyPrefs) error {
 	}
 	d.Prefs = raw
 	p.devices[id] = d
+	p.changed() // "Needs you" and Phone Muted decide whether an MCP form would be pushed
 	return nil
 }
 

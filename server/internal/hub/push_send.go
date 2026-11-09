@@ -39,6 +39,11 @@ func (p *Pusher) sendLocalizedQuietTo(build localized, collapseID string, wants 
 // it takes. "" is the hub's own push. wants keeps its meaning: nil (asked for explicitly) still goes past Phone Muted
 // and to an open desktop. Returns the selected count and the reachable count before preferences are applied.
 func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, sent func(Device)) (selected, reachable int) {
+	return p.sendFromTo(manager, build, collapseID, wants, rule, nil, sent)
+}
+
+// sendFromTo is sendFrom to the devices only takes (nil: every device), before their settings decide.
+func (p *Pusher) sendFromTo(manager string, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, only func(Device) bool, sent func(Device)) (selected, reachable int) {
 	if p == nil {
 		return 0, 0
 	}
@@ -49,6 +54,9 @@ func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wa
 		hush = func(d Device) bool { return p.inQuiet(devicePrefs(d.Prefs)) }
 	}
 	return p.sendBuiltWith(build, collapseID, "alert", "10", func(d Device) bool {
+		if only != nil && !only(d) {
+			return false
+		}
 		if wants != nil && p.desktopOpen != nil && p.desktopOpen(d.DeviceID) {
 			return false
 		}

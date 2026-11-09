@@ -29,7 +29,8 @@ func (s *Service) probeLauncherHealth(ctx context.Context, machine, launcher str
 }
 
 // healthLaunchers are the launchers to check on machine: those it can start (its ~/.zshrc's, the managed ones) and
-// the default one; not a runtime's (they are not run with a prompt) nor an API provider's.
+// the default one when every machine has it (plain claude: a default only some have never starts where it isn't,
+// launcher_fit.go); not a runtime's (they are not run with a prompt) nor an API provider's.
 func (s *Service) healthLaunchers(ctx context.Context, machine string) ([]string, error) {
 	list, err := s.machineLaunchers(ctx, machine)
 	if err != nil {
@@ -41,7 +42,7 @@ func (s *Service) healthLaunchers(ctx context.Context, machine string) ([]string
 			out = append(out, l.Name)
 		}
 	}
-	if d := s.startLauncher(ctx, ""); !slices.Contains(out, d) {
+	if d := s.startLauncher(ctx, ""); !slices.Contains(out, d) && s.launcherEverywhere(ctx, d) {
 		out = append(out, d)
 	}
 	return out, nil

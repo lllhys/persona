@@ -1,0 +1,142 @@
+{
+  "about": "Behaviour checks for the done judge (assistant/done.go, prompts/assistant/task_done.md). Synthetic cases only. verdicts: what the hub may end with (any one of them passes); delivery: the delivery state it must end with, when delivery is judged. early: decided before any model call.",
+  "scenarios": [
+    {
+      "name": "merged-pr",
+      "title": "修复登录重试",
+      "notes": "token 刷新失败时先重试一次再登出，修好后开 PR 并合并。",
+      "replies": [{"machine": "mac", "text": "已修好：token 刷新失败时先重试一次，再失败才登出。加了单测。PR https://github.com/example/app/pull/12 已合并到 main，CI 全绿。"}],
+      "verdicts": ["done"]
+    },
+    {
+      "name": "research-conclusion",
+      "title": "查清上传超时原因",
+      "notes": "查一下为什么大文件上传会超时，给出结论和建议，不用改代码。",
+      "replies": [{"machine": "mac", "text": "查清楚了：网关的请求体超时是 30 秒，大于 200 MB 的文件在慢网络下一定会超时。建议改成分片上传，或者把超时调到 300 秒。日志和复现步骤写在 notes/upload-timeout.md。"}],
+      "verdicts": ["done"]
+    },
+    {
+      "name": "done-with-caveats",
+      "title": "设置页加深色模式",
+      "notes": "设置页适配深色模式，截图贴进 PR，合并。",
+      "replies": [{"machine": "mac", "text": "深色模式已适配，iPhone 浅色和深色截图都贴在 PR https://github.com/example/app/pull/31 里，已合并。iPad 没截图；另外发现关于页的图标在深色下偏暗，可以另开一个任务。"}],
+      "verdicts": ["done"]
+    },
+    {
+      "name": "testflight-beta-review-pending",
+      "title": "发 TestFlight 修复崩溃",
+      "notes": "修好启动崩溃并发一个 TestFlight。",
+      "replies": [{"machine": "mac", "text": "崩溃已修（空数组越界），PR https://github.com/example/app/pull/40 已合并。TestFlight 构建 1234 已上传，内部组已可用，外部组的 Beta 审核还在排队。"}],
+      "verdicts": ["done"]
+    },
+    {
+      "name": "partial",
+      "title": "三个页面换新按钮样式",
+      "notes": "首页、列表页、设置页的按钮都换成新样式。",
+      "replies": [{"machine": "mac", "text": "首页和列表页改好了，设置页还没改，下一轮继续。"}],
+      "verdicts": ["not_done"]
+    },
+    {
+      "name": "plan-only",
+      "title": "把通知改成分组显示",
+      "notes": "通知列表按来源分组显示。",
+      "replies": [{"machine": "mac", "text": "我打算这样做：1. 在模型里加 group 字段；2. 列表按 group 分节；3. 补测试。接下来开始改。"}],
+      "verdicts": ["not_done"]
+    },
+    {
+      "name": "stuck-on-error",
+      "title": "升级依赖到新版本",
+      "notes": "把网络库升到最新版并保证编译通过。",
+      "replies": [{"machine": "mac", "text": "升级后编译报错：新版本删掉了旧的回调接口，有 14 处调用要改。我试了两种改法都没编过去，卡住了。"}],
+      "verdicts": ["not_done"]
+    },
+    {
+      "name": "waiting-app-review",
+      "title": "处理 App Store 审核意见",
+      "notes": "按审核意见补隐私说明，重新提交审核，直到审核通过。",
+      "replies": [{"machine": "mac", "text": "已按审核意见补了隐私说明和截图，构建 1240 已重新提交审核，现在在等苹果的审核结论。"}],
+      "verdicts": ["waiting"]
+    },
+    {
+      "name": "drafts-wait-for-the-user",
+      "title": "写两版发布公告",
+      "notes": "写两版发布公告，用户选一版后发到频道。",
+      "replies": [{"machine": "mac", "text": "两版草稿都写好了，放在 drafts/announce-a.md 和 drafts/announce-b.md。等你挑一版，我再发到频道。"}],
+      "verdicts": ["needs_user"]
+    },
+    {
+      "name": "merge-needs-approval",
+      "title": "修复导出乱码并合并",
+      "notes": "修好 CSV 导出的中文乱码，合并到 main。",
+      "done_when": ["PR 合并到 main"],
+      "replies": [{"machine": "mac", "text": "乱码已修（写入时加 BOM），PR https://github.com/example/app/pull/55 开好了，测试通过。这个仓库要你批准才能合并，你点一下合并就行。"}],
+      "verdicts": ["needs_user"]
+    },
+    {
+      "name": "confirmation-is-not-completion",
+      "title": "重构配置读取",
+      "notes": "把三处重复的配置读取合成一个函数。",
+      "replies": [{"machine": "mac", "ask": "按你的方案继续", "text": "好的，按方案开始改，先合并第一处。"}],
+      "verdicts": ["not_done"]
+    },
+    {
+      "name": "side-conversation-reply",
+      "title": "修复同步丢消息",
+      "notes": "查清同步丢消息的原因并修好。",
+      "replies": [{"machine": "mac", "ask": "另一个会话问：你手上的同步问题和我的有关吗？", "source": "另一个会话", "text": "已告知另一会话：两者无关，本会话还没处理该问题。"}],
+      "verdicts": ["not_done", "unsure"]
+    },
+    {
+      "name": "cut-off",
+      "title": "补齐单测",
+      "notes": "给支付模块补单测。",
+      "replies": [{"machine": "mac", "text": "API Error: 529 overloaded"}],
+      "early": true,
+      "verdicts": ["not_done"]
+    },
+    {
+      "name": "no-reply",
+      "title": "整理日志",
+      "notes": "整理上周的错误日志。",
+      "replies": [],
+      "early": true,
+      "verdicts": ["unsure"]
+    },
+    {
+      "name": "delivery-held-at-pr",
+      "title": "修复搜索排序",
+      "notes": "修好搜索结果的排序并上线。",
+      "delivery": true,
+      "replies": [{"machine": "mac", "text": "排序已修好，PR https://github.com/example/app/pull/70 开好了，等 review。\n交付：停在 PR；卡点：等 review；谁来解：其他（等队友 review）"}],
+      "verdicts": ["undelivered", "not_done", "waiting"],
+      "delivery_state": "pr"
+    },
+    {
+      "name": "delivery-live",
+      "title": "修复首页加载慢",
+      "notes": "首页加载从 3 秒降到 1 秒以内并上线。",
+      "delivery": true,
+      "replies": [{"machine": "mac", "text": "加了缓存，已部署到线上并实测：首页加载 0.8 秒（命令和输出见下）。\ncurl -w '%{time_total}' https://example.com/ → 0.79\n交付：已上线并实测；卡点：无；谁来解：无"}],
+      "verdicts": ["done"],
+      "delivery_state": "live"
+    },
+    {
+      "name": "delivery-off-by-default",
+      "title": "上线新版设置页",
+      "notes": "新版设置页做完并上线。",
+      "delivery": true,
+      "replies": [{"machine": "mac", "text": "新版设置页已合并并部署，功能开关 new_settings 默认关，还没启用；启用要在管理页打开开关。\n交付：默认关待启用；卡点：默认关待启用；谁来解：用户"}],
+      "verdicts": ["undelivered", "needs_user"],
+      "delivery_state": "off"
+    },
+    {
+      "name": "delivery-nothing-to-ship",
+      "title": "调研三个日志库",
+      "notes": "比较三个日志库的性能和体积，给出推荐。",
+      "delivery": true,
+      "replies": [{"machine": "mac", "text": "比较完了：A 最快但体积大，B 体积最小，C 功能全。推荐 B，理由和数据在 notes/logging.md。\n交付：不涉及上线；卡点：无；谁来解：无"}],
+      "verdicts": ["done"],
+      "delivery_state": "none"
+    }
+  ]
+}

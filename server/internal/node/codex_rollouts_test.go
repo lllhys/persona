@@ -15,6 +15,8 @@ func TestRolloutID(t *testing.T) {
 		`C:\Users\u\.codex\sessions\2026\01\02\rollout-2026-01-02T03-04-05-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl`,
 		"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl",
 		"x0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl",
+		"rollout-time-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b_11111111-2222-3333-4444-555555555555.jsonl",
+		"rollout-time-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b_11111111-2222-3333-4444-555555555555_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
 		"/h/rollout-2026-01-02T03-04-05-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl.tmp",
 		"/h/rollout-2026-01-02T03-04-05-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5.jsonl",
 		"/h/rollout-2026-01-02T03-04-05-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5g.jsonl",

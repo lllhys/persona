@@ -12,6 +12,9 @@ const captured = vi.hoisted(() => ({
   session: { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", status: "idle" } as Session,
   items: [] as Item[],
   error: "",
+  loading: false,
+  /** Set: the hub could not say what this chat is (useRuntimeSession's notice, no row). */
+  noDetails: "",
 }));
 
 vi.mock("./Composer", async (importOriginal) => ({
@@ -22,7 +25,7 @@ vi.mock("./Composer", async (importOriginal) => ({
   },
 }));
 vi.mock("./useTranscript", () => ({
-  useTranscript: () => ({ items: captured.items, loading: false, error: captured.error, hasMore: false, streaming: "" }),
+  useTranscript: () => ({ items: captured.items, loading: captured.loading, error: captured.error, hasMore: false, streaming: "" }),
 }));
 vi.mock("../../lib/store", async (importOriginal) => {
   const store = await importOriginal<typeof import("../../lib/store")>();
@@ -30,6 +33,16 @@ vi.mock("../../lib/store", async (importOriginal) => {
     ...store,
     getSession: () => captured.session,
     useStore: <T,>(select: (s: ReturnType<typeof store.getState>) => T) => select({ ...store.getState(), sessions: { hub: [captured.session] } }),
+  };
+});
+vi.mock("../../lib/runtime-session", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../lib/runtime-session")>();
+  return {
+    ...real,
+    useRuntimeSession: (...args: Parameters<typeof real.useRuntimeSession>) => {
+      const found = real.useRuntimeSession(...args);
+      return captured.noDetails ? { session: undefined, detail: { loading: false, error: captured.noDetails, missing: false, legacy: true }, retry: () => {} } : found;
+    },
   };
 });
 vi.mock("../../lib/panel", async (importOriginal) => ({
@@ -73,6 +86,7 @@ beforeEach(() => {
   captured.onSend = undefined;
   captured.items = [];
   captured.error = "";
+  captured.loading = false;
   delete captured.session.source_kind;
   delete captured.session.capabilities;
   vi.mocked(toast).mockClear();
@@ -167,5 +181,43 @@ describe("composer footer rows (#3533)", () => {
     expect(footerRows(s, true)).toEqual([]);
     expect(footerRows(s).every((r) => r.wrap)).toBe(true);
     expect(footerRows({ machine_id: "m", session_id: "s" } as Session)).toEqual([]);
+  });
+});
+
+describe("ChatView opening line over an empty chat (#2450)", () => {
+  const opening = t("chat-chatview.started_in", { path: "/code" });
+  const markup = () => renderToStaticMarkup(<ChatView mid="hub" sid="c1" />);
+
+  it("shows where the chat started once an empty first page has loaded", () => {
+    expect(markup()).toContain(opening);
+  });
+
+  it("stays away while the first page is loading or failed to load", () => {
+    captured.loading = true;
+    expect(markup()).not.toContain(opening);
+    captured.loading = false;
+    captured.error = "boom";
+    expect(markup()).not.toContain(opening);
+  });
+
+  it("stays away when the chat could not start", () => {
+    captured.session.start_error = "no such folder";
+    try {
+      expect(markup()).not.toContain(opening);
+    } finally {
+      delete captured.session.start_error;
+    }
+  });
+
+  it("stays away under the notice that the hub has no details for the chat", () => {
+    captured.noDetails = t("runtime-session.metadata_unavailable");
+    try {
+      const html = markup();
+      expect(html).toContain("role=\"alert\"");
+      expect(html).not.toContain(t("chat-chatview.chat_start"));
+      expect(html).not.toContain(opening);
+    } finally {
+      captured.noDetails = "";
+    }
   });
 });

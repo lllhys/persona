@@ -230,11 +230,17 @@ func isAssistantProject(base, own string) bool {
 	if base == own || base == strings.TrimSuffix(own, "-assistant")+"-health" {
 		return true
 	}
-	former := "-" + nonAlnum.ReplaceAllString(compat.StateDir, "-") // "." becomes "-" as in the project's name
-	for _, suffix := range []string{"--persona-assistant", former + "-assistant", "--persona-health", former + "-health"} {
+	for _, suffix := range assistantProjectSuffixes() {
 		if strings.HasSuffix(base, suffix) {
 			return true
 		}
 	}
 	return false
 }
+
+// assistantProjectSuffixes are the ends isAssistantProject matches, built on first use (not at start: every short
+// personad command would pay for the regexp) instead of on every call, once per Codex thread and transcript per list.
+var assistantProjectSuffixes = sync.OnceValue(func() []string {
+	former := "-" + nonAlnum.ReplaceAllString(compat.StateDir, "-") // "." becomes "-" as in the project's name
+	return []string{"--persona-assistant", former + "-assistant", "--persona-health", former + "-health"}
+})

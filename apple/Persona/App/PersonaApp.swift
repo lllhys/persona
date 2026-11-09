@@ -25,6 +25,7 @@ struct PersonaApp: App {
                     }
                     #endif
                     if let link = ExtensionSystemLink(url: url) { model.openExtension(link); return }
+                    if SentSettingsLink.matches(url) { model.openSentRecords(); return }
                     // A computer's pairing link (「添加电脑」, Add computer) is for Persona Link on that computer, not for this device (#4198).
                     if ServerConfig.isComputerLink(url) {
                         model.toast = Toast(String(localized: "Open this link on the computer you're adding"))
@@ -130,7 +131,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if d.bool(forKey: "openImagesFresh") { try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "chat-images")) }
         // `-openAgentsFresh YES`: the Agents list's saved look forgotten (AgentsListTests).
         if d.bool(forKey: "openAgentsFresh") {
-            for k in ["dev.machineFilter", HubFilter.key, "dev.grouping", "dev.sort", "dev.compact", "dev.folded"] { d.removeObject(forKey: k) }
+            for k in ["dev.machineFilter", HubFilter.key, "dev.grouping", "dev.sort", "dev.compact", "dev.folded", AgentRowStyle.key] { d.removeObject(forKey: k) }
         }
         // `-openRecapsFresh YES`: no away recap closed yet, so the newest shows open again (RecapInFlowTests).
         if d.bool(forKey: "openRecapsFresh") { d.removeObject(forKey: "closedRecaps") }
@@ -191,10 +192,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if let tap = d.string(forKey: "simulateTap"), let key = AppModel.shared.resolve(path: tap) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { AppDelegate.openFromNotification(key) }
         }
-        // `-showTestNotification permission|plan`: posts what an interaction push looks like (category, ids), 3 s
-        // after the app goes to the background, so the UI test can exercise the notification buttons without APNs.
+        // `-showTestNotification permission|plan|elicitation`: posts what an interaction push looks like (category, ids),
+        // 3 s after the app goes to the background, so the UI test can exercise the notification without APNs.
+        // `-showTestNotificationIn <machine>/<session>` names the session it is about (default: a made-up one).
         if let kind = d.string(forKey: "showTestNotification").flatMap(InteractionKind.init(rawValue:)) {
-            Task { await AppDelegate.postTestNotification(kind) }
+            let place = d.string(forKey: "showTestNotificationIn")
+            Task { await AppDelegate.postTestNotification(kind, in: place) }
         } else if let sample = d.string(forKey: "showTestNotification"),
                   ["extension-background", "extension-foreground", "extension-tap"].contains(sample) {
             Task { await AppDelegate.postExtensionTestNotification(sample) }
@@ -255,7 +258,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             completionHandler(.noData)
             return
         }
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         if let widget = info["extension_widget"] as? [String: Any],
            let owner = widget["extension"] as? String, let id = widget["id"] as? String,
            !owner.isEmpty, !id.isEmpty, !AppModel.shared.isDemo {
@@ -398,7 +401,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     #if DEBUG
-    static func postTestNotification(_ kind: InteractionKind) async {
+    static func postTestNotification(_ kind: InteractionKind, in place: String? = nil) async {
         let center = UNUserNotificationCenter.current()
         _ = try? await center.requestAuthorization(options: [.alert, .sound])
         // The answer can come back "not granted" while the alert is still being tapped: wait for the setting itself.
@@ -408,11 +411,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Delivered while the app is in the background, like a real push.
         for await _ in NotificationCenter.default.notifications(named: UIApplication.didEnterBackgroundNotification) { break }
         let content = UNMutableNotificationContent()
-        content.title = kind == .plan ? "计划等你审批" : "需要你授权" // i18n-ignore
+        switch kind { // the hub's words (push.json), as it writes them in Chinese
+        case .plan: (content.title, content.body) = ("计划等你审批", "支持 HEIC") // i18n-ignore
+        case .elicitation: (content.title, content.body) = ("MCP 服务 deploy-mcp 等你处理", "确认这次部署的参数（打开 Persona 填写）") // i18n-ignore
+        default: (content.title, content.body) = ("需要你授权", "Bash: swift test") // i18n-ignore
+        }
         content.subtitle = "测试会话 · 测试机器" // i18n-ignore
-        content.body = kind == .plan ? "支持 HEIC" : "Bash: swift test" // i18n-ignore
         content.categoryIdentifier = NotificationActions.category(kind)
-        content.userInfo = ["interaction_id": "ix_test_\(kind.rawValue)", "machine_id": "test", "session_id": "test"]
+        let (machine, session) = place.flatMap { p in p.firstIndex(of: "/").map { (String(p[..<$0]), String(p[p.index(after: $0)...])) } } ?? ("test", "test")
+        content.userInfo = ["interaction_id": "ix_test_\(kind.rawValue)", "machine_id": machine, "session_id": session]
         try? await center.add(UNNotificationRequest(identifier: "test-\(kind.rawValue)", content: content,
                                                      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)))
     }

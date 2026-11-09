@@ -218,6 +218,8 @@ extension Theme {
         static let filterActive = "line.3.horizontal.decrease.circle.fill"
         /// A plain list layout.
         static let listView = "list.bullet"
+        /// A calendar layout (the to-dos' Calendar, beside `listView`, #2029).
+        static let calendarView = "calendar"
         /// A card layout (the Agents list's Display › Cards, beside `listView`).
         static let cardView = "rectangle.grid.1x2"
         /// A list's view menu: how rows are grouped (Group By), a custom group added or removed (New Group /
@@ -413,7 +415,7 @@ extension Theme {
         static let pluginList = listView
         static let pluginBell = unmute
         static let pluginDoc = document
-        static let pluginCalendar = "calendar"
+        static let pluginCalendar = calendarView
         static let pluginMoney = "creditcard"
         static let pluginStar = "star"
         static let phone = "iphone"
@@ -537,6 +539,8 @@ extension Theme {
         static let questionFilled = "questionmark.bubble.fill"
         static let plan = "list.bullet.clipboard"
         static let planFilled = "list.bullet.clipboard.fill"
+        /// An MCP server's form to fill in (an `elicitation` card; its link card draws `link`).
+        static let mcpForm = "rectangle.and.pencil.and.ellipsis"
         /// A file edited in place (the Edit tools; Auto-Edit mode).
         static let editFile = "pencil.line"
         static let newFile = "doc.badge.plus"

@@ -16,7 +16,7 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
-// Outlook "Sign in with Microsoft" (docs/extensions/mail.md "Connecting Outlook"): the same flow as Google's. The app opens
+// Outlook "Sign in with Microsoft" (docs/extensions/mail.md "Outlook: Sign In with Microsoft"): the same flow as Google's. The app opens
 // Microsoft's sign-in page (ASWebAuthenticationSession) for a public client the user registered in Microsoft Entra
 // themselves (no client secret, PKCE), Microsoft redirects to a fixed custom scheme, and the hub exchanges the code
 // for a refresh token. IMAP and SMTP authenticate with SASL XOAUTH2. The client ID is not built in: the user enters

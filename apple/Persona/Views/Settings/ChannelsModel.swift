@@ -129,6 +129,8 @@ enum ChannelText {
         guard let url, url.hasPrefix("settings/") else { return nil }
         let rest = url.dropFirst("settings/".count)
         switch rest {
+        case "sent", "connectors/-sent": return .sent
+        case "connectors": return .connectors
         case "connectors/feishu-bot": return .feishuBot
         case "connectors/feishu": return .feishu
         case "model-config": return .modelConfiguration

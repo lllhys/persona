@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/nwverse/persona/server/internal/assistant"
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
@@ -336,6 +338,270 @@ func TestRevokingEndsRelayedSockets(t *testing.T) {
 	h.ext.calls.mu.Unlock()
 	if kept != 0 {
 		t.Fatalf("still kept for the revoked phone: %d", kept)
+	}
+}
+
+// An extension's WebSocket to another extension's routes ends when its manager drops the token (the extension stops,
+// is switched off, upgraded or uninstalled, or gets its next token) and tells the hub, as revoking a device ends the
+// device's. Another extension's stays open, and so does the token's own when another manager names its hash.
+func TestDroppedExtensionTokenEndsItsRelayedSockets(t *testing.T) {
+	h, m, fx, srv := relayTestHub(t)
+	caller := fx.issue("caller", "Caller", []string{extension.ScopeCallPrefix + "callee"})
+	other := fx.issue("other", "Other", []string{extension.ScopeCallPrefix + "callee"})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	open := func(token string) *websocket.Conn {
+		t.Helper()
+		c, _, err := websocket.Dial(ctx, wsURL(srv, "/api/v1/extensions/callee/ws"),
+			&websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := c.Read(ctx); err != nil { // who asked
+			t.Fatal(err)
+		}
+		return c
+	}
+	roundTrip := func(c *websocket.Conn) error {
+		if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+			return err
+		}
+		_, b, err := c.Read(ctx)
+		if err == nil && string(b) != `{"type":"ping"}` {
+			t.Fatalf("echo: %q", b)
+		}
+		return err
+	}
+	dropped := func(from, tok string) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]string{"hash": hashToken(tok)})
+		if _, ok, err := h.extAppCall(ctx, from, assistantwire.AppCall{AppID: extwire.AppHub, Method: extwire.HubTokenRevoked,
+			Params: raw}); !ok || err != nil {
+			t.Fatalf("%s: handled %v, %v", extwire.HubTokenRevoked, ok, err)
+		}
+	}
+	callerWS, otherWS := open(caller), open(other)
+	defer callerWS.CloseNow()
+	defer otherWS.CloseNow()
+	for _, c := range []*websocket.Conn{callerWS, otherWS} {
+		if err := roundTrip(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dropped("another-manager", caller)
+	raw, _ := json.Marshal(map[string]string{"hash": "x:" + hashToken(caller)})
+	if _, _, err := h.extAppCall(ctx, "another-manager", assistantwire.AppCall{AppID: extwire.AppHub,
+		Method: extwire.HubTokenRevoked, Params: raw}); err == nil {
+		t.Fatal("a notice naming no token's hash was taken")
+	}
+	if err := roundTrip(callerWS); err != nil {
+		t.Fatalf("ended by another manager's notice: %v", err)
+	}
+	fx.mu.Lock()
+	delete(fx.tokens, hashToken(caller))
+	fx.mu.Unlock()
+	dropped(assistantwire.AssistantID, caller)
+	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer readCancel()
+	if _, _, err := callerWS.Read(readCtx); err == nil || readCtx.Err() != nil {
+		t.Fatalf("the dropped token's WebSocket is still open: %v", err)
+	}
+	select {
+	case device := <-m.ended:
+		if device != "extension:caller" {
+			t.Fatalf("ended on the manager's side: %q, want the caller's", device)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the manager's side of the dropped token's WebSocket is still open")
+	}
+	if err := roundTrip(otherWS); err != nil {
+		t.Fatalf("the other extension's WebSocket after the caller's token was dropped: %v", err)
+	}
+	h.ext.calls.mu.Lock()
+	kept := 0
+	for id, m := range h.ext.calls.byID {
+		if strings.HasSuffix(id, ":"+hashToken(caller)) {
+			kept += len(m)
+		}
+	}
+	h.ext.calls.mu.Unlock()
+	if kept != 0 {
+		t.Fatalf("still kept for the dropped token: %d", kept)
+	}
+}
+
+// A call let in with an extension's token just before its manager dropped it, and kept only after the hub was told,
+// ends by itself; the extension's next token's does not. One let in longer ago than a drop is remembered ends too.
+func TestRelayedCallOfADroppedTokenBeforeTracked(t *testing.T) {
+	h := newTestHub(t)
+	asked := time.Now()
+	asAt := func(hash string, asked time.Time) *http.Request {
+		r := httptest.NewRequest("GET", "/api/v1/extensions/x/ws", nil)
+		return r.WithContext(context.WithValue(r.Context(), principalKey{}, principal{ID: "extension:caller",
+			Role: roleExtension, Extension: "caller", Manager: assistantwire.AssistantID, extHash: hash, extAt: asked}))
+	}
+	as := func(hash string) *http.Request { return asAt(hash, asked) }
+	if n := h.dropRevokedToken(assistantwire.AssistantID, "hash-gone"); n != 0 {
+		t.Fatalf("ended %d with nothing kept", n)
+	}
+	r, done := h.trackRelayed(as("hash-gone"))
+	if r.Context().Err() == nil {
+		t.Fatal("a dropped token's call goes on")
+	}
+	done()
+	r, done = h.trackRelayed(as("hash-next"))
+	if r.Context().Err() != nil {
+		t.Fatal("the extension's next token's call was ended")
+	}
+	if n := h.dropRevokedToken("another-manager", "hash-next"); n != 0 || r.Context().Err() != nil {
+		t.Fatalf("another manager's notice ended %d: %v", n, r.Context().Err())
+	}
+	if n := h.dropRevokedToken(assistantwire.AssistantID, "hash-next"); n != 1 || r.Context().Err() == nil {
+		t.Fatalf("dropped %d, err %v", n, r.Context().Err())
+	}
+	done()
+	r, done = h.trackRelayed(asAt("hash-old", time.Now().Add(-tokenRevokedFor)))
+	if r.Context().Err() == nil {
+		t.Fatal("a call let in longer ago than a drop is remembered goes on")
+	}
+	done()
+}
+
+// A token the manager drops while the hub is still asking it whose the token is: the call its answer lets in ends as it
+// starts (the hub keeps when it asked, not when it was answered).
+func TestTokenDroppedWhileAskedEndsItsCall(t *testing.T) {
+	h := newTestHub(t)
+	fx := extTokensOf(t, h)
+	tok := fx.issue("caller", "Caller", []string{extension.ScopeCallPrefix + "callee"})
+	fx.mu.Lock()
+	fx.authorizing = func(hash string) { h.dropRevokedToken(assistantwire.AssistantID, hash) }
+	fx.mu.Unlock()
+	r := httptest.NewRequest("GET", "/api/v1/extensions/callee/ws", nil)
+	p, ok, _, _, _ := h.authorizeExtension(context.Background(), tok, r)
+	if !ok || p.Manager != assistantwire.AssistantID {
+		t.Fatalf("authorized %v by %q", ok, p.Manager)
+	}
+	r, done := h.trackRelayed(r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+	defer done()
+	if r.Context().Err() == nil {
+		t.Fatal("the call of a token dropped while it was asked goes on")
+	}
+}
+
+// A manager off the bus cannot tell the hub of a token it drops meanwhile: each of its connections ending, a replaced
+// one too, ends what its extensions' tokens relay, and what one let in before would start relaying. Another manager's
+// (one whose name begins with it too), a device's, and a call let in after it came back go on.
+func TestManagerLeavingTheBusEndsItsTokensRelayedCalls(t *testing.T) {
+	h := newTestHub(t)
+	as := func(p principal) *http.Request {
+		r := httptest.NewRequest("GET", "/api/v1/extensions/x/ws", nil)
+		return r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+	}
+	ext := func(manager, hash string, asked time.Time) principal {
+		return principal{ID: "extension:caller", Role: roleExtension, Extension: "caller", Manager: manager, extHash: hash,
+			extAt: asked}
+	}
+	asked := time.Now()
+	mine, done := h.trackRelayed(as(ext("m1", "aa", asked)))
+	defer done()
+	goesOn := map[string]*http.Request{}
+	for name, p := range map[string]principal{"manager m1:x's": ext("m1:x", "bb", asked),
+		"another manager's": ext("m2", "cc", asked), "a device's": {ID: "dev-1", Role: roleFull}} {
+		r, done := h.trackRelayed(as(p))
+		defer done()
+		goesOn[name] = r
+	}
+
+	h.busEnded(&busConn{ident: db.BusIdentity{ID: "m1", Role: bus.RoleManager}, replaced: true})
+	if mine.Context().Err() == nil {
+		t.Fatal("the manager's token's call goes on after it left the bus")
+	}
+	for name, r := range goesOn {
+		if r.Context().Err() != nil {
+			t.Fatalf("%s call was ended", name)
+		}
+	}
+	late, done := h.trackRelayed(as(ext("m1", "dd", asked)))
+	defer done()
+	if late.Context().Err() == nil {
+		t.Fatal("a call let in before the manager left goes on once kept")
+	}
+	h.ext.calls.mu.Lock()
+	left := h.ext.calls.left["m1"]
+	h.ext.calls.mu.Unlock()
+	next, done := h.trackRelayed(as(ext("m1", "dd", left.Add(time.Nanosecond))))
+	defer done()
+	if next.Context().Err() != nil {
+		t.Fatal("a call let in after the manager came back was ended")
+	}
+}
+
+// What the hub remembers of dropped tokens stays bounded however many notices a manager sends: its newest
+// relayDroppedMost at most, without forgetting another manager's, none past tokenRevokedFor, and none once it left the
+// bus (that fences them all). Of managers that left, none past tokenRevokedFor.
+func TestRelayDroppedStaysBounded(t *testing.T) {
+	h := newTestHub(t)
+	calls := &h.ext.calls
+	kept := func(manager, hash string) (n int, ok bool) {
+		t.Helper()
+		calls.mu.Lock()
+		defer calls.mu.Unlock()
+		d := calls.dropped[manager]
+		if d == nil {
+			return 0, false
+		}
+		if len(d.at) != len(d.order) {
+			t.Fatalf("%s: %d remembered, %d in order", manager, len(d.at), len(d.order))
+		}
+		_, ok = d.at[hash]
+		return len(d.order), ok
+	}
+	hash := func(i int) string { return fmt.Sprintf("%064x", i) }
+	h.dropRevokedToken("m2", hash(0))
+	for i := range relayDroppedMost + 100 {
+		h.dropRevokedToken("m1", hash(i))
+	}
+	h.dropRevokedToken("m1", hash(relayDroppedMost+99)) // told again
+	if n, ok := kept("m1", hash(relayDroppedMost+99)); n != relayDroppedMost || !ok {
+		t.Fatalf("kept %d (the newest: %v), want %d", n, ok, relayDroppedMost)
+	}
+	if _, ok := kept("m1", hash(99)); ok {
+		t.Fatal("the oldest is kept past the bound")
+	}
+	if _, ok := kept("m1", hash(100)); !ok {
+		t.Fatal("more than the oldest forgotten")
+	}
+	if n, ok := kept("m2", hash(0)); n != 1 || !ok {
+		t.Fatalf("another manager's notices forgot its own: %d kept", n)
+	}
+
+	calls.mu.Lock()
+	for _, d := range calls.dropped {
+		for k := range d.at {
+			d.at[k] = time.Now().Add(-tokenRevokedFor)
+		}
+	}
+	calls.mu.Unlock()
+	h.dropRevokedToken("m2", hash(1))
+	if n, ok := kept("m2", hash(1)); n != 1 || !ok {
+		t.Fatalf("kept %d past tokenRevokedFor, want only the newest", n)
+	}
+	h.dropLeftManager("m1")
+	if n, _ := kept("m1", ""); n != 0 {
+		t.Fatalf("kept %d of a manager's dropped tokens once it left the bus", n)
+	}
+
+	calls.mu.Lock()
+	calls.left["m1"] = time.Now().Add(-tokenRevokedFor)
+	calls.mu.Unlock()
+	h.dropLeftManager("m3")
+	calls.mu.Lock()
+	_, m1 := calls.left["m1"]
+	n := len(calls.left)
+	calls.mu.Unlock()
+	if m1 || n != 1 {
+		t.Fatalf("kept %d managers that left (the one past tokenRevokedFor: %v), want only the one that just did", n, m1)
 	}
 }
 

@@ -316,7 +316,7 @@ protocol.md's `session` (single state change) has **no emitter** in code and nee
    (Hub-mediated confirmation is only `mail_send`, `lark_send`, creating `permission` interactions, `hub.go:683-691`.)
 6. Output: pretty JSON text; ISO 8601 time with local time-zone offset, dates `yyyy-MM-dd`; `phone_photo_get` adds an image block (`docs/apple/phone-tools.md`, "Tool catalog").
 
-Measurement (single sample, `docs/assistant/assistant.md`, "Capability measurements," n=1, not a baseline): calling a phone tool while locked, APNs accepted silent push in 259 ms, phone connected after 900 ms, tool result in 3.2 seconds; another run returned in 2.8 seconds.
+Measurement (single sample, `docs/archive/assistant/assistant-records.md`, "Capability measurements", n=1, not a baseline): calling a phone tool while locked, APNs accepted silent push in 259 ms, phone connected after 900 ms, tool result in 3.2 seconds; another run returned in 2.8 seconds.
 
 ### 7.2 Existing iOS tools (`ios/Persona/PhoneTools/*.swift` specs) and Android equivalents
 (Android column is platform knowledge, **not checked online this round**; Verify items require official documentation / real-device checks before implementation.)

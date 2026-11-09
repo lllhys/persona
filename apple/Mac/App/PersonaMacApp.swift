@@ -99,6 +99,7 @@ extension AppModel {
         case .session(let key): MacShellState.shared.open(resolve(path: key.path) ?? key, self)
         case .pair: openPairing(url)
         case .computerLink: openComputerLink(url)
+        case .sentRecords: openSentRecords()
         case .app, .ignore: break
         }
     }

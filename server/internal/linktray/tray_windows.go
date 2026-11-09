@@ -78,7 +78,6 @@ type app struct {
 	panelPending  bool // created or opened, waiting for the page's size before showing
 	panelHiddenAt time.Time
 	panelHeight   int32 // DIP, from the page
-	actionsJSON   string
 
 	pair     *webWindow
 	pairJSON string

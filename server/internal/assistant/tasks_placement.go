@@ -53,9 +53,7 @@ func (s *Service) healthyPlace(ctx context.Context, t *PlanTask) bool {
 	alt, note, moved := s.healthDetour(ctx, m, s.startLauncher(ctx, t.Launcher), func(alt Device) bool {
 		return s.taskDirectoryExists(ctx, alt.ID, rehome(t.Cwd, m, alt))
 	})
-	if note != "" && !strings.Contains(t.Why, note) {
-		t.Why = strings.TrimSpace(t.Why + " (" + note + ")")
-	}
+	t.noteWhy(note)
 	if moved {
 		// Keep the machine the task was first placed on across repeated moves; each move refreshes the landing and the
 		// health-check reason. Names, not ids, go on the card/receipt (#2271).
@@ -67,6 +65,28 @@ func (s *Service) healthyPlace(ctx context.Context, t *PlanTask) bool {
 		t.Machine, t.Cwd = alt.ID, rehome(t.Cwd, m, alt)
 	}
 	return moved
+}
+
+// noteWhy adds note to t's why (once), in brackets after the assistant's reason: the card shows it.
+func (t *PlanTask) noteWhy(note string) {
+	if note != "" && !strings.Contains(t.Why, note) {
+		t.Why = strings.TrimSpace(t.Why + " (" + note + ")")
+	}
+}
+
+// fitTaskLauncher holds t's resolved launcher (params, resolveStart's) to what m has (fitLauncher): a default m lacks
+// is swapped for one it has, which t then names, without a tier that no longer applies, and its why says so.
+func (s *Service) fitTaskLauncher(ctx context.Context, t *PlanTask, m Device, own startPick, params map[string]any) error {
+	note, err := s.fitLauncher(ctx, m, own, params)
+	if err != nil || note == "" {
+		return err
+	}
+	t.Launcher, _ = params["launcher"].(string)
+	t.Model, _ = params["model"].(string)
+	t.Effort, _ = params["effort"].(string)
+	t.Tier = ""
+	t.noteWhy(note)
+	return nil
 }
 
 // taskDirectoryExists checks the mapped directory before a flexible task changes machines. Missing, denied or
@@ -95,11 +115,12 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 		return "", "", err
 	}
 	params := map[string]any{"launcher": t.Launcher, "model": t.Model, "effort": t.Effort, "tier": t.Tier}
-	if err := s.applyStartTier(ctx, params); err != nil {
+	own, err := s.resolveStart(ctx, params)
+	if err != nil {
 		return "", "", err
 	}
-	if err := s.applyModel(ctx, "agent.new", params); err != nil {
-		return "", "", err
+	if t.defaulted || t.Launcher == "" {
+		own.launcher, t.defaulted = "", true // filled in from a default, by this try or an earlier one
 	}
 	t.Launcher, _ = params["launcher"].(string)
 	t.Model, _ = params["model"].(string)
@@ -111,6 +132,12 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	}
 	if !m.Reachable {
 		return "", "", machineOffline(m.Name)
+	}
+	// On the computer it landed on (a flexible task may have moved): a default it lacks gives way to one it has, a
+	// launcher the plan named that it lacks is refused before any tab opens (#2640). Before the health check below,
+	// which is then about the launcher that will run.
+	if err := s.fitTaskLauncher(ctx, t, m, own, params); err != nil {
+		return "", "", err
 	}
 	if t.MachinePolicy == machineFixed {
 		// Only an actual terminal start can recheck a repaired terminal shell.
@@ -182,7 +209,7 @@ func (s *Service) updatePlanTask(ctx context.Context, planID string, i int, t Pl
 	if err := s.patchPlanTask(ctx, planID, i, func(pt *PlanTask) {
 		pt.Machine, pt.Cwd, pt.Why = t.Machine, t.Cwd, t.Why
 		pt.Reroute = t.Reroute
-		pt.Launcher, pt.Model, pt.Effort = t.Launcher, t.Model, t.Effort
+		pt.Launcher, pt.Model, pt.Effort, pt.Tier = t.Launcher, t.Model, t.Effort, t.Tier
 	}); err != nil {
 		s.logf("plan %s: %v", planID, err)
 	}

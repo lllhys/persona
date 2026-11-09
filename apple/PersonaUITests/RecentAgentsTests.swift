@@ -126,7 +126,7 @@ final class RecentAgentsTests: XCTestCase {
         app.terminate()
         try await launch(fresh: false)
         ordered([widget, orders, "补齐网络层的单元测试", release])
-        choose("卡片")
+        choose("头像") // back from Compact List: the rows as they were (#2530: Avatar, the default style)
         let card = app.buttons.matching(identifier: "agents.row").firstMatch
         app.bringAboveTabBar(card)
         XCTAssertTrue(card.exists)

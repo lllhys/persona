@@ -451,8 +451,11 @@ func readCodexOrigin(path string) codexOrigin {
 }
 
 // codexDesktopChat: a chat of the Codex App running on this machine (not a CLI thread, not a subagent of one).
-func codexDesktopChat(src codexSource) bool {
-	if src.path == "" || !codexDesktopAvailable(src.home) {
+func codexDesktopChat(src codexSource) bool { return codexDesktopChatIn(src, nil) }
+
+// codexDesktopChatIn is codexDesktopChat with the App's presence looked up once per home in a list pass (codexListPass).
+func codexDesktopChatIn(src codexSource, pass *codexListPass) bool {
+	if src.path == "" || !pass.desktopAvailable(src.home) {
 		return false
 	}
 	o := readCodexOrigin(src.path)

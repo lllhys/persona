@@ -1,5 +1,7 @@
 {
   "elicitation_title": "MCPのリクエストが対応を待っています",
+  "elicitation_server_title": "MCPサーバー {server} が対応を待っています",
+  "elicitation_body": "Personaを開いて対応してください",
   "question_title": "Claudeから質問があります",
   "plan_title": "プランの承認を待っています",
   "permission_title": "許可が必要です",

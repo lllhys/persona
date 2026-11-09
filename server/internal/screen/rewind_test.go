@@ -70,7 +70,7 @@ func TestParseRewindList(t *testing.T) {
 // The second screen: which choices it offers depends on whether code changed after the prompt.
 func TestParseRewindOptions(t *testing.T) {
 	code := rewindFixture(t, "options-code")
-	if code.Kind != RewindOptions || !code.HasCode() || len(code.Choices) != 5 {
+	if code.Kind != RewindOptions || code.Choice(RewindChoiceBoth) == nil || len(code.Choices) != 5 {
 		t.Fatalf("options-code: %+v", code)
 	}
 	if !strings.HasSuffix(code.Message, "ok2") || strings.Contains(code.Message, "ago") {
@@ -94,7 +94,7 @@ func TestParseRewindOptions(t *testing.T) {
 	}
 
 	none := rewindFixture(t, "options-nocode")
-	if none.HasCode() || none.Choice(RewindChoiceBoth) != nil || none.Choice(RewindChoiceConversation) == nil || len(none.Choices) != 4 {
+	if none.Choice(RewindChoiceBoth) != nil || none.Choice(RewindChoiceConversation) == nil || len(none.Choices) != 4 {
 		t.Fatalf("options-nocode: %+v", none.Choices)
 	}
 	if none.Message != "Reply with only: ok5" {
@@ -115,7 +115,7 @@ func TestParseRewindOptions(t *testing.T) {
 // 2.1.304's wording ("The conversation will be forked") has the same panel and choices.
 func TestParseRewindOlderVersion(t *testing.T) {
 	r := ParseRewind(fixture(t, "claude-rewind-2.1.304-confirm-apple-restore-120.txt"))
-	if r == nil || r.Kind != RewindOptions || r.Message != "apple" || r.Choice(RewindChoiceConversation) == nil || r.HasCode() {
+	if r == nil || r.Kind != RewindOptions || r.Message != "apple" || r.Choice(RewindChoiceConversation) == nil || r.Choice(RewindChoiceBoth) != nil {
 		t.Fatalf("%+v", r)
 	}
 }

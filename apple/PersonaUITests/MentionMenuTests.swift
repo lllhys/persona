@@ -11,7 +11,7 @@ final class MentionMenuTests: XCTestCase {
     private var hub: String!
     private static let widget = "macbook/a1f3c2d4-0000-4000-8000-000000000001" // the weather agent, working
     private static let review = "macbook/a1f3c2d4-0000-4000-8000-000000000006" // the PR review agent, idle
-    private static let blog = "studio/a1f3c2d4-0000-4000-8000-000000000003" // 「博客迁移到 Astro」
+    private static let blog = "studio/a1f3c2d4-0000-4000-8000-000000000003" // the blog migration agent, 「博客迁移到 Astro」 in the mock
 
     override func setUpWithError() throws {
         continueAfterFailure = false

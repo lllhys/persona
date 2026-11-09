@@ -1,5 +1,5 @@
 // Package assistantwire is what the hub and the assistant (internal/assistant, its own process) say to each other
-// over the bus (docs/protocol/protocol.md "Bus", docs/assistant/assistant.md "The boundary with the hub"): each method's and event's name, params
+// over the bus (docs/protocol/protocol.md "Bus", docs/assistant/assistant.md "Boundary with hub"): each method's and event's name, params
 // and result, the error codes that cross it, and the routes the hub relays. Both sides import it; neither imports
 // the other.
 package assistantwire

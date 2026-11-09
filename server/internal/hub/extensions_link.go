@@ -3,6 +3,7 @@ package hub
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -573,6 +574,7 @@ func (h *Hub) authorizeExtension(ctx context.Context, tok string, r *http.Reques
 	var a extwire.Authorized
 	manager := ""
 	sure = true
+	asked := time.Now()
 	for _, id := range h.listManagers(ctx) {
 		a = extwire.Authorized{}
 		err := h.callBus(ctx, id, extwire.MethodAuthorize, extwire.Authorize{Hash: hashToken(tok), Pattern: pattern,
@@ -589,8 +591,21 @@ func (h *Hub) authorizeExtension(ctx context.Context, tok string, r *http.Reques
 		return principal{}, false, false, "", sure
 	}
 	p = principal{ID: "extension:" + a.Extension, Name: a.Name, Role: roleExtension, Extension: a.Extension, Scopes: a.Scopes,
-		Manager: manager}
+		Manager: manager, extHash: hashToken(tok), extAt: asked}
 	return p, true, a.OK, a.Scope, true
+}
+
+// tokenHash says whether s is a hash as hashToken makes one.
+func tokenHash(s string) bool {
+	if len(s) != 2*sha256.Size {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // answerOnly says whether the request comes from an answer-only device (a watch).
@@ -617,6 +632,7 @@ func (h *Hub) extAppCall(ctx context.Context, from string, p assistantwire.AppCa
 		Machine       string                    `json:"machine"`
 		Sender        string                    `json:"sender"`
 		Request       json.RawMessage           `json:"request"`
+		Hash          string                    `json:"hash"`
 	}
 	if len(p.Params) > 0 {
 		if err := json.Unmarshal(p.Params, &a); err != nil {
@@ -644,6 +660,12 @@ func (h *Hub) extAppCall(ctx context.Context, from string, p assistantwire.AppCa
 		out = map[string]any{}
 	case extwire.HubMailTargets:
 		out = map[string]any{"targets": h.push.mailTargets()}
+	case extwire.HubTokenRevoked:
+		if !tokenHash(a.Hash) {
+			return nil, true, errors.New("hub: extensions.token_revoked without a token's hash")
+		}
+		h.dropRevokedToken(from, a.Hash)
+		out = map[string]any{}
 	default:
 		return nil, true, errors.New("hub: no method " + p.Method)
 	}

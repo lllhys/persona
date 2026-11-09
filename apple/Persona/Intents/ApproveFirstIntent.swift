@@ -2,8 +2,8 @@ import AppIntents
 import Foundation
 
 /// "Approve First Pending": settles the oldest interaction 「Persona 状态」 reads out (`IntentPicker.waiting`) when
-/// it is a permission or a plan. Questions and terminal prompts need the screen, so those answer with a hint to open
-/// the app. Saying yes needs the phone unlocked, as on the notification and Live Activity buttons: Siri runs it on a
+/// it is a permission or a plan. Questions, terminal prompts and MCP forms and links need the screen, so those answer
+/// with a hint to open the app. Saying yes needs the phone unlocked, as on the notification and Live Activity buttons: Siri runs it on a
 /// locked phone too (#1878).
 struct ApproveFirstIntent: AppIntent {
     nonisolated static let title: LocalizedStringResource = "Approve First Pending"
@@ -59,7 +59,7 @@ struct ApproveFirstIntent: AppIntent {
         return switch ix.kind {
         case .permission: Resolution(allow: true)
         case .plan: Resolution(approve: true, mode: "acceptEdits")
-        case .question, .screen: nil
+        case .question, .screen, .elicitation: nil
         }
     }
 
@@ -67,7 +67,7 @@ struct ApproveFirstIntent: AppIntent {
         switch ix.kind {
         case .permission: IntentText.approvedPermission(ix.toolName)
         case .plan: IntentText.approvedPlan
-        case .question, .screen: IntentText.needsApp(ix.kind)
+        case .question, .screen, .elicitation: IntentText.needsApp(ix.kind)
         }
     }
 }

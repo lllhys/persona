@@ -65,7 +65,7 @@ internal fun ChatMessageJump(
             MessageJumpStep.NotFound -> { onNotice(res.getString(R.string.chat_link_message_gone)); done() }
             is MessageJumpStep.Expand -> list.setExpanded(step.groups)
             is MessageJumpStep.Scroll -> {
-                if (lines.none { it.id == step.rowId }) return@LaunchedEffect
+                if (lines.none { it.contentKey == step.rowId }) return@LaunchedEffect
                 withFrameNanos { }
                 if (list.scrollToEntry(ChatListEntry(step.rowId), alignTop = true)) {
                     search.highlight = step.rowId

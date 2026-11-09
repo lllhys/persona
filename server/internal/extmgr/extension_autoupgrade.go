@@ -148,7 +148,8 @@ func (h *Manager) extensionBusy(id string) string {
 	return ""
 }
 
-// extensionUpgradeLoop looks for newer versions until ctx ends.
+// extensionUpgradeLoop looks for newer versions until ctx ends. Each look also drops the previews past their time, so
+// a package staged for one nobody installed leaves the disk on an idle hub too.
 func (h *Manager) extensionUpgradeLoop(ctx context.Context) {
 	u := h.extensionUpgrades()
 	if u == nil {
@@ -162,6 +163,7 @@ func (h *Manager) extensionUpgradeLoop(ctx context.Context) {
 	t := time.NewTicker(extensionUpgradeEvery)
 	defer t.Stop()
 	for {
+		h.extensions.reg.DropExpiredPreviews()
 		u.check(ctx)
 		select {
 		case <-ctx.Done():
@@ -543,6 +545,9 @@ func (u *extensionUpgrades) install(ctx context.Context, p *extension.Extension,
 		h.opStep(op, extension.StepConsent, extension.StepSkipped) // nothing more than was granted: nobody is asked
 		var np *extension.Extension
 		if np, err = reg.UpgradePlan(ctx, id, pv.ID, "", nil, extensionUpgradeActor); err != nil {
+			// A refused plan keeps its preview for a retry, but nobody retries this one: the next try waits for a
+			// fresh index and previews again, so its staged package is dropped now instead of waiting to expire.
+			reg.Discard(pv.ID)
 			u.mu.Lock()
 			delete(u.inflight, key)
 			u.mu.Unlock()

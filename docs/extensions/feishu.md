@@ -92,10 +92,6 @@ Gateway x-multi-account `GET /agent/v1/accounts`; choose account via gateway hea
 
 ### Topic pagination limit (H06)
 
-Read-only gateway source review 2026-10-31, version `2da814b1da1fd2ddd0cb9df05c419f7c87421739`. `GET /agent/v1/messages/:messageId/thread` supports latest page / `beforePosition` older, **not newer forward page**:
-
-- `src/server/routes/api.ts` reads only `beforePosition` / limit, passes to `hydrateThread` / threadPage. `afterPosition` ignored; absent `beforePosition` latest.
-- `src/server/lark/domains/im-domain.ts` `pullThread` only `beforePosition`, retrieves from end / before position; `src/server/services/messenger-service.ts` also one direction.
-- `src/server/repositories/messenger-repository.ts` `threadPage` queries `threadPosition < beforeThreadPosition`, descending then reverse; items / `hasOlder` / `nextOlderCursor`, no `hasNewer` / nextNewerCursor.
+Topic replies (`GET /agent/v1/messages/:messageId/thread`) page only backward: the gateway returns the latest page or the one before `beforePosition`, never a newer page (source review: `docs/archive/extensions/feishu-records.md`).
 
 Hub topic route therefore has no after yet. Ordinary messages support `afterPosition`, but topic replies use independent `threadPosition`; cannot borrow ordinary cursor or append latest page as continuous. Android ↓ Latest Replies reloads / replaces current window; older pagination / post-reply refresh unchanged. Add newer pagination once upstream fetch / query / cursor contract exists. No real Lark / live hub accessed; conclusions from source review.

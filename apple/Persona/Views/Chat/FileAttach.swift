@@ -186,27 +186,49 @@ struct UploadsBar: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
-            ForEach(uploads.items) { item in
-                AttachmentRow(symbol: Theme.Icon.file, name: item.name,
-                              status: item.waiting ? String(localized: "Waiting [File Attach 26c8cf]") : "\(item.sent.storageText) / \(item.size.storageText)",
-                              progress: item.size > 0 ? Double(min(item.sent, item.size)) / Double(item.size) : 0,
-                              removeLabel: String(localized: "Cancel upload of \(item.name)")) { uploads.cancel(item.id) }
-            }
+            ForEach(uploads.items) { item in UploadRow(item: item, uploads: uploads) }
         }
     }
 }
 
+/// One upload in flight: name, progress, cancel. `boxed` as in `AttachmentRow`.
+struct UploadRow: View {
+    var item: FileUploads.Item
+    var uploads: FileUploads
+    var boxed = true
+
+    var body: some View {
+        AttachmentRow(symbol: Theme.Icon.file, name: item.name,
+                      status: item.waiting ? String(localized: "Waiting [File Attach 26c8cf]") : "\(item.sent.storageText) / \(item.size.storageText)",
+                      progress: item.size > 0 ? Double(min(item.sent, item.size)) / Double(item.size) : 0,
+                      removeLabel: String(localized: "Cancel upload of \(item.name)"), boxed: boxed) { uploads.cancel(item.id) }
+    }
+}
+
 /// One row above the input box (a file uploading, a video on its way or ready): icon, name, status, the progress bar
-/// while there is one (nil: none), and the button that cancels or removes it.
+/// while there is one (nil: none), and the button that cancels or removes it. `boxed`: on a surface of its own, as over
+/// an input box; off, a form's row (New Agent's attachments, #2321).
 struct AttachmentRow: View {
     var symbol: String
     var name: String
     var status: String
     var progress: Double?
     var removeLabel: String
+    var boxed = true
     var remove: () -> Void
 
     var body: some View {
+        if boxed {
+            row
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Space.s)
+                .surface(in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: Theme.Space.m) {
             ThemedIcon(symbol).font(Theme.Font.body).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -224,9 +246,6 @@ struct AttachmentRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel(removeLabel)
         }
-        .padding(.horizontal, Theme.Space.m)
-        .padding(.vertical, Theme.Space.s)
-        .surface(in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }
 

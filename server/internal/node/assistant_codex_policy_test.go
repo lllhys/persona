@@ -19,7 +19,6 @@ func TestCodexPermissionModesReachThreadAndTurn(t *testing.T) {
 		mode, approval, sandbox, turnSandbox string
 		network                              bool
 	}{
-		{"", "untrusted", "workspace-write", "workspaceWrite", true},
 		{"default", "untrusted", "workspace-write", "workspaceWrite", true},
 		{"acceptEdits", "untrusted", "workspace-write", "workspaceWrite", true},
 		{"auto", "on-request", "workspace-write", "workspaceWrite", false},
@@ -71,6 +70,67 @@ func TestCodexPermissionModesReachThreadAndTurn(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCodexUnsetPermissionsDeferToLauncher(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		n := codexTestNode(t)
+		withFakeHub(t, n)
+		cwd := t.TempDir()
+		p, c, f := newFakeCodex(t, n, cwd)
+		method := "thread/start"
+		if resume {
+			method = "thread/resume"
+		}
+		f.results[method] = map[string]any{"thread": map[string]any{"id": testThread}}
+		if err := c.start(context.Background(), testThread, cwd, resume); err != nil {
+			t.Fatal(err)
+		}
+		assertNoPolicy := func(method string) {
+			t.Helper()
+			for _, call := range f.sent(method) {
+				var params map[string]json.RawMessage
+				if err := json.Unmarshal(call.Params, &params); err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range []string{"approvalPolicy", "sandbox", "sandboxPolicy", "permissions"} {
+					if _, ok := params[key]; ok {
+						t.Fatalf("%s overrides the launcher's %s: %s", method, key, call.Params)
+					}
+				}
+			}
+		}
+		assertNoPolicy(method)
+		// Effective policy is display metadata, not a user's selection. In particular, an inherited
+		// workspace-write/on-request policy must keep its configured network access on later turns.
+		rollout := filepath.Join(cwd, "history.jsonl")
+		history := []byte(`{"type":"session_meta","payload":{"id":"` + testThread + `","cwd":"` + filepath.ToSlash(cwd) + `"}}` + "\n" +
+			`{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"workspace-write","network_access":true}}}` + "\n")
+		if err := os.WriteFile(rollout, history, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		n.paths[testThread] = rollout
+		n.state.put(testThread, sessionState{Launcher: "cx_test", Cwd: cwd})
+		n.procs[testThread] = p
+		if mode, _ := n.modesOf(testThread); mode != "auto" {
+			t.Fatalf("effective configured policy was not read: %q", mode)
+		}
+		for range 2 {
+			if err := c.deliver(context.Background(), "", "next turn", nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertNoPolicy("turn/start")
+		if len(f.sent("turn/start")) != 2 {
+			t.Fatal("later turns did not start")
+		}
+		if st, _ := n.state.get(testThread); st.AppMode != "" {
+			t.Fatalf("effective policy became an explicit mode: %q", st.AppMode)
+		}
+		if got, err := os.ReadFile(rollout); err != nil || string(got) != string(history) {
+			t.Fatal("history changed")
+		}
 	}
 }
 
@@ -163,6 +223,28 @@ func TestCodexPersistedModeSurvivesRestartAndAppliesNextTurn(t *testing.T) {
 	}
 	if got, err := os.ReadFile(rollout); err != nil || string(got) != string(history) {
 		t.Fatalf("history changed: %q, %v", got, err)
+	}
+}
+
+func TestCodexInheritedPolicyRefusalHasNoFallback(t *testing.T) {
+	for _, method := range []string{"thread/start", "thread/resume", "turn/start"} {
+		n := codexTestNode(t)
+		withFakeHub(t, n)
+		_, c, f := newFakeCodex(t, n, t.TempDir())
+		c.p.id, c.threadID = testThread, testThread
+		const refusal = "configured permissions are not allowed by managed requirements"
+		f.mu.Lock()
+		f.errors = map[string]string{method: refusal}
+		f.mu.Unlock()
+		var err error
+		if method == "turn/start" {
+			err = c.deliver(context.Background(), "", "policy check", nil)
+		} else {
+			err = c.start(context.Background(), testThread, c.p.cwd, method == "thread/resume")
+		}
+		if err == nil || !strings.Contains(err.Error(), refusal) || len(f.sent(method)) != 1 {
+			t.Fatalf("%s did not propagate the inherited-policy refusal: %v", method, err)
+		}
 	}
 }
 

@@ -265,6 +265,7 @@ func runHub(ctx context.Context, b update.Build, cfg *Config, budget *shutdownBu
 	h.push.hubID = h.hubID
 	h.push.userLang = h.userLang
 	h.push.userLoc = h.userLocation
+	h.push.devicesChanged = func() { go h.fleetClientsChanged() } // a phone that takes MCP forms by push (fleet_link.go)
 	go h.push.maintenanceLoop(ctx)
 	// The machines are the manager's to connect (devices_link.go); until it reports them they show as before a
 	// restart (what it handed over), before the assistant's process starts and takes that hand-over.

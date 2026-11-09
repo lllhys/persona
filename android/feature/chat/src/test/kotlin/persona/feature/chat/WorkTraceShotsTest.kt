@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshots.Snapshot
+import org.junit.Assert.assertNotEquals
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,8 +45,8 @@ import java.io.File
 import java.time.Instant
 
 /**
- * The running work line (web #1990): "Working…", the plan card with its Step N/M pill and the newest steps under it,
- * in every style, light and dark. PNGs in `build/work-trace-shots/` (or `-Dpersona.shots=<dir>`).
+ * Collapsed running and completed summaries, and the manual trace's latest plan plus older updates,
+ * in every style, light and dark. PNGs in `build/work-trace-shots/`.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -80,7 +83,7 @@ class WorkTraceShotsTest {
     ), live = true, start = start, end = null, open = false)
     private val finished = live.copy(id = "w-done", live = false, end = start.plusSeconds(83),
         steps = live.steps.dropLast(1) + tool("e", "Bash", true, "command" to "./gradlew test"))
-    // An open finished line: an older plan, the latest one and an empty TodoWrite that clears it; only the latest is drawn.
+    // An open finished line: older and clearing updates stay ordinary steps; the latest substantive plan gets its card.
     private fun todo(id: String, vararg items: Pair<String, String>) = WorkItem.Tool(ToolCall(use(id, "TodoWrite", buildJsonObject {
         put("todos", buildJsonArray { items.forEach { (c, s) -> add(buildJsonObject { put("content", c); put("status", s) }) } })
     }), done(id), emptyList()))
@@ -91,7 +94,7 @@ class WorkTraceShotsTest {
         todo("q3"),
     ), live = false, start = start, end = start.plusSeconds(40), open = true)
 
-    @Test fun theRunningLineShowsItsPlanAndNewestSteps() {
+    @Test fun theRunningLineIsCollapsedAndTheManualTraceKeepsOlderPlanUpdates() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         rule.mainClock.autoAdvance = false // the clock and the spinner never settle
@@ -99,6 +102,7 @@ class WorkTraceShotsTest {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                 val context = LocalContext.current
                 val loader = remember { ImageLoader.Builder(context).build() }
+                DisposableEffect(loader) { onDispose { loader.shutdown() } }
                 Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background).padding(Tokens.Space.l)) {
                     for (line in listOf(live, finished)) ChatLineContent(line, SessionKey("mac", "s1"), loader,
                         recordedDuration = 83, onToggle = {}, onFold = {}, folding = emptySet(), foldErrors = emptyMap(), onFullText = {})
@@ -112,19 +116,24 @@ class WorkTraceShotsTest {
             }
         }
         rule.mainClock.advanceTimeByFrame()
-        rule.onNodeWithText("Step 2/3").assertIsDisplayed()
-        rule.onNodeWithText("正在工作…", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Step 2/3").assertDoesNotExist()
+        rule.onNodeWithText("第 7 步", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("workSummary").assertDoesNotExist()
         rule.onNodeWithText("做了 7 步，用时 1 分钟").assertIsDisplayed()
-        // The open line draws only its latest plan; the older one and the empty TodoWrite are not drawn.
-        rule.onAllNodesWithText("画计划卡").assertCountEquals(2) // all done: the header names the last item, the list has it
-        rule.onNodeWithText("旧计划第一项").assertDoesNotExist()
-        rule.onAllNodesWithText("Step", substring = true).assertCountEquals(1)
+        // Latest plan card plus every older update remain inspectable; collapsed work draws none of them.
+        rule.onAllNodesWithText("画计划卡").assertCountEquals(2)
+        rule.onNodeWithText("旧计划第一项").assertIsDisplayed()
+        rule.onAllNodesWithText("Step", substring = true).assertCountEquals(0) // The completed plan has a checkmark, not Step N/M.
+        val corners = mutableMapOf<AppStyle, MutableList<Int>>()
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
             style = s; dark = d
-            rule.mainClock.advanceTimeByFrame()
+            Snapshot.sendApplyNotifications()
+            repeat(3) { rule.mainClock.advanceTimeByFrame() }
             val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+            corners.getOrPut(s) { mutableListOf() } += bitmap.getPixel(2, 2)
             File(out(), "work-trace-${s.name.lowercase()}-${if (d) "dark" else "light"}.png").outputStream()
                 .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }
+        corners.values.forEach { assertNotEquals("dark capture must differ", it[0], it[1]) }
     }
 }

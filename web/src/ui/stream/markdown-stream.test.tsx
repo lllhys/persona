@@ -3,7 +3,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "../Markdown";
-import { loadHighlight } from "./highlight";
+import { codeHighlight, loadHighlight } from "./highlight";
+import { forgetShown } from "./wordFade";
+// The grammars and the plugin loaded while the file is collected, outside the test timeout (as highlight-lazy.test.tsx,
+// #4955): the lazy imports in the tests then find them loaded instead of loading them under the full suite's load.
+import "rehype-highlight";
+import "lowlight";
 
 const motion = vi.hoisted(() => ({ on: true }));
 vi.mock("./motion", async (importOriginal) => ({
@@ -84,6 +89,40 @@ describe("Markdown's code", () => {
     expect(render({ text: "```mermaid\ngraph TD; A-->B\n```" })).not.toContain("hljs");
     // not inside the fade's spans while streaming either
     expect(render({ text, streaming: true })).toContain('<span class="hljs-keyword">const</span>');
+  });
+
+  it("colors each block as rehype-highlight colored the whole reply, on every path (#2465)", async () => {
+    const corpus = [
+      "```ts\nconst a: number = 1 // one\nexport function f<T>(x: T) { return `${x}` }\n```",
+      "```go\nfunc main() { fmt.Println(\"hi\") }\n```\n\n```python\n@cache\ndef f(rows): return [r for r in rows]  # keep\n```",
+      "```bash\nfor f in *.ts; do echo \"$f\"; done\n```\n\n```tsx\nconst A = () => <div className=\"x\">{1}</div>;\n```",
+      // sublanguages: css and js inside html
+      "```html\n<style>a { color: red }</style>\n<script>let x = 1</script>\n<p class=\"a\">&amp;</p>\n```",
+      "```diff\n- old\n+ new\n```\n\n```nosuchlang\nplain $5\n```\n\n```\nno language\n```\n\n```ts\n```",
+      "```mermaid\ngraph TD; A-->B\n```\n\n```persona-view\nnot a card\n```\n\n$$\nx^2\n$$",
+      "说明：\n\n> ```js\n> let a = 1\n> ```\n\n- 列表\n\n  ```json\n  {\"a\": [1, true, null]}\n  ```",
+    ];
+    const paths = [{}, { streaming: true }, { fade: true }];
+    const draw = (inBlock: boolean) =>
+      corpus.flatMap((text) =>
+        paths.map((p) => {
+          forgetShown();
+          codeHighlight.inBlock = inBlock;
+          try {
+            return render({ text, ...p });
+          } finally {
+            codeHighlight.inBlock = true;
+          }
+        }),
+      );
+    codeHighlight.inBlock = false;
+    await loadHighlight(); // rehype-highlight
+    codeHighlight.inBlock = true;
+    await loadHighlight(); // the grammars
+    const plugin = draw(false);
+    expect(plugin.join("")).toContain('class="hljs-keyword"');
+    expect(plugin.join("")).toContain('<span class="css">'); // a sublanguage
+    expect(draw(true)).toEqual(plugin);
   });
 });
 

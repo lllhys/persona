@@ -130,7 +130,7 @@ type historyCall struct {
 }
 
 // classify is what the call's error means. A source that answers not ready right after a call of ours went through
-// is taken as made unready by it (docs/assistant/knowledge.md "Stops"): that stops, where not ready otherwise
+// is taken as made unready by it (docs/assistant/knowledge.md "Errors and stops"): that stops, where not ready otherwise
 // pauses.
 func (c historyCall) classify() (historyOutcome, string) {
 	o, code := classify(c.err)

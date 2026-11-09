@@ -165,7 +165,7 @@ func (k *asker) look(ctx context.Context) {
 		}
 		pending[ix.ID] = ix
 		// A question the assistant is deciding whether to answer for the user is not theirs yet (delegate,
-		// docs/assistant/assistant.md "The assistant answers questions first"): it is asked once it is left to them.
+		// docs/assistant/assistant.md "Assistant answers questions first"): it is asked once it is left to them.
 		if !k.seen[ix.ID] && !asking(ix.ID) && !ix.Delegating {
 			fresh = append(fresh, ix)
 		}

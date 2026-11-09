@@ -18,7 +18,10 @@
     <string name="settings_pairing_welcome_connect">ハブに接続</string>
     <string name="settings_pairing_failed_title">接続できませんでした</string>
     <string name="settings_pairing_failed_body">下の案内に沿って対処してから、もう一度お試しください。</string>
-    <string name="settings_pairing_stopped_at">「%1$s」で停止：%2$s</string>
+    <string name="settings_pairing_stopped_at">「%1$s」で停止</string>
+    <plurals name="settings_pairing_tried_again">
+        <item quantity="other">%1$d回試しましたが、まだ接続できません。</item>
+    </plurals>
     <string name="settings_pairing_reload_machines">マシンを再読み込み</string>
     <string name="settings_pairing_diagnostics">接続診断</string>
     <string name="settings_pairing_rescan">再スキャン</string>
@@ -35,6 +38,7 @@
     <string name="settings_pairing_address_label">ハブのアドレスかペアリングリンク</string>
     <string name="settings_pairing_code_label">ペアリングコード</string>
     <string name="settings_pairing_http_warning">HTTPは暗号化されません。LANかVPNの中だけで使い、外では暗号化された接続を使ってください。</string>
+    <string name="settings_pairing_manual_invalid">アドレスを確認してください（例: hub.local:18660）</string>
     <string name="settings_pairing_next">次へ</string>
     <string name="settings_pairing_paste">リンクを貼り付け</string>
     <string name="settings_pairing_back_to_scan">スキャンに戻る</string>
@@ -59,7 +63,7 @@
     <string name="settings_pairing_primary">メインアドレス</string>
     <string name="settings_pairing_alternate">予備アドレス%1$d</string>
     <string name="settings_pairing_identity_note">接続時にハブの身元を確認します。</string>
-    <string name="settings_pairing_stage_parse">QRコードを読み取り</string>
+    <string name="settings_pairing_stage_parse">ペアリング情報を読み取り</string>
     <string name="settings_pairing_stage_probe">アドレスを探索</string>
     <string name="settings_pairing_stage_verify">証明書とハブを検証</string>
     <string name="settings_pairing_stage_exchange">認証情報を取得</string>

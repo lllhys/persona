@@ -94,6 +94,9 @@ type Todo struct {
 	RemindAt   *time.Time `json:"remind_at,omitempty"`
 	RemindedAt *time.Time `json:"reminded_at,omitempty"`
 	Priority   string     `json:"priority,omitempty"`
+	// Project: the slug of the knowledge-base project it belongs to (#2581, todo_project.go); the apps group open
+	// todos by it. Clients that do not know it show the todo as ever.
+	Project string `json:"project,omitempty"`
 }
 
 // todoStore is what the todos keep in the database (internal/db). A Store without it (the unit tests' memStore) keeps
@@ -427,6 +430,13 @@ func (s *Service) createTodo(ctx context.Context, title, notes, origin, planID s
 	return s.newTodo(ctx, title, notes, origin, planID, s.quietTask(ctx, origin))
 }
 
+// createTaskTodo is createTodo for a plan's task, in the knowledge-base project the task names (a slug; "" for none).
+func (s *Service) createTaskTodo(ctx context.Context, title, notes, origin, planID, project string) (Todo, error) {
+	now := time.Now().UTC()
+	return s.insertTodo(ctx, db.TodoRow{ID: "todo_" + randomHex(8), Title: title, Notes: notes, CreatedAt: now, UpdatedAt: now,
+		Origin: origin, PlanID: planID, Quiet: s.quietTask(ctx, origin), Project: project})
+}
+
 // newTodo is createTodo, quiet or not as given (a launcher repair's has no conversation and is quiet,
 // launcher_repair.go).
 func (s *Service) newTodo(ctx context.Context, title, notes, origin, planID string, quiet bool) (Todo, error) {
@@ -730,7 +740,7 @@ func (s *Service) todoRoutes() {
 		apierr.WriteJSON(w, map[string]any{"todos": list})
 	})
 
-	// POST /api/v1/todos: create todo {title, notes, due_at | due_date, remind_at, priority}
+	// POST /api/v1/todos: create todo {title, notes, due_at | due_date, remind_at, priority, project}
 	s.handle("POST /api/v1/todos", func(w http.ResponseWriter, r *http.Request) {
 		if !todoWriter(r) {
 			apierr.Write(w, http.StatusForbidden, errors.New("read-only role cannot modify todos"))
@@ -741,8 +751,9 @@ func (s *Service) todoRoutes() {
 			return
 		}
 		var in struct {
-			Title string `json:"title"`
-			Notes string `json:"notes"`
+			Title   string  `json:"title"`
+			Notes   string  `json:"notes"`
+			Project *string `json:"project"`
 			todoPlanIn
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -759,6 +770,10 @@ func (s *Service) todoRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		if err := s.setTodoProject(r.Context(), in.Project, &plan); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		resTodo, err := s.createPlainTodo(r.Context(), title, in.Notes, plan)
 		if err != nil {
 			apierr.Write(w, http.StatusInternalServerError, err)
@@ -767,7 +782,7 @@ func (s *Service) todoRoutes() {
 		apierr.WriteJSON(w, map[string]any{"todo": resTodo})
 	})
 
-	// PATCH /api/v1/todos/{id}: update title, notes, done, due_at | due_date, remind_at, priority
+	// PATCH /api/v1/todos/{id}: update title, notes, done, due_at | due_date, remind_at, priority, project ("" clears it)
 	s.handle("PATCH /api/v1/todos/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !todoWriter(r) {
 			apierr.Write(w, http.StatusForbidden, errors.New("read-only role cannot modify todos"))
@@ -784,9 +799,10 @@ func (s *Service) todoRoutes() {
 		}
 
 		var in struct {
-			Title *string `json:"title"`
-			Notes *string `json:"notes"`
-			Done  *bool   `json:"done"`
+			Title   *string `json:"title"`
+			Notes   *string `json:"notes"`
+			Done    *bool   `json:"done"`
+			Project *string `json:"project"`
 			todoPlanIn
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -803,6 +819,10 @@ func (s *Service) todoRoutes() {
 			e.Title = &t
 		}
 		if err := in.todoPlanIn.edit(&e); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.setTodoProject(r.Context(), in.Project, &e); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}

@@ -53,6 +53,25 @@ struct MacOpenURLTests {
         #expect(PersonaLinkHandoff.app(for: url, handlers: [mac], fallbacks: [], info: info) == nil)
     }
 
+    @Test func sentSettingsLinksOpenTheNestedRecordsPage() {
+        for path in ["/sent", "?tab=sent", "/connectors/-sent", "?tab=connectors&connector=-sent"] {
+            #expect(MacOpenURL.route(URL(string: "persona://settings" + path)!) == .sentRecords)
+        }
+        #expect(MacOpenURL.route(URL(string: "persona://settings/connectors/telegram")!) == .ignore)
+    }
+
+    @MainActor @Test func sentLinksReachTheAppModelsNestedSettingsPath() {
+        let model = AppModel()
+        for path in ["/sent", "?tab=sent", "?tab=connectors&connector=-sent"] {
+            model.openURL(URL(string: "persona://settings" + path)!)
+            #expect(model.settingsPath == SettingsPage.sentPath)
+            model.settingsPath.removeLast()
+            var parent = SettingsPage.sentPath
+            parent.removeLast()
+            #expect(model.settingsPath == parent)
+        }
+    }
+
     @Test func otherLinksAreIgnored() {
         for other in ["other-product", "personas", "personad"] {
             #expect(MacOpenURL.route(URL(string: "\(other)://open?machine=a&session=b")!) == .ignore)

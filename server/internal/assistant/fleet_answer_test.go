@@ -221,8 +221,92 @@ func TestElicitationNeedsAnApp(t *testing.T) {
 		}
 		ft.waitPending(0)
 	}
-	// Its push goes only to the apps' notify events (the hub's), not APNs: the kind says it is an elicitation.
+	// Its push goes only to what can show it (the hub picks): the kind says it is an elicitation.
 	if got := ft.pushesOf(assistantwire.NotifyInput, 4, time.Second); len(got) != 4 || got[0].Interaction.Kind != proto.IxElicitation {
 		t.Fatalf("pushes %+v", got)
+	}
+}
+
+// A phone that registered for MCP forms and links by push (#2433, fleet.clients `elicitation_push`) is waited for as
+// for any card: the request waits the usual card timeout, is pushed, and its hook coming back finds it still waiting.
+// What an older hub says (no elicitation_push) hands it back at once as before, and so does a card that would not be
+// pushed: a muted agent's, a quiet task's.
+func TestElicitationWaitsForAPushedPhone(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	s := ft.s
+	ctx := context.Background()
+	ix := proto.Interaction{ID: "ix_example", MachineID: "mac", SessionID: "test-session", Kind: proto.IxElicitation,
+		MCPServerName: "example-mcp", Summary: "Please choose", Resumable: true,
+		Elicitation: &proto.Elicitation{Mode: "form", Message: "Please choose"}}
+	clients := func(raw string) { s.FleetEvent(ctx, assistantwire.EventClients, json.RawMessage(raw)) }
+	// hookFor is a hook that waits on ix until it goes away (its node's connection ends) after a moment.
+	hookFor := func() proto.Resolution {
+		hctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		r, _ := s.waitInteraction(hctx, ix)
+		return r
+	}
+
+	clients(`{"elicitation":false}`) // an older hub's
+	if r, err := s.waitInteraction(ctx, ix); err != nil || !r.Dismiss || len(s.pendingInteractions()) != 0 {
+		t.Fatalf("an older hub, no app: back to the terminal: %+v %v", r, err)
+	}
+
+	clients(`{"elicitation":false,"elicitation_push":true}`)
+	hookFor()
+	got := ft.waitPending(1) // its hook went away: the card stays for the next one (resumeGrace)
+	if wait := time.Until(got[0].ExpiresAt); wait < 29*time.Minute || wait > 31*time.Minute {
+		t.Fatalf("waits %v, want the usual card timeout", wait)
+	}
+	if p := ft.pushesOf(assistantwire.NotifyInput, 1, time.Second); len(p) != 1 || p[0].Interaction.ID != ix.ID {
+		t.Fatalf("pushes %+v", p)
+	}
+	// The hook comes back (a node restart): the same card waits on, it is not handed back.
+	hookFor()
+	if left := ft.waitPending(1); left[0].ID != ix.ID {
+		t.Fatalf("pending %+v", left)
+	}
+	if err := s.resolve(ix.ID, proto.Resolution{Action: "accept", Content: map[string]any{"choice": "yes"}}); err != nil {
+		t.Fatal(err)
+	}
+	ft.waitPending(0)
+	// Answered on the phone, the waiting hook gets it.
+	ix2 := ix
+	ix2.ID, ix2.Resumable = "ix_example_2", false
+	done := make(chan proto.Resolution, 1)
+	go func() { r, _ := s.waitInteraction(ctx, ix2); done <- r }()
+	ft.waitPending(1)
+	if err := s.resolve(ix2.ID, proto.Resolution{Action: "accept", Content: map[string]any{"choice": "yes"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-done; r.Action != "accept" || r.Dismiss {
+		t.Fatalf("resolution %+v", r)
+	}
+	ft.waitPending(0)
+
+	// Not pushed, not waited for: a muted agent's card, a quiet task's.
+	if !s.elicitationReachable(ix) {
+		t.Fatal("a phone to push")
+	}
+	b, _ := json.Marshal(assistantwire.FleetMutes{Mutes: &assistantwire.Mutes{Spaces: []string{}, Sessions: []string{"mac/test-session"}}})
+	s.FleetEvent(ctx, assistantwire.EventMutes, b)
+	if s.elicitationReachable(ix) {
+		t.Fatal("a muted agent's card is not pushed")
+	}
+	b, _ = json.Marshal(assistantwire.FleetMutes{Mutes: &assistantwire.Mutes{Spaces: []string{}, Sessions: []string{}}})
+	s.FleetEvent(ctx, assistantwire.EventMutes, b)
+	s.fleet.rep.mu.Lock()
+	s.fleet.rep.quiet = map[[2]string]bool{{"mac", "test-session"}: true}
+	s.fleet.rep.mu.Unlock()
+	if s.elicitationReachable(ix) {
+		t.Fatal("a quiet task's card is not pushed")
+	}
+	clients(`{"elicitation":true,"elicitation_push":false}`)
+	if !s.elicitationReachable(ix) {
+		t.Fatal("an app is connected: it shows there")
+	}
+	clients(`{"elicitation":false,"elicitation_push":false}`)
+	if s.elicitationReachable(ix) {
+		t.Fatal("nothing can show it")
 	}
 }

@@ -96,7 +96,13 @@ func writeCodexToolLines(t *testing.T, path string, from, n int) {
 
 func waitFor(t *testing.T, what string, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	waitWithin(t, 5*time.Second, what, ok)
+}
+
+// waitWithin is waitFor with its own limit, for waits on real programs (the live tests) that take longer.
+func waitWithin(t *testing.T, d time.Duration, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !ok() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)

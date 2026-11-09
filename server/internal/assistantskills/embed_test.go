@@ -39,7 +39,7 @@ func TestSyncLinksTheUsersSkills(t *testing.T) {
 	if target, err := os.Readlink(filepath.Join(dir, "alpha")); err != nil || target != filepath.Join(user, "alpha") {
 		t.Fatalf("alpha: %q %v", target, err)
 	}
-	if !Has(dir, "alpha") {
+	if !hasSkill(dir, "alpha") {
 		t.Fatal("alpha is not usable through the link")
 	}
 	if st, err := os.Lstat(filepath.Join(dir, "beta")); err != nil || st.Mode()&os.ModeSymlink != 0 {
@@ -172,13 +172,13 @@ func TestConnectorSkillFollowsItsConnector(t *testing.T) {
 	if err := Sync(dir, user, nil, quiet); err != nil {
 		t.Fatal(err)
 	}
-	if Has(dir, "persona-office") || slices.ContainsFunc(List(user, nil), func(s Skill) bool { return s.Name == "persona-office" }) {
+	if hasSkill(dir, "persona-office") || slices.ContainsFunc(List(user, nil), func(s Skill) bool { return s.Name == "persona-office" }) {
 		t.Fatal("the skill is in with its connector not signed in")
 	}
 	if err := Sync(dir, user, []string{"example"}, quiet); err != nil {
 		t.Fatal(err)
 	}
-	if !Has(dir, "persona-office") {
+	if !hasSkill(dir, "persona-office") {
 		t.Fatal("its connector signed in, no skill")
 	}
 	listed := List(user, []string{"example"})
@@ -219,7 +219,7 @@ func TestABuiltinSkillNoLongerCarriedGivesWayToAPlugins(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(dir, "telegram", "SKILL.md")); err != nil || !strings.Contains(string(b), "the extension's") {
 		t.Fatalf("telegram: %q %v", b, err)
 	}
-	if !Has(dir, "persona-office") {
+	if !hasSkill(dir, "persona-office") {
 		t.Fatal("the built-in that is still carried went too")
 	}
 }
@@ -289,4 +289,10 @@ func TestOfficeScript(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(string(out), "no personad") {
 		t.Fatalf("no personad: %v %s", err, out)
 	}
+}
+
+// hasSkill says whether the assistant directory's skills (dir) include name.
+func hasSkill(dir, name string) bool {
+	_, err := os.Stat(filepath.Join(dir, name, "SKILL.md"))
+	return err == nil
 }

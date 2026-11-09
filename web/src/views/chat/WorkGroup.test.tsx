@@ -30,14 +30,14 @@ describe("WorkGroup", () => {
     expect(renderToStaticMarkup(<PlanCard id="p" todos={[{ content: "读", status: "pending" }]} />)).toContain(coarse);
   });
 
-  it("while live: a spinner, 正在工作… and a clock, its newest steps on a rail", () => {
+  it("while live: only a collapsed summary, spinner and clock, with no preview", () => {
     const html = renderToStaticMarkup(<WorkGroup g={group([tool("t1", "Bash", { command: "ls", description: "看目录" }, false)], true)} p={props} />);
     expect(html).toContain('data-work-group="live"');
     expect(html).toContain(">正在工作…<");
     expect(html).toMatch(/font-mono text-\[12px\][^>]*>[\d秒分钟小时天 ]+</);
-    expect(html).toContain("data-live-preview");
-    expect(html).toContain("border-l-2 border-tool-rail");
-    expect(html).toContain(">看目录<");
+    expect(html).not.toContain("data-live-preview");
+    expect(html).not.toContain(">看目录<");
+    expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("data-work-detail"); // a lazy Collapse: nothing until it opens
   });
 
@@ -48,14 +48,14 @@ describe("WorkGroup", () => {
     expect(html).not.toContain("data-live-preview");
   });
 
-  it("a live group with five steps or fewer does not open: its preview is all of it", () => {
+  it("every nonempty live group can be manually opened and never previews tools", () => {
     const five = [1, 2, 3, 4, 5].map((n) => tool(`t${n}`, "Bash", { command: `echo ${n}` }));
-    expect(renderToStaticMarkup(<WorkGroup g={group(five, true)} p={props} />)).toMatch(/<button[^>]*disabled=""/);
+    expect(renderToStaticMarkup(<WorkGroup g={group(five, true)} p={props} />)).not.toMatch(/<button[^>]*disabled=""/);
     const six = [...five, tool("t6", "Bash", { command: "echo 6" })];
     const html = renderToStaticMarkup(<WorkGroup g={group(six, true)} p={props} />);
     expect(html).not.toMatch(/^<div[^>]*><button[^>]*disabled/);
-    expect(html).not.toContain("echo 1"); // only the newest five peek out
-    expect(html).toContain("echo 6");
+    expect(html).not.toContain("echo 1");
+    expect(html).not.toContain("echo 6");
   });
 });
 
@@ -277,7 +277,7 @@ describe("the user's bubble and the answer", () => {
     expect(html.indexOf("已工作")).toBeLessThan(html.indexOf("看完了。"));
   });
 
-  it("live words: the assistant's stand for the live work row, an agent's keep it under them (#1309)", () => {
+  it("live words occupy the same slot after the folded work on every conversation (#2602)", () => {
     const user: Item = { id: "u1#0", seq: 1, role: "user", kind: "text", text: "跑一遍测试", ts: at(0) };
     const seg = { id: "s", user: { id: "u1#0", text: "跑一遍测试", images: [], contexts: [], ts: at(0) }, steps: [], tools: 0, thoughts: 0, replies: 0, folds: [], start: user.ts };
     const live = (batchedWords?: boolean) =>
@@ -285,7 +285,7 @@ describe("the user's bubble and the answer", () => {
     expect(live()).not.toContain('data-work-group="live"');
     const agent = live(true);
     expect(agent).toContain('data-work-group="live"');
-    expect(agent.indexOf('data-answer="streaming"')).toBeLessThan(agent.indexOf('data-work-group="live"'));
+    expect(agent.indexOf('data-work-group="live"')).toBeLessThan(agent.indexOf('data-answer="streaming"'));
     // no live words yet: the row as before
     const waiting = renderToStaticMarkup(<SegmentView seg={seg} live mid="m" sid="s" batchedWords expandFold={async () => {}} />);
     expect(waiting).toContain('data-work-group="live"');

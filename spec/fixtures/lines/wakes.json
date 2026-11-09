@@ -64,31 +64,42 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "go",
-            "type": "user"
+            "type": "user",
+            "text": "go"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 2,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 2,
+            "contains_fold": false,
+            "summary_full": [
+              "工具 3",
+              "回复 1"
+            ],
+            "summary_short": [
+              "工具 3"
+            ],
             "steps": [
               {
-                "call_id": "a",
-                "failed": false,
+                "type": "tool",
                 "id": "2#0",
-                "image_count": 0,
+                "call_id": "a",
                 "name": "Bash",
                 "result_id": null,
                 "result_text": null,
                 "running": true,
-                "type": "tool"
+                "failed": false,
+                "image_count": 0
               },
               {
                 "type": "narration",
@@ -112,94 +123,38 @@
                 "failed": false,
                 "image_count": 0
               }
-            ],
-            "summary_full": [
-              "工具 3",
-              "回复 1"
-            ],
-            "summary_short": [
-              "工具 3"
-            ],
-            "thoughts": 0,
-            "tools": 2,
-            "type": "work",
-            "unresolved_tools": 2
+            ]
           },
           {
             "id": "6#0",
             "is_input": false,
-            "text": "后台完成",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-4#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "4#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "call_id": "b",
-                    "failed": false,
-                    "id": "5#0",
-                    "image_count": 0,
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "type": "tool"
-                  }
-                ],
-                "summary_full": [
-                  "工具 2"
-                ],
-                "summary_short": [
-                  "工具 2"
-                ],
-                "thoughts": 0,
-                "tools": 1,
-                "type": "work",
-                "unresolved_tools": 1
-              },
-              {
-                "id": "6#0",
-                "is_input": false,
-                "text": "后台完成",
-                "type": "reply"
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "4#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "后台完成"
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "tools-2#0",
+              "3#0",
+              "4#0",
+              "tools-5#0"
+            ],
+            "answer_id": "6#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "4#0"
+            ],
             "after_wake_ids": [
               "4#0",
               "tools-5#0",
               "6#0"
             ],
-            "answer_id": "6#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 1,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "tools-2#0",
@@ -208,23 +163,11 @@
               "tools-5#0",
               "6#0"
             ],
-            "process_ids": [
-              "tools-2#0",
-              "3#0",
-              "4#0",
-              "tools-5#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 2,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "4#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 1,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -292,55 +235,24 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "go",
-            "type": "user"
+            "type": "user",
+            "text": "go"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": null,
-            "steps": [
-              {
-                "call_id": "a",
-                "failed": false,
-                "id": "2#0",
-                "image_count": 0,
-                "name": "Bash",
-                "result_id": null,
-                "result_text": null,
-                "running": true,
-                "type": "tool"
-              },
-              {
-                "id": "t-3#0",
-                "item_id": "3#0",
-                "text": "等待检查",
-                "type": "narration"
-              },
-              {
-                "id": "4#0",
-                "text": "后台任务完成",
-                "type": "notice"
-              },
-              {
-                "call_id": "b",
-                "failed": false,
-                "id": "5#0",
-                "image_count": 0,
-                "name": "Bash",
-                "result_id": null,
-                "result_text": null,
-                "running": true,
-                "type": "tool"
-              }
-            ],
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 2,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 2,
+            "contains_fold": false,
             "summary_full": [
               "工具 3",
               "回复 1"
@@ -348,86 +260,72 @@
             "summary_short": [
               "工具 3"
             ],
-            "thoughts": 0,
-            "tools": 2,
-            "type": "work",
-            "unresolved_tools": 2
+            "steps": [
+              {
+                "type": "tool",
+                "id": "2#0",
+                "call_id": "a",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              },
+              {
+                "type": "narration",
+                "id": "t-3#0",
+                "item_id": "3#0",
+                "text": "等待检查"
+              },
+              {
+                "id": "4#0",
+                "type": "notice",
+                "text": "后台任务完成"
+              },
+              {
+                "type": "tool",
+                "id": "5#0",
+                "call_id": "b",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              }
+            ]
           },
           {
             "id": "6#0",
             "is_input": false,
-            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-4#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "4#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "call_id": "b",
-                    "failed": false,
-                    "id": "5#0",
-                    "image_count": 0,
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "type": "tool"
-                  }
-                ],
-                "summary_full": [
-                  "工具 2"
-                ],
-                "summary_short": [
-                  "工具 2"
-                ],
-                "thoughts": 0,
-                "tools": 1,
-                "type": "work",
-                "unresolved_tools": 1
-              },
-              {
-                "id": "6#0",
-                "is_input": false,
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-                "type": "reply"
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "4#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "tools-2#0",
+              "3#0",
+              "4#0",
+              "tools-5#0"
+            ],
+            "answer_id": "6#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "4#0"
+            ],
             "after_wake_ids": [
               "4#0",
               "tools-5#0",
               "6#0"
             ],
-            "answer_id": "6#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 1,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "tools-2#0",
@@ -436,23 +334,11 @@
               "tools-5#0",
               "6#0"
             ],
-            "process_ids": [
-              "tools-2#0",
-              "3#0",
-              "4#0",
-              "tools-5#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 2,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "4#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 1,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -640,8 +526,8 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "go",
-            "type": "user"
+            "type": "user",
+            "text": "go"
           },
           {
             "id": "w-1#0",
@@ -697,63 +583,6 @@
             "text": "后台完成"
           },
           {
-            "id": "wk-1#0",
-            "is_input": false,
-            "type": "wakes",
-            "notice_ids": [
-              "4#0"
-            ],
-            "live": false,
-            "drawer_lines": [
-              {
-                "id": "dw-4#0",
-                "is_input": false,
-                "type": "work",
-                "live": false,
-                "open": false,
-                "start": null,
-                "end": null,
-                "elapsed_seconds": null,
-                "duration_text": "",
-                "tools": 1,
-                "thoughts": 0,
-                "known_failed_tools": 0,
-                "unresolved_tools": 1,
-                "contains_fold": false,
-                "summary_full": [
-                  "工具 2"
-                ],
-                "summary_short": [
-                  "工具 2"
-                ],
-                "steps": [
-                  {
-                    "id": "4#0",
-                    "type": "notice",
-                    "text": "后台任务完成"
-                  },
-                  {
-                    "type": "tool",
-                    "id": "5#0",
-                    "call_id": "b",
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "failed": false,
-                    "image_count": 0
-                  }
-                ]
-              },
-              {
-                "id": "6#0",
-                "is_input": false,
-                "type": "reply",
-                "text": "后台完成"
-              }
-            ]
-          },
-          {
             "id": "3#0",
             "is_input": false,
             "type": "recap",
@@ -762,15 +591,26 @@
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "2#0",
+              "4#0",
+              "tools-5#0"
+            ],
+            "answer_id": "6#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "4#0"
+            ],
             "after_wake_ids": [
               "4#0",
               "tools-5#0",
               "6#0"
             ],
-            "answer_id": "6#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 1,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "2#0",
@@ -778,22 +618,11 @@
               "tools-5#0",
               "6#0"
             ],
-            "process_ids": [
-              "2#0",
-              "4#0",
-              "tools-5#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 1,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "4#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 1,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -882,31 +711,42 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "请检查示例项目",
-            "type": "user"
+            "type": "user",
+            "text": "请检查示例项目"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
+            "summary_full": [
+              "工具 4",
+              "回复 3"
+            ],
+            "summary_short": [
+              "工具 4"
+            ],
             "steps": [
               {
+                "type": "narration",
                 "id": "t-2#0",
                 "item_id": "2#0",
-                "text": "开始等待",
-                "type": "narration"
+                "text": "开始等待"
               },
               {
                 "id": "3#0",
-                "text": "后台任务完成",
-                "type": "notice"
+                "type": "notice",
+                "text": "后台任务完成"
               },
               {
                 "type": "narration",
@@ -941,110 +781,37 @@
                 "failed": false,
                 "image_count": 0
               }
-            ],
-            "summary_full": [
-              "工具 4",
-              "回复 3"
-            ],
-            "summary_short": [
-              "工具 4"
-            ],
-            "thoughts": 0,
-            "tools": 1,
-            "type": "work",
-            "unresolved_tools": 1
+            ]
           },
           {
             "id": "9#0",
             "is_input": false,
-            "text": "已完成",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-3#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "3#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "id": "t-4#0",
-                    "item_id": "4#0",
-                    "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-                    "type": "narration"
-                  },
-                  {
-                    "id": "5#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "id": "t-6#0",
-                    "item_id": "6#0",
-                    "text": "结束",
-                    "type": "narration"
-                  },
-                  {
-                    "id": "7#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "call_id": "call_a",
-                    "failed": false,
-                    "id": "8#0",
-                    "image_count": 0,
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "type": "tool"
-                  }
-                ],
-                "summary_full": [
-                  "工具 4",
-                  "回复 2"
-                ],
-                "summary_short": [
-                  "工具 4"
-                ],
-                "thoughts": 0,
-                "tools": 1,
-                "type": "work",
-                "unresolved_tools": 1
-              },
-              {
-                "id": "9#0",
-                "is_input": false,
-                "text": "已完成",
-                "type": "reply"
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "3#0",
-              "5#0",
-              "7#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "已完成"
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "2#0",
+              "3#0",
+              "4#0",
+              "5#0",
+              "6#0",
+              "7#0",
+              "tools-8#0"
+            ],
+            "answer_id": "9#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0",
+              "5#0",
+              "7#0"
+            ],
             "after_wake_ids": [
               "3#0",
               "4#0",
@@ -1054,10 +821,7 @@
               "tools-8#0",
               "9#0"
             ],
-            "answer_id": "9#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 3,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "2#0",
@@ -1069,28 +833,11 @@
               "tools-8#0",
               "9#0"
             ],
-            "process_ids": [
-              "2#0",
-              "3#0",
-              "4#0",
-              "5#0",
-              "6#0",
-              "7#0",
-              "tools-8#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 1,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "3#0",
-              "5#0",
-              "7#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 3,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -1148,39 +895,24 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "请检查示例项目",
-            "type": "user"
+            "type": "user",
+            "text": "请检查示例项目"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": null,
-            "steps": [
-              {
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-                "type": "narration"
-              },
-              {
-                "id": "t-3#0",
-                "item_id": "3#0",
-                "text": "等待",
-                "type": "narration"
-              },
-              {
-                "id": "4#0",
-                "text": "后台任务完成",
-                "type": "notice"
-              }
-            ],
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 0,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 0,
+            "contains_fold": false,
             "summary_full": [
               "工具 1",
               "回复 2"
@@ -1188,74 +920,54 @@
             "summary_short": [
               "工具 1"
             ],
-            "thoughts": 0,
-            "tools": 0,
-            "type": "work",
-            "unresolved_tools": 0
+            "steps": [
+              {
+                "type": "narration",
+                "id": "t-2#0",
+                "item_id": "2#0",
+                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
+              },
+              {
+                "type": "narration",
+                "id": "t-3#0",
+                "item_id": "3#0",
+                "text": "等待"
+              },
+              {
+                "id": "4#0",
+                "type": "notice",
+                "text": "后台任务完成"
+              }
+            ]
           },
           {
             "id": "5#0",
             "is_input": false,
-            "text": "后台检查完毕",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-4#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "4#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  }
-                ],
-                "summary_full": [
-                  "工具 1"
-                ],
-                "summary_short": [
-                  "工具 1"
-                ],
-                "thoughts": 0,
-                "tools": 0,
-                "type": "work",
-                "unresolved_tools": 0
-              },
-              {
-                "id": "5#0",
-                "is_input": false,
-                "text": "后台检查完毕",
-                "type": "reply"
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "4#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "后台检查完毕"
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "2#0",
+              "3#0",
+              "4#0"
+            ],
+            "answer_id": "5#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "4#0"
+            ],
             "after_wake_ids": [
               "4#0",
               "5#0"
             ],
-            "answer_id": "5#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 2,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "2#0",
@@ -1263,22 +975,11 @@
               "4#0",
               "5#0"
             ],
-            "process_ids": [
-              "2#0",
-              "3#0",
-              "4#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 0,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "4#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 2,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -1330,43 +1031,24 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "请检查示例项目",
-            "type": "user"
+            "type": "user",
+            "text": "请检查示例项目"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": null,
-            "steps": [
-              {
-                "call_id": "call_a",
-                "failed": false,
-                "id": "2#0",
-                "image_count": 0,
-                "name": "Bash",
-                "result_id": null,
-                "result_text": null,
-                "running": true,
-                "type": "tool"
-              },
-              {
-                "id": "3#0",
-                "text": "后台任务完成",
-                "type": "notice"
-              },
-              {
-                "id": "4#0",
-                "text": "先读取配置再检查",
-                "type": "thinking"
-              }
-            ],
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 1,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
             "summary_full": [
               "工具 2",
               "思考 1"
@@ -1374,90 +1056,63 @@
             "summary_short": [
               "工具 2"
             ],
-            "thoughts": 1,
-            "tools": 1,
-            "type": "work",
-            "unresolved_tools": 1
-          },
-          {
-            "drawer_lines": [
+            "steps": [
               {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-3#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "3#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "id": "4#0",
-                    "text": "先读取配置再检查",
-                    "type": "thinking"
-                  }
-                ],
-                "summary_full": [
-                  "工具 1",
-                  "思考 1"
-                ],
-                "summary_short": [
-                  "工具 1"
-                ],
-                "thoughts": 1,
-                "tools": 0,
-                "type": "work",
-                "unresolved_tools": 0
+                "type": "tool",
+                "id": "2#0",
+                "call_id": "call_a",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              },
+              {
+                "id": "3#0",
+                "type": "notice",
+                "text": "后台任务完成"
+              },
+              {
+                "id": "4#0",
+                "type": "thinking",
+                "text": "先读取配置再检查"
               }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "3#0"
-            ],
-            "type": "wakes"
+            ]
           }
         ],
         "turns": [
           {
-            "after_wake_ids": [
-              "3#0",
-              "4#0"
-            ],
-            "answer_id": null,
-            "end": null,
             "id": "1#0",
-            "interim_count": 0,
-            "ordered_ids": [
-              "1#0",
-              "tools-2#0",
-              "3#0",
-              "4#0"
+            "user_ids": [
+              "1#0"
             ],
             "process_ids": [
               "tools-2#0",
               "3#0",
               "4#0"
             ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 1,
-            "tool_count": 1,
+            "answer_id": null,
             "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
             "wake_ids": [
               "3#0"
-            ]
+            ],
+            "after_wake_ids": [
+              "3#0",
+              "4#0"
+            ],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "3#0",
+              "4#0"
+            ],
+            "tool_count": 1,
+            "thought_count": 1,
+            "interim_count": 0,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -1625,96 +1280,90 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "请检查示例项目",
-            "type": "user"
+            "type": "user",
+            "text": "请检查示例项目"
+          },
+          {
+            "id": "w-1#0",
+            "is_input": false,
+            "type": "work",
+            "live": true,
+            "open": false,
+            "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
+            "summary_full": [
+              "工具 2"
+            ],
+            "summary_short": [
+              "工具 2"
+            ],
+            "steps": [
+              {
+                "id": "3#0",
+                "type": "notice",
+                "text": "后台任务完成"
+              },
+              {
+                "type": "tool",
+                "id": "4#0",
+                "call_id": "call_a",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              }
+            ]
           },
           {
             "id": "2#0",
             "is_input": false,
-            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-3#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": true,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "3#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "call_id": "call_a",
-                    "failed": false,
-                    "id": "4#0",
-                    "image_count": 0,
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "type": "tool"
-                  }
-                ],
-                "summary_full": [
-                  "工具 2"
-                ],
-                "summary_short": [
-                  "工具 2"
-                ],
-                "thoughts": 0,
-                "tools": 1,
-                "type": "work",
-                "unresolved_tools": 1
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": true,
-            "notice_ids": [
-              "3#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
           }
         ],
         "turns": [
           {
-            "after_wake_ids": [
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
               "3#0",
               "tools-4#0"
             ],
             "answer_id": "2#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 0,
-            "ordered_ids": [
-              "1#0",
-              "2#0"
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0"
             ],
-            "process_ids": [],
-            "start": null,
+            "after_wake_ids": [
+              "3#0",
+              "tools-4#0"
+            ],
             "tail_ids": [
               "3#0",
               "tools-4#0"
             ],
-            "thought_count": 0,
-            "tool_count": 0,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
+            "ordered_ids": [
+              "1#0",
+              "2#0",
+              "3#0",
+              "tools-4#0"
             ],
-            "wake_ids": [
-              "3#0"
-            ]
+            "tool_count": 1,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -1774,44 +1423,24 @@
           {
             "id": "1#0",
             "is_input": true,
-            "text": "请检查示例项目",
-            "type": "user"
+            "type": "user",
+            "text": "请检查示例项目"
           },
           {
-            "contains_fold": false,
-            "duration_text": "",
-            "elapsed_seconds": null,
-            "end": null,
             "id": "w-1#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": true,
             "open": false,
             "start": null,
-            "steps": [
-              {
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "等待",
-                "type": "narration"
-              },
-              {
-                "id": "3#0",
-                "text": "后台任务完成",
-                "type": "notice"
-              },
-              {
-                "call_id": "call_a",
-                "failed": false,
-                "id": "4#0",
-                "image_count": 0,
-                "name": "Bash",
-                "result_id": null,
-                "result_text": null,
-                "running": true,
-                "type": "tool"
-              }
-            ],
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
             "summary_full": [
               "工具 2",
               "回复 1"
@@ -1819,86 +1448,60 @@
             "summary_short": [
               "工具 2"
             ],
-            "thoughts": 0,
-            "tools": 1,
-            "type": "work",
-            "unresolved_tools": 1
+            "steps": [
+              {
+                "type": "narration",
+                "id": "t-2#0",
+                "item_id": "2#0",
+                "text": "等待"
+              },
+              {
+                "id": "3#0",
+                "type": "notice",
+                "text": "后台任务完成"
+              },
+              {
+                "type": "tool",
+                "id": "4#0",
+                "call_id": "call_a",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              }
+            ]
           },
           {
             "id": "5#0",
             "is_input": false,
-            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-            "type": "reply"
-          },
-          {
-            "drawer_lines": [
-              {
-                "contains_fold": false,
-                "duration_text": "",
-                "elapsed_seconds": null,
-                "end": null,
-                "id": "dw-3#0",
-                "is_input": false,
-                "known_failed_tools": 0,
-                "live": false,
-                "open": false,
-                "start": null,
-                "steps": [
-                  {
-                    "id": "3#0",
-                    "text": "后台任务完成",
-                    "type": "notice"
-                  },
-                  {
-                    "call_id": "call_a",
-                    "failed": false,
-                    "id": "4#0",
-                    "image_count": 0,
-                    "name": "Bash",
-                    "result_id": null,
-                    "result_text": null,
-                    "running": true,
-                    "type": "tool"
-                  }
-                ],
-                "summary_full": [
-                  "工具 2"
-                ],
-                "summary_short": [
-                  "工具 2"
-                ],
-                "thoughts": 0,
-                "tools": 1,
-                "type": "work",
-                "unresolved_tools": 1
-              },
-              {
-                "id": "5#0",
-                "is_input": false,
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。",
-                "type": "reply"
-              }
-            ],
-            "id": "wk-1#0",
-            "is_input": false,
-            "live": false,
-            "notice_ids": [
-              "3#0"
-            ],
-            "type": "wakes"
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "2#0",
+              "3#0",
+              "tools-4#0"
+            ],
+            "answer_id": "5#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0"
+            ],
             "after_wake_ids": [
               "3#0",
               "tools-4#0",
               "5#0"
             ],
-            "answer_id": "5#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 1,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "2#0",
@@ -1906,22 +1509,11 @@
               "tools-4#0",
               "5#0"
             ],
-            "process_ids": [
-              "2#0",
-              "3#0",
-              "tools-4#0"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 1,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0"
-            ],
-            "wake_ids": [
-              "3#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 1,
+            "start": null,
+            "end": null
           }
         ]
       },
@@ -2063,72 +1655,32 @@
             "is_input": false,
             "type": "reply",
             "text": "收到"
-          },
-          {
-            "id": "wk-1#0",
-            "is_input": false,
-            "type": "wakes",
-            "notice_ids": [
-              "3#0"
-            ],
-            "live": false,
-            "drawer_lines": [
-              {
-                "id": "dw-3#0",
-                "is_input": false,
-                "type": "work",
-                "live": false,
-                "open": false,
-                "start": null,
-                "end": null,
-                "elapsed_seconds": null,
-                "duration_text": "",
-                "tools": 0,
-                "thoughts": 0,
-                "known_failed_tools": 0,
-                "unresolved_tools": 0,
-                "contains_fold": false,
-                "summary_full": [
-                  "工具 1",
-                  "回复 1"
-                ],
-                "summary_short": [
-                  "工具 1"
-                ],
-                "steps": [
-                  {
-                    "id": "3#0",
-                    "type": "notice",
-                    "text": "后台任务完成"
-                  },
-                  {
-                    "type": "narration",
-                    "id": "t-4#0",
-                    "item_id": "4#0",
-                    "text": "跑完了，结果如下：示例检查已全部完成"
-                  }
-                ]
-              },
-              {
-                "id": "6#0",
-                "is_input": false,
-                "type": "reply",
-                "text": "收到"
-              }
-            ]
           }
         ],
         "turns": [
           {
+            "id": "1#0",
+            "user_ids": [
+              "1#0",
+              "message#0"
+            ],
+            "process_ids": [
+              "2#0",
+              "3#0",
+              "4#0",
+              "message#1"
+            ],
+            "answer_id": "6#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0"
+            ],
             "after_wake_ids": [
               "3#0",
               "4#0",
               "6#0"
             ],
-            "answer_id": "6#0",
-            "end": null,
-            "id": "1#0",
-            "interim_count": 2,
+            "tail_ids": [],
             "ordered_ids": [
               "1#0",
               "2#0",
@@ -2138,24 +1690,11 @@
               "message#1",
               "6#0"
             ],
-            "process_ids": [
-              "2#0",
-              "3#0",
-              "4#0",
-              "message#1"
-            ],
-            "start": null,
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 0,
-            "trailing_ids": [],
-            "user_ids": [
-              "1#0",
-              "message#0"
-            ],
-            "wake_ids": [
-              "3#0"
-            ]
+            "thought_count": 0,
+            "interim_count": 2,
+            "start": null,
+            "end": null
           }
         ]
       },

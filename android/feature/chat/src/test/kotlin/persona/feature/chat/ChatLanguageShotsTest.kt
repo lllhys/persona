@@ -97,7 +97,7 @@ class ChatLanguageShotsTest {
     private fun out(): File = File(System.getProperty("persona.shots") ?: "build/i18n-shots").also { it.mkdirs() }
 
     @Config(sdk = [35], qualifiers = "zh-w400dp-h2000dp-xhdpi")
-    @Test fun workZh() = shots("zh", "work", "正在工作")
+    @Test fun workZh() = shots("zh", "work", "正在运行 ./gradlew test")
 
     @Config(sdk = [35], qualifiers = "zh-w400dp-h2000dp-xhdpi")
     @Test fun statusZh() = shots("zh", "status", "会话状态")
@@ -124,7 +124,7 @@ class ChatLanguageShotsTest {
     @Test fun viewerZhDark() = shots("zh", "viewer", "保存", dark = true)
 
     @Config(sdk = [35], qualifiers = "en-w400dp-h2000dp-xhdpi")
-    @Test fun workEn() = shots("en", "work", "Working")
+    @Test fun workEn() = shots("en", "work", "Running ./gradlew test")
 
     @Config(sdk = [35], qualifiers = "en-w400dp-h2000dp-xhdpi")
     @Test fun statusEn() = shots("en", "status", "Session status")
@@ -151,7 +151,7 @@ class ChatLanguageShotsTest {
     @Test fun viewerEnDark() = shots("en", "viewer", "Save", dark = true)
 
     @Config(sdk = [35], qualifiers = "ja-w400dp-h2000dp-xhdpi")
-    @Test fun workJa() = shots("ja", "work", "作業中")
+    @Test fun workJa() = shots("ja", "work", "./gradlew testを実行中")
 
     @Config(sdk = [35], qualifiers = "ja-w400dp-h2000dp-xhdpi")
     @Test fun statusJa() = shots("ja", "status", "セッションの状態")

@@ -192,7 +192,7 @@ interface ConnectorsManagement {
     suspend fun connectorThreadReply(id: String, thread: String, action: String, text: String, replyTo: String?): ConnectorReplyOutcome =
         throw UnsupportedOperationException("Connector replies unavailable")
 
-    // Outlook's "Sign in with Microsoft" (docs/extensions/mail.md "Connecting Outlook"): the client ID the user registered lives on the hub.
+    // Outlook's "Sign in with Microsoft" (docs/extensions/mail.md "Outlook: Sign In with Microsoft"): the client ID the user registered lives on the hub.
 
     /** `GET /api/v1/mail/oauth/microsoft/config`. */
     suspend fun microsoftConfig(): MicrosoftConfig = throw UnsupportedOperationException("Outlook sign-in unavailable")

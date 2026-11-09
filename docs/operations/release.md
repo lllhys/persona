@@ -373,7 +373,8 @@ curl -fsSL <publish.site_url>/install.sh | sh   # install to ~/.persona/bin/pers
   `min_app_build` in `latest.json`) to the build containing it so old Apps prompt for an update. Raising `min_app_build` makes every older App unable to use this hub; ask the user first.
 - Only the latest version is hosted (R2 also retains the previous one, as above). Bucket uploads and deployment use configured `publish.wrangler` (otherwise `npx wrangler`). Cloudflare OAuth expires after one hour;
   on an auth error, run `cf auth login` and retry. After deployment it reads back `dl/VERSION`, `dl/SHA256SUMS`, `dl/latest.json`, `dl/SLOT` to confirm the just-built version is live, and checks every archive's size with `HEAD`.
-  The push relay is in the same Worker (`/relay/*`) and is redeployed on each publish too.
+  The push relay is in the same Worker (`/relay/*`) and is redeployed on each publish too: when `/relay/v1/health` answered `ok` and `apns` before the deploy,
+  the publish fails unless it still does within about two minutes after it (#1263; a site without a working relay only gets a note).
 - Push relay deployed (2026-11-02): resident `personad relay` + Cloudflare Tunnel + website Worker forwarding; public health, origin protection, registration and authentication verified.
   Release config needs `app.push_relay`; only a new TestFlight with the notification extension registers. Notification decryption on real devices still needs separate acceptance; see `docs/operations/push-relay.md`.
 - Not yet available (others can install, but it's still awkward; see `docs/operations/config.md`):

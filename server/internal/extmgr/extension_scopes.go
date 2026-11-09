@@ -3,6 +3,7 @@ package extmgr
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/extwire"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // An extension's token (docs/extensions/extensions.md "Permissions"): it opens the routes of the scopes the user granted the
@@ -71,6 +73,10 @@ type extTokens struct {
 	logf     func(string, ...any)
 	pending  []func()
 	recordMu sync.Mutex
+
+	// dropped is told, outside mu, the hash of each token dropped (revoked, or replaced by a new one): the manager tells
+	// the hub (tellHubDropped). nil tells no one.
+	dropped func(hash string)
 }
 
 // extTokenRecord is the database's record of the tokens (extension_tokens).
@@ -99,6 +105,47 @@ func (h *Manager) startTokenRecord(ctx context.Context) {
 		h.extTokens.keepRecord(r, cmp.Or(h.opts.ManagerID, assistantwire.AssistantID), h.logf)
 	}
 	h.extTokens.revokeLastRun(ctx)
+}
+
+// tellHubDroppedTries bounds how often noticeDropped asks (Manager.droppedWait between two).
+const tellHubDroppedTries = 6
+
+// tellHubDropped tells the hub that the token of hash opens nothing now, so that it ends what the token has open
+// through it (extwire.HubTokenRevoked). In the background: a slow hub holds up no stop. Asked again while the call
+// fails on the bus (off it for a moment, as while a new connection says hello; a timeout; a connection that went), not
+// once the hub answered, and not once the manager stops. A manager that stays off the bus needs no notice: the hub ends
+// what this manager's tokens have open when it leaves the bus, and lets the token in nowhere again (it asks this
+// manager whose a token is).
+func (h *Manager) tellHubDropped(hash string) {
+	go h.noticeDropped(hash)
+}
+
+// noticeDropped is tellHubDropped's calls to the hub, made in the caller's goroutine.
+func (h *Manager) noticeDropped(hash string) {
+	stop := h.ctx
+	if stop == nil {
+		stop = context.Background()
+	}
+	wait := h.droppedWait
+	for try := 1; ; try++ {
+		ctx, cancel := context.WithTimeout(context.Background(), extTokenRecordWithin)
+		err := h.callHub(ctx, extwire.HubTokenRevoked, map[string]string{"hash": hash}, nil)
+		cancel()
+		var answered *rpc.Error
+		switch {
+		case err == nil, errors.Is(err, errBusOffline):
+			return
+		case errors.As(err, &answered), try == tellHubDroppedTries:
+			h.logf("extension tokens: telling the hub of a dropped token: %v", err)
+			return
+		}
+		select {
+		case <-stop.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait *= 2
+	}
 }
 
 // tokenStopReason is why apply revokes the token of an extension the registry now has as p (nil: removed).
@@ -179,7 +226,8 @@ func (t *extTokens) issueToken(e extToken) string {
 	if t.byHash == nil {
 		t.byHash, t.byExt = map[string]extToken{}, map[string]string{}
 	}
-	if old, ok := t.byExt[id]; ok {
+	old, replaced := t.byExt[id]
+	if replaced {
 		delete(t.byHash, old)
 	}
 	t.byHash[hash] = e
@@ -188,7 +236,11 @@ func (t *extTokens) issueToken(e extToken) string {
 		return r.IssueExtensionToken(ctx, db.ExtensionToken{Hash: hash, Manager: owner, Extension: id, Name: e.name,
 			Scopes: e.scopes, All: e.all})
 	})
+	dropped := t.dropped
 	t.mu.Unlock()
+	if replaced && dropped != nil {
+		dropped(old)
+	}
 	t.flush()
 	return tok
 }
@@ -196,14 +248,19 @@ func (t *extTokens) issueToken(e extToken) string {
 // revoke drops id's token; why (db.ExtensionToken…) goes to the record.
 func (t *extTokens) revoke(id, why string) {
 	t.mu.Lock()
-	if hash, ok := t.byExt[id]; ok {
+	hash, ok := t.byExt[id]
+	if ok {
 		delete(t.byHash, hash)
 		delete(t.byExt, id)
 		t.later(context.Background(), id+"'s revocation", func(ctx context.Context, r extTokenRecord, owner string) error {
 			return r.RevokeExtensionToken(ctx, owner, hash, why)
 		})
 	}
+	dropped := t.dropped
 	t.mu.Unlock()
+	if ok && dropped != nil {
+		dropped(hash)
+	}
 	t.flush()
 }
 

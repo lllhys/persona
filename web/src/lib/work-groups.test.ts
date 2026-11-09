@@ -13,13 +13,11 @@ import {
   explorationSummary,
   groupOpens,
   groupTitle,
-  isDeliveryText,
   isRowStep,
   isWorkflowStep,
   planProgress,
   planSteps,
   planTodos,
-  previewSteps,
   thinkingDurations,
   workBlocks,
   workDuration,
@@ -46,7 +44,8 @@ const tool = (id: string, name = "Bash", at?: number, resultAt?: number, input: 
 
 function blocks(items: Item[], live = false, agentStatus?: (s: ToolStep) => AgentStatus): WorkNode[] {
   const seg = segments(items)[0];
-  return workBlocks(planSteps(exchangeSteps(seg)), { live, turnStart: seg.user?.ts ?? seg.start, agentStatus });
+  void agentStatus;
+  return workBlocks(exchangeSteps(seg), { live, turnStart: seg.user?.ts ?? seg.start });
 }
 
 const idOf = (n: WorkNode) => (n.kind === "step" ? n.step.id.replace(/#\d+$/, "") : n.id);
@@ -68,12 +67,12 @@ const briefThenNotify = (body: string): Item[] => [
 ];
 const longPlain = `本轮 7 条有活动，3 条首次亮相。${"逐条核对了改动落在哪些产品面。".repeat(50)}`;
 
-describe("delivered prose stays out of 「已工作」", () => {
-  it("a long text before the closing action stays in the open, the work before it still folds", () => {
+describe("only the final text stays outside execution (#2602)", () => {
+  it("folds long intermediate text along with the tools", () => {
     expect(longPlain.length).toBeGreaterThanOrEqual(600);
     const b = blocks(briefThenNotify(longPlain));
-    expect(topSteps(b)).toEqual(["brief", "wrap"]);
-    expect(folded(b, "brief")).toBe(false);
+    expect(topSteps(b)).toEqual(["wrap"]);
+    expect(folded(b, "brief")).toBe(true);
     expect(folded(b, "th1")).toBe(true);
   });
 
@@ -83,8 +82,8 @@ describe("delivered prose stays out of 「已工作」", () => {
     ["a table", "PR 一览：\n\n| PR | 建议 |\n| --- | --- |\n| #1111 | 放行 |"],
     ["a Markdown image", "图表如下 ![chart](https://example.com/chart.png)"],
     ["an <img>", '缩略图：<img src="https://example.com/thumb.png" width="150">'],
-  ])("so does a short one with %s", (_, body) => {
-    expect(topSteps(blocks(briefThenNotify(body)))).toEqual(["brief", "wrap"]);
+  ])("folds intermediate Markdown with %s", (_, body) => {
+    expect(topSteps(blocks(briefThenNotify(body)))).toEqual(["wrap"]);
   });
 
   it.each([
@@ -100,44 +99,34 @@ describe("delivered prose stays out of 「已工作」", () => {
     expect(folded(b, "brief")).toBe(true);
   });
 
-  it("isDeliveryText", () => {
-    expect(isDeliveryText("")).toBe(false);
-    expect(isDeliveryText("x".repeat(599))).toBe(false);
-    expect(isDeliveryText("x".repeat(600))).toBe(true);
-  });
+
 });
 
 describe("a finished exchange", () => {
-  it("keeps the last words; the steps and words before fold into one timeline with inner groups", () => {
-    const b = blocks([user("u1", 0), think("th1", 5951), say("a1", "我先快速摸一下代码规模和质量证据，再给评价。", 6062), ...tool("b1", "Bash", 6500, 7000), say("a2", "说下我的看法：这是个认真的项目。", 29000)]);
+  it("keeps final text and all intermediate narration/tools in one flat inspectable summary", () => {
+    const b = blocks([user("u1", 0), think("th1", 5951), say("a1", "Checking the code.", 6062), ...tool("b1", "Bash", 6500, 7000), say("a2", "Final result.", 29000)]);
     expect(topSteps(b)).toEqual(["a2"]);
     const [outer] = groups(b);
-    expect(outer.id.startsWith("work-summary-")).toBe(true);
-    expect(outer.children.map(idOf).filter((x) => !x.startsWith("work-"))).toEqual(["a1"]);
-    const inner = outer.children.filter((c): c is WorkGroupNode => c.kind === "group");
-    expect(inner).toHaveLength(2);
-    // the first run counts the thinking from your message (6 s), not the 111 ms the block took to arrive
-    expect(inner[0].durationMs).toBe(6062);
-    expect(inner[1].durationMs).toBe(29000 - 6062);
+    expect(outer.children.map(idOf)).toEqual(["th1", "a1", "b1"]);
     expect(outer.durationMs).toBe(29000);
-    expect(inner[0].durationMs! + inner[1].durationMs!).toBe(outer.durationMs);
+    expect(outer.live).toBe(false);
   });
 
   it("without your message the first run counts from its own step", () => {
     const b = blocks([think("th1", 5951), say("a1", "我先摸一下。", 6062), ...tool("b1", "Bash", 6500, 7000), say("a2", "看法如下。", 29000)]);
-    const inner = groups(b)[0].children.filter((c): c is WorkGroupNode => c.kind === "group");
-    expect(inner[0].durationMs).toBe(111);
+    expect(groups(b)[0].durationMs).toBe(29000 - 5951);
   });
 
-  it("an exchange cut off mid-work (no words after its last step) folds as runs, its words in the open", () => {
+  it("an interrupted exchange keeps its latest text and one completed summary", () => {
     const b = blocks([user("u1", 0), ...tool("t1", "Bash", 1000), say("a1", "接着看。", 2000), ...tool("t2", "Read", 3000)]);
-    expect(b.map((n) => n.kind)).toEqual(["group", "step", "group"]);
+    expect(b.map((n) => n.kind)).toEqual(["group", "step"]);
     expect(groups(b).every((g) => !g.live)).toBe(true);
   });
 
-  it("several words in a row after the last step all stay as the answer", () => {
+  it("only the final text segment stays visible, earlier segments remain inspectable", () => {
     const b = blocks([user("u1", 0), ...tool("t1", "Bash", 1000), say("a1", "第一部分。", 5000), say("a2", "第二部分。", 6000)]);
-    expect(topSteps(b)).toEqual(["a1", "a2"]);
+    expect(topSteps(b)).toEqual(["a2"]);
+    expect(folded(b, "a1")).toBe(true);
   });
 });
 
@@ -150,84 +139,73 @@ describe("while the agent works", () => {
     expect(groupTitle(g)).toBe("正在工作…");
   });
 
-  it("its words stay in the open between runs; only the last run is live", () => {
-    const b = blocks([user("u1", 0), ...tool("t1", "Bash", 1000), say("a1", "先看一下目录。", 2000), ...tool("t2", "Bash", 3000)], true);
-    expect(b.map((n) => (n.kind === "group" ? `g:${n.live}` : idOf(n)))).toEqual(["g:false", "a1", "g:true"]);
+  it("new text replaces earlier text while subsequent tools remain in the same summary", () => {
+    const items = [user("u1", 0), ...tool("t1", "Bash", 1000), say("a1", "First progress.", 2000), ...tool("t2", "Bash", 3000)];
+    const first = blocks(items, true);
+    expect(first.map((n) => n.kind === "group" ? `g:${n.live}` : idOf(n))).toEqual(["g:true", "a1"]);
+    const newer = blocks([...items, say("a2", "Latest progress.", 4000), ...tool("t3", "Bash", 5000)], true);
+    expect(topSteps(newer)).toEqual(["a2"]);
+    expect(groups(newer)).toHaveLength(1);
+    expect(groups(newer)[0].id).toBe(groups(first)[0].id);
+    expect(folded(newer, "a1")).toBe(true);
+    expect(groups(newer)[0].children.map(idOf)).toEqual(["t1", "a1", "t2", "t3"]);
   });
 
-  it("shows its newest five steps; more than that opens", () => {
-    const few = groups(blocks([user("u1", 0), ...[1, 2, 3, 4, 5].flatMap((n) => tool(`t${n}`, "Bash", n * 1000, undefined, { command: `echo ${n}` }))], true))[0];
-    expect(previewSteps(few).map((s) => s.id.replace(/#0$/, ""))).toEqual(["t1", "t2", "t3", "t4", "t5"]);
-    expect(groupOpens(few)).toBe(false);
-    const many = groups(blocks([user("u1", 0), ...[1, 2, 3, 4, 5, 6, 7].flatMap((n) => tool(`t${n}`, "Bash", n * 1000, undefined, { command: `echo ${n}` }))], true))[0];
-    expect(previewSteps(many).map((s) => s.id.replace(/#0$/, ""))).toEqual(["t3", "t4", "t5", "t6", "t7"]);
-    expect(groupOpens(many)).toBe(true);
-  });
-
-  it("the preview skips thoughts without words and shows a file read twice once", () => {
-    const g = groups(blocks([user("u1", 0), think("e", 500, ""), ...tool("r1", "Read", 1000, undefined, { file_path: "/a.ts" }), ...tool("r2", "Read", 2000, undefined, { file_path: "/a.ts" })], true))[0];
-    expect(previewSteps(g).map((s) => s.id.replace(/#0$/, ""))).toEqual(["r2"]);
-  });
-
-  it("keeps the latest narration after the tool preview, even after many more calls", () => {
-    const items = [user("u1", 0), think("old", 500, "Reading the code"), think("latest", 1000, "The fix is ready; checking it now"),
-      ...[1, 2, 3, 4, 5, 6, 7].flatMap((n) => tool(`t${n}`, "Bash", 2000 + n * 1000)), think("empty", 10_000, "  ")];
-    const g = groups(blocks(items, true))[0];
-    expect(previewSteps(g).map((s) => s.id.replace(/#0$/, ""))).toEqual(["t4", "t5", "t6", "t7", "latest"]);
+  it("the first running tool can be opened without a preview threshold", () => {
+    const [g] = groups(blocks([user("u1", 0), ...tool("t1", "Bash", 1000)], true));
     expect(groupOpens(g)).toBe(true);
-    expect(folded([g], "old")).toBe(true);
-    expect(folded([g], "latest")).toBe(true);
-
-    const next = groups(blocks([...items, think("new", 11_000, "All checks passed; reviewing the result")], true))[0];
-    expect(previewSteps(next).at(-1)?.id).toBe("new#0");
-    expect(previewSteps(next).filter((s) => s.id === "new#0")).toHaveLength(1);
+    expect(groupOpens({ ...g, children: [] })).toBe(false);
   });
 
-  it("counts a narration pinned from outside the tool window when deciding whether the group opens", () => {
-    const g = groups(blocks([user("u1", 0), think("note", 500), ...[1, 2, 3, 4, 5].flatMap((n) => tool(`t${n}`, "Bash", n * 1000))], true))[0];
-    expect(previewSteps(g)).toHaveLength(5);
-    expect(groupOpens(g)).toBe(true);
-    expect(previewSteps(g, 1).map((s) => s.id)).toEqual(["note#0"]);
+  it("thinking and folded latest_thinking stay in the summary, not the text slot", () => {
+    const thought = think("note", 500, "Checking the example.");
+    const fold = mk("assistant", "fold", 500, { id: "fold:note", fold: { items: 13, tools: 6, thoughts: 1, through_seq: 99, latest_thinking: thought } });
+    const b = blocks([user("u1", 0), fold, say("a1", "Latest text.", 2000), think("new", 3000)], true);
+    expect(topSteps(b)).toEqual(["a1"]);
+    expect(groups(b)[0].children.map(idOf)).toEqual(["fold:note", "new"]);
+    expect(groups(b)[0].children[0]).toMatchObject({ step: { item: fold } });
   });
 
-  it("previews narration from folded history without changing the fold or duplicating it after expansion", () => {
-    const thought = think("note", 500, "Checking the deployment result");
-    const tools = [1, 2, 3, 4, 5, 6].flatMap((n) => tool(`t${n}`, "Bash", n * 1000));
-    const fold = mk("assistant", "fold", 500, { id: "fold:note", fold: { items: 13, tools: 6, thoughts: 1, through_seq: tools.at(-1)!.seq, latest_thinking: thought } });
-    const g = groups(blocks([user("u1", 0), fold], true))[0];
-    expect(previewSteps(g).map((s) => s.id)).toEqual(["note#0"]);
-    expect(g.children).toHaveLength(1);
-    expect(groupOpens(g)).toBe(true);
-    const opened = groups(blocks([user("u2", 0), thought, ...tools], true))[0];
-    expect(previewSteps(opened).filter((s) => s.id === "note#0")).toHaveLength(1);
-    const newer = think("new", 8000, "The deployment is healthy");
-    expect(previewSteps(groups(blocks([user("u3", 0), fold, newer], true))[0]).at(-1)?.id).toBe("new#0");
+  it("streaming supersedes the persisted text without losing it from inspection", () => {
+    const seg = segments([user("u1", 0), say("a1", "Earlier progress.", 1000), ...tool("t1", "Bash", 2000)])[0];
+    const b = workBlocks(exchangeSteps(seg), { live: true, streaming: true, turnStart: seg.user?.ts });
+    expect(topSteps(b)).toEqual([]);
+    expect(folded(b, "a1")).toBe(true);
+  });
+
+  it("the summary keeps its key when the final text arrives and the run ends", () => {
+    const items = [user("u1", 0), ...tool("t1", "Bash", 1000), say("a1", "Progress.", 2000), ...tool("t2", "Bash", 3000)];
+    const running = blocks(items, true);
+    const done = blocks([...items, say("final", "Final result.", 4000)]);
+    expect(groups(done)[0].id).toBe(groups(running)[0].id);
+    expect(topSteps(done)).toEqual(["final"]);
+    expect(folded(done, "a1")).toBe(true);
   });
 });
 
 describe("subagents", () => {
   const items = () => [user("u1", 0), ...tool("pre", "Bash", 500), ...tool("task1", "Agent", 1000, 9000, { description: "回归", prompt: "跑回归" }), say("final", "都做完了。", 10000)];
 
-  it("a running one stays in the open, never in a group", () => {
+  it("a running subagent stays inside the execution summary", () => {
     const b = blocks(items(), false, () => "running");
-    expect(topSteps(b)).toEqual(["task1", "final"]);
-    expect(folded(b, "task1")).toBe(false);
+    expect(topSteps(b)).toEqual(["final"]);
+    expect(folded(b, "task1")).toBe(true);
     expect(groups(b).length).toBeGreaterThan(0);
   });
 
-  it("a finished one stays where it was, in the open (#5602: it folded once done and the runs around it joined)", () => {
+  it("a finished subagent stays inside the same summary without changing the key", () => {
     const same = items();
     const running = blocks(same, false, () => "running");
     const done = blocks(same, false, () => "completed");
-    expect(topSteps(done)).toEqual(["task1", "final"]);
-    expect(folded(done, "task1")).toBe(false);
+    expect(topSteps(done)).toEqual(["final"]);
+    expect(folded(done, "task1")).toBe(true);
     // the same groups, with the same keys, either way
     expect(groups(done).map((g) => g.id)).toEqual(groups(running).map((g) => g.id));
   });
 
-  it("a running one in the middle of live work splits the runs around it", () => {
+  it("a subagent card and the tools around it share one summary", () => {
     const b = blocks([user("u1", 0), ...tool("a", "Bash", 500), ...tool("task1", "Agent", 1000), ...tool("b", "Bash", 2000)], true, () => "running");
-    expect(b.map((n) => (n.kind === "group" ? "g" : idOf(n)))).toEqual(["g", "task1", "g"]);
+    expect(b.map((n) => (n.kind === "group" ? "g" : idOf(n)))).toEqual(["g"]);
   });
 });
 
@@ -280,13 +258,15 @@ describe("titles and plans", () => {
     expect(workDuration(93_900_000)).toBe("1 天 02 小时 05 分");
   });
 
-  it("only the latest plan of two or more items draws, in the open", () => {
+  it("keeps every plan update in the manual trace, while planSteps still selects the latest for the composer", () => {
     const todos = (s: string[]) => ({ todos: s.map((content, i) => ({ content, status: i === 0 ? "completed" : i === 1 ? "in_progress" : "pending" })) });
-    const b = blocks([user("u1", 0), ...tool("p1", "TodoWrite", 1000, undefined, todos(["读", "改"])), ...tool("t", "Bash", 2000), ...tool("p2", "TodoWrite", 3000, undefined, todos(["读", "改", "测"])), ...tool("one", "TodoWrite", 3500, undefined, todos(["单项"])), say("a", "好了。", 4000)]);
-    expect(topSteps(b)).toEqual(["p2", "a"]);
-    const p = b.find((n) => n.kind === "step" && idOf(n) === "p2")!;
-    const t = planTodos((p as { step: ToolStep }).step);
-    expect(planProgress(t)).toEqual({ done: 1, total: 3, current: "改", step: 2, allDone: false });
+    const items = [user("u1", 0), ...tool("p1", "TodoWrite", 1000, undefined, todos(["Read", "Edit"])), ...tool("t", "Bash", 2000), ...tool("p2", "TodoWrite", 3000, undefined, todos(["Read", "Edit", "Test"])), ...tool("one", "TodoWrite", 3500, undefined, todos(["One"])), say("a", "Done.", 4000)];
+    const b = blocks(items);
+    expect(topSteps(b)).toEqual(["a"]);
+    for (const id of ["p1", "p2", "one"]) expect(folded(b, id)).toBe(true);
+    const selected = planSteps(exchangeSteps(segments(items)[0])).filter((s) => s.kind === "tool" && s.use.tool_name === "TodoWrite");
+    expect(selected).toHaveLength(1);
+    expect(planProgress(planTodos(selected[0] as ToolStep))).toEqual({ done: 1, total: 3, current: "Edit", step: 2, allDone: false });
   });
 
   it("thoughts take from the step before to when they were written", () => {
@@ -373,18 +353,15 @@ describe("workflow calls", () => {
     expect(explorationSummary(g)).toBe("");
   });
 
-  it("stays in the open while the hub lists its run, running or ended; folds like any step once it does not", () => {
+  it("keeps workflow execution inside the same summary, whether live or completed", () => {
     const seg = segments(launch())[0];
-    const steps = planSteps(exchangeSteps(seg));
-    const card = workBlocks(steps, { live: false, turnStart: seg.user?.ts, workflowCard: () => true });
-    expect(folded(card, "wf")).toBe(false);
-    expect(topSteps(card)).toEqual(["wf", "ans"]);
-    expect(folded(card, "grep")).toBe(true);
-    // in a live exchange too: the work before it folds, the card stays
-    const live = workBlocks(steps.slice(0, -1), { live: true, turnStart: seg.user?.ts, workflowCard: () => true });
-    expect(folded(live, "wf")).toBe(false);
-    const row = workBlocks(steps, { live: false, turnStart: seg.user?.ts, workflowCard: () => false });
-    expect(folded(row, "wf")).toBe(true);
+    const steps = exchangeSteps(seg);
+    for (const live of [true, false]) {
+      const nodes = workBlocks(steps, { live, turnStart: seg.user?.ts });
+      expect(folded(nodes, "wf")).toBe(true);
+      expect(topSteps(nodes)).toEqual(["ans"]);
+      expect(groups(nodes)).toHaveLength(1);
+    }
   });
 
   it("finds the hub's fold that holds a run's call: the one whose span holds when it started", () => {
@@ -417,27 +394,16 @@ describe("workflow calls", () => {
   });
 });
 
-describe("workLineOpen (#1614)", () => {
-  it("assistant: open while the exchange runs, unless the reader folded it during the run", () => {
-    expect(workLineOpen({ style: "assistant", turnLive: true, remembered: false })).toBe(true);
-    expect(workLineOpen({ style: "assistant", turnLive: true, remembered: false, liveOverride: false })).toBe(false);
-    expect(workLineOpen({ style: "assistant", turnLive: true, remembered: true, liveOverride: true })).toBe(true);
-  });
-
-  it("assistant: once the exchange ends, the run's toggle is dropped and what is remembered (folded by default) shows", () => {
-    expect(workLineOpen({ style: "assistant", turnLive: false, remembered: false, liveOverride: true })).toBe(false);
-    expect(workLineOpen({ style: "assistant", turnLive: false, remembered: true })).toBe(true);
-    expect(togglesLiveOverride("assistant", true)).toBe(true);
-    expect(togglesLiveOverride("assistant", false)).toBe(false);
-  });
-
-  it("agents: what the reader left it at, running or not", () => {
-    expect(workLineOpen({ style: "agents", turnLive: true, remembered: false })).toBe(false);
-    expect(workLineOpen({ style: "agents", turnLive: true, remembered: true })).toBe(true);
-    expect(workLineOpen({ style: "agents", turnLive: false, remembered: false, liveOverride: true })).toBe(false);
-    expect(togglesLiveOverride("agents", true)).toBe(false);
-    expect(nestedLineDefault("agents")).toBe(false);
-    expect(nestedLineDefault("assistant")).toBe(true);
+describe("workLineOpen (#2602)", () => {
+  it.each(["assistant", "agents"] as const)("%s uses the same collapsed default and manual inspection", (style) => {
+    expect(workLineOpen({ style, turnLive: true, remembered: false })).toBe(false);
+    expect(workLineOpen({ style, turnLive: true, remembered: false, liveOverride: true })).toBe(true);
+    expect(workLineOpen({ style, turnLive: true, remembered: true, liveOverride: false })).toBe(false);
+    expect(workLineOpen({ style, turnLive: false, remembered: false, liveOverride: true })).toBe(false);
+    expect(workLineOpen({ style, turnLive: false, remembered: true })).toBe(true);
+    expect(togglesLiveOverride(style, true)).toBe(true);
+    expect(togglesLiveOverride(style, false)).toBe(false);
+    expect(nestedLineDefault(style)).toBe(true);
   });
 });
 

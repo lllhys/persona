@@ -162,6 +162,9 @@ type Manager struct {
 
 	// images are the pictures extensions serve through the hub (extension_images.go).
 	images imageProxy
+
+	// droppedWait is noticeDropped's first wait between two tries, doubled after each.
+	droppedWait time.Duration
 }
 
 // New is the manager of opts; nothing runs until Run.
@@ -189,6 +192,8 @@ func New(opts Options) *Manager {
 	h.ruleStore = &settingRuleStore{h: h}
 	h.byID = map[string]*Machine{}
 	h.started = make(chan struct{})
+	h.extTokens.dropped = h.tellHubDropped
+	h.droppedWait = time.Second
 	return h
 }
 

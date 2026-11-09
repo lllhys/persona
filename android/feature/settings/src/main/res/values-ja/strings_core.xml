@@ -227,7 +227,7 @@
     <string name="settings_ready_autostart">自動起動</string>
     <string name="settings_ready_autostart_detail">アプリの起動管理でPersonaの自動起動を許可してください。スキップすると、スマートフォンの再起動後にPersonaを手動で開く必要があることがあります。システムでは確認できないため、設定後に確認してください。</string>
     <string name="settings_ready_vendor">%1$s %2$sのバックグラウンド設定</string>
-    <string name="settings_ready_vendor_detail">%1$sシステムはこれらのスイッチを確認できないため、設定後に「完了」をタップしてください。スキップすると通知を受け取れないことがあります。</string>
+    <string name="settings_ready_vendor_detail">%1$sシステムはこれらのスイッチを確認できないため、設定後に「完了にする」をタップしてください。スキップすると通知を受け取れないことがあります。</string>
     <string name="settings_ready_task_lock">最近のタスクでロック</string>
     <string name="settings_ready_task_lock_detail">最近のタスクを開き、Personaのカードを長押しするかメニューを開いて「ロック」を選んでください。スキップすると、一括消去で接続が閉じることがあります。</string>
     <string name="settings_ready_local_network">ローカルネットワーク</string>
@@ -324,7 +324,7 @@
     <string name="settings_ready_open">設定を開く</string>
     <string name="settings_ready_open_failed">システムの設定を開けません。スマートフォンの設定からPersonaのアプリ情報を開いてください。</string>
     <string name="settings_ready_undo_confirm">確認を取り消し</string>
-    <string name="settings_ready_mark_done">完了</string>
+    <string name="settings_ready_mark_done">完了にする</string>
     <string name="settings_ready_unskip">スキップを解除</string>
     <string name="settings_ready_skip">スキップ</string>
     <string name="settings_ready_no_machines">マシンの情報はまだありません</string>

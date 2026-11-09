@@ -44,8 +44,10 @@ type fleetCache struct {
 	muted        map[string][]string                 // machine → its sessions whose pushes are off, as the manager said
 	live         *assistantwire.FleetLive            // the assistant's
 	lives        map[string]*assistantwire.FleetLive // the other managers' (manager_state.go)
-	elicitation  bool                                // what fleet.clients said last
+	clients      assistantwire.Clients               // what fleet.clients said last
 	clientsSent  bool
+	// clientsSend holds one fleet.clients from working out what is true to telling it (fleetClientsChanged).
+	clientsSend sync.Mutex
 }
 
 func init() {
@@ -392,21 +394,48 @@ func (h *Hub) waitInteraction(ctx context.Context, ix proto.Interaction) (proto.
 
 // ---- what the hub tells the manager of the apps ----
 
-// fleetClientsChanged tells the manager what the connected apps can take now, when it changed (fleet.clients).
+// fleetClientsChanged tells the managers what the apps can take now, when it changed (fleet.clients): an app that
+// takes MCP forms and links is connected, or a phone that registered for them would be pushed one (#2433). It runs
+// after an app connects, says hello or goes, and after the devices or their settings change. One at a time, each with
+// what is true then, so an older state never overtakes a newer one.
 func (h *Hub) fleetClientsChanged() {
-	el := h.hasElicitationClient()
 	f := &h.reported
+	f.clientsSend.Lock()
+	defer f.clientsSend.Unlock()
+	c := assistantwire.Clients{Elicitation: h.hasElicitationClient(), ElicitationPush: h.push.pushesElicitation(h.desktopOnline())}
 	f.mu.Lock()
-	same := f.clientsSent && f.elicitation == el
-	f.elicitation, f.clientsSent = el, true
+	same := f.clientsSent && f.clients == c
+	f.clients, f.clientsSent = c, true
 	f.mu.Unlock()
 	if !same {
-		if err := h.notifyManagers(assistantwire.EventClients, assistantwire.Clients{Elicitation: el}); err != nil {
+		if err := h.notifyManagers(assistantwire.EventClients, c); err != nil {
 			f.mu.Lock()
 			f.clientsSent = false
 			f.mu.Unlock()
 		}
 	}
+}
+
+// clientsSettle runs on a manager connection's first word after its handshake, as mutesSettle does, and tells it what
+// the apps can take now (fleet.clients). The hub says it again only when it changes, and at a handshake only to the
+// assistant: a manager connected since would not know a phone takes MCP forms by push, which seldom changes (#2433).
+// After the first word it lands after the hello's answer.
+func (h *Hub) clientsSettle(c *busConn) {
+	if c == nil || c.ident.Role != bus.RoleManager || !c.clientsSettled.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		h.fleetClientsChanged() // a change not told yet goes to every manager
+		f := &h.reported
+		f.clientsSend.Lock()
+		defer f.clientsSend.Unlock()
+		f.mu.Lock()
+		clients := f.clients
+		f.mu.Unlock()
+		if h.busCurrent(c) {
+			_ = c.peer.Notify(assistantwire.EventClients, clients)
+		}
+	}()
 }
 
 // fleetConnected: the manager's handshake went through: it is told what of the apps it needs.

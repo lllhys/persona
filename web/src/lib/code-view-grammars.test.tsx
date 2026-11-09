@@ -27,7 +27,7 @@ describe("code view highlighter", () => {
   });
 
   it("imports lowlight destructured, so the build leaves out every-grammar `all`", () => {
-    const src = readFileSync(join(__dirname, "code-view.ts"), "utf8");
+    const src = readFileSync(join(__dirname, "lowlight.ts"), "utf8"); // the loader code-view.ts shares with the chat
     expect(src).toMatch(/import\("lowlight"\)\.then\(\(\{ createLowlight, common \}\)/);
   });
 });

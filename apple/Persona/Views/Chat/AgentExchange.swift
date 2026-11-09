@@ -97,6 +97,30 @@ enum ChatNames {
     static let persona = "Persona"
 }
 
+/// Expand / Collapse under words that are folded: an exchange's (`ExchangeText`) and a long message's (`LineFold`).
+/// prefix: the accessibility identifiers, "<prefix>.expand" and "<prefix>.collapse".
+struct FoldToggle: View {
+    var open: Bool
+    var prefix: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Space.xs) {
+                Text(open ? String(localized: "Collapse") : String(localized: "Expand")).lineLimit(1)
+                ThemedIcon(Theme.Icon.disclosure)
+                    .rotationEffect(.degrees(open ? -90 : 90))
+                    .accessibilityHidden(true)
+            }
+            .font(Theme.Font.captionStrong)
+            .foregroundStyle(Theme.accent)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(prefix + (open ? ".collapse" : ".expand"))
+    }
+}
+
 /// An exchange's words, folded to `shown` lines (nil: all, 0: none until Expand), with Expand / Collapse under them
 /// when there is more. Links in them open as links do in the chat.
 struct ExchangeText: View {
@@ -124,21 +148,7 @@ struct ExchangeText: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { drawn = $0 }
                     .accessibilityIdentifier("exchange.text")
             }
-            if folds {
-                Button(action: toggle) {
-                    HStack(spacing: Theme.Space.xs) {
-                        Text(open ? String(localized: "Collapse") : String(localized: "Expand")).lineLimit(1)
-                        ThemedIcon(Theme.Icon.disclosure)
-                            .rotationEffect(.degrees(open ? -90 : 90))
-                            .accessibilityHidden(true)
-                    }
-                    .font(Theme.Font.captionStrong)
-                    .foregroundStyle(Theme.accent)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier(open ? "exchange.collapse" : "exchange.expand")
-            }
+            if folds { FoldToggle(open: open, prefix: "exchange", action: toggle) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

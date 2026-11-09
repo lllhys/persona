@@ -229,7 +229,7 @@ nonisolated enum ServerEvent: Sendable {
         case "delta":
             guard let key else { return nil }
             return .delta(key, text: e.text ?? "")
-        case "interaction": return e.interaction.map { .interaction($0) }
+        case "interaction": return e.interaction.map { .interaction(Elicitation.withFieldOrder($0, from: data)) }
         case "interaction_resolved":
             guard let id = e.id else { return nil }
             let assistant = e.answeredBy?.string == AssistantAnswer.assistant
@@ -821,9 +821,20 @@ final class LiveConnection {
 
     /// client_hello (docs/protocol/protocol.md, docs/protocol/i18n.md「协议」): this connection's interface language, so the hub's
     /// notices and errors on it, and the user's language for what it produces later, match the app. The naming
-    /// contract is also advertised here; older hubs ignore unknown fields and keep their existing defaults.
+    /// contract and MCP forms and links are advertised here (`helloFeatures`), with the platform and version this app's
+    /// requests carry (`X-Persona-Client`): the hub lists those cards in a REST answer only to a client whose hello
+    /// matches it. Older hubs ignore unknown fields and keep their existing defaults.
     private func sayHello() {
-        send(["type": "client_hello", "locale": LanguageStore.shared.launched, "features": [HubNaming.feature]])
+        let client = RequestClientMetadata.current
+        send(["type": "client_hello", "locale": LanguageStore.shared.launched, "features": Self.helloFeatures(client),
+              "platform": client.platform, "version": client.version])
+    }
+
+    /// `elicitation` (MCP forms and links, `ElicitationForm`) from the iOS app alone: the frozen Mac app and visionOS
+    /// don't declare it, so the hub hands those cards to the terminal when they are the only apps open.
+    nonisolated static func helloFeatures(_ client: RequestClientMetadata) -> [String] {
+        let iOSApp = RequestClientMetadata.Platform.iOS.rawValue + "-" + RequestClientMetadata.Surface.app.rawValue
+        return [HubNaming.feature] + (client.platform == iOSApp ? ["elicitation"] : [])
     }
 
     func send(_ object: [String: Any]) {

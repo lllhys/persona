@@ -277,8 +277,9 @@ func (s *Service) outcomeDecisions(ctx context.Context, t Todo, key string, by o
 	return true
 }
 
-// outcomeLog appends "Outcome: …" (in Chinese) to the timeline of each project an agent of t worked in (kb.ProjectsForWork), once a
-// project: «to-do · <title>», not bounded like an agent's turns (kb_bus.go).
+// outcomeLog appends "Outcome: …" (in Chinese) to the timeline of the project t was put in (todo_project.go), or, when it has
+// none (or it is gone), of each project an agent of t worked in (kb.ProjectsForWork), once a project: «to-do · <title>», not
+// bounded like an agent's turns (kb_bus.go).
 func (s *Service) outcomeLog(ctx context.Context, t Todo, agents []outcomeAgent, o taskOutcome) {
 	if !s.kbWritable(ctx) {
 		return
@@ -296,18 +297,30 @@ func (s *Service) outcomeLog(ctx context.Context, t Todo, agents []outcomeAgent,
 	}
 	line := outcomeLogLine(o)
 	source := kb.TodoLogSource + kb.TodoLogTitle(t.Title)
+	for _, p := range outcomeProjects(e, t, agents) {
+		if _, err := e.Apply(kb.KindProject, p.Slug, kb.Update{Log: line, Source: source}); err != nil {
+			s.logf("task %s: outcome log %s: %v", t.ID, p.Slug, err)
+		}
+	}
+}
+
+// outcomeProjects are the projects whose timelines get t's outcome: the one it was put in, else those its agents worked
+// in, each once.
+func outcomeProjects(e *kb.Engine, t Todo, agents []outcomeAgent) []*kb.Project {
+	if p := ownProject(e, t); p != nil {
+		return []*kb.Project{p}
+	}
+	var out []*kb.Project
 	done := map[string]bool{}
 	for _, a := range agents {
 		for _, p := range e.ProjectsForWork(a.MachineID, a.Cwd) {
-			if done[p.Slug] {
-				continue
-			}
-			done[p.Slug] = true
-			if _, err := e.Apply(kb.KindProject, p.Slug, kb.Update{Log: line, Source: source}); err != nil {
-				s.logf("task %s: outcome log %s: %v", t.ID, p.Slug, err)
+			if !done[p.Slug] {
+				done[p.Slug] = true
+				out = append(out, p)
 			}
 		}
 	}
+	return out
 }
 
 // outcomeLogLine is "Outcome: <outcome> <links>" (in Chinese) within a timeline line: the links whole (those that fit), the outcome

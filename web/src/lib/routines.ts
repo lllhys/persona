@@ -31,7 +31,7 @@ export interface Task {
   permission_mode?: string;
   effort?: string;
   /** "Push when done" (hubs with the task_push feature): "" every run's answer, "asked" only what a run sends with notify_user.
-   *  An "asked" task always runs in its own conversation (docs/assistant/assistant.md "Push when done"). */
+   *  An "asked" task always runs in its own conversation (docs/assistant/assistant.md "Push after running"). */
   push?: Push;
   /** Optional end time (RFC 3339). After it, a daily or interval task turns itself off. Ignored for once; omitted when unset. */
   until?: string;

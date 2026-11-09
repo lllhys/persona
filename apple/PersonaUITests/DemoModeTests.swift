@@ -164,7 +164,7 @@ final class DemoModeTests: XCTestCase {
         see(app.buttons.matching(identifier: "agents.compactRow").firstMatch, "compact rows")
         shot("agents-compact")
         menu.tap()
-        see(app.buttons["卡片"], "卡片 in the menu").tap()
+        see(app.buttons["头像"], "头像 in the menu").tap() // back from Compact List (#2530: Avatar, the default style)
         sleep(1)
 
         // A Claude session: the work line, the to-do list, the edit; a message gets the demo's answer.

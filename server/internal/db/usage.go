@@ -23,24 +23,37 @@ const putUsageSQL = `INSERT INTO machine_usage (machine_id, ts, step, model, lau
 	ON CONFLICT (machine_id, ts, step, model, launcher) DO UPDATE SET input = $5, cache_write = $6, cache_read = $7,
 		output = $8, requests = $9`
 
+// UsageWrite is one node's "usage" notification to store (PutUsage's arguments).
+type UsageWrite struct {
+	Machine     string
+	Buckets     []proto.UsageBucket
+	ReplaceFrom time.Time
+}
+
+func queueUsage(b *pgx.Batch, w UsageWrite) {
+	if !w.ReplaceFrom.IsZero() {
+		b.Queue(`DELETE FROM machine_usage WHERE machine_id = $1 AND step = 60 AND ts >= to_timestamp($2)`,
+			w.Machine, w.ReplaceFrom.Unix())
+	}
+	for _, x := range w.Buckets {
+		b.Queue(putUsageSQL, w.Machine, x.Minute, x.Model, x.Launcher, x.Input, x.CacheWrite, x.CacheRead, x.Output, x.Requests)
+	}
+}
+
 // PutUsage stores a node's buckets: a bucket is its minute's whole total, so it replaces what was there. With
 // replaceFrom set (the node's whole window, "full"), the machine's minute rows from then on that it did not send
 // are deleted first: what the node counts now is the record (an older node's rows without a launcher, a reply it no
 // longer counts twice).
 func (d *DB) PutUsage(ctx context.Context, machine string, buckets []proto.UsageBucket, replaceFrom time.Time) error {
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
-		if !replaceFrom.IsZero() {
-			if _, err := tx.Exec(ctx, `DELETE FROM machine_usage WHERE machine_id = $1 AND step = 60 AND ts >= to_timestamp($2)`,
-				machine, replaceFrom.Unix()); err != nil {
-				return err
-			}
-		}
-		batch := &pgx.Batch{}
-		for _, b := range buckets {
-			batch.Queue(putUsageSQL, machine, b.Minute, b.Model, b.Launcher, b.Input, b.CacheWrite, b.CacheRead, b.Output, b.Requests)
-		}
-		return tx.SendBatch(ctx, batch).Close()
-	})
+	_, err := d.PutUsages(ctx, []UsageWrite{{Machine: machine, Buckets: buckets, ReplaceFrom: replaceFrom}})
+	return err
+}
+
+// PutUsages stores several writes as PutUsage does, in order, in one transaction: one commit, so one WAL flush,
+// instead of one a write. A write Postgres rejects costs only itself: rejected[i] is the error writes[i] got
+// (writeAll).
+func (d *DB) PutUsages(ctx context.Context, writes []UsageWrite) (rejected []error, err error) {
+	return d.writeAll(ctx, len(writes), func(b *pgx.Batch, i int) { queueUsage(b, writes[i]) })
 }
 
 // RollupUsage sums the minute rows before before (rounded down to ten minutes) into one row a machine, ten minutes,

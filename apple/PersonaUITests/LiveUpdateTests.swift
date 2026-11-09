@@ -146,7 +146,8 @@ final class LiveUpdateTests: XCTestCase {
         // Below the cards that need you, out of sight and not built yet (#836).
         app.bringAboveTabBar(row)
         row.press(forDuration: 1.2)
-        let rename = app.buttons["重命名…"]
+        // 重命名… By Project, 重命名 Agent… By Repository (the default list: its menu renames the worktree too).
+        let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '重命名'")).firstMatch
         XCTAssertTrue(rename.waitForExistence(timeout: 5), "the long-press menu opened")
         let y = rename.frame.minY
         let before = counts()
@@ -249,7 +250,7 @@ final class LiveUpdateTests: XCTestCase {
         report("Agents list, searching", from: before, to: counts())
     }
 
-    // A row's ⋯ menu (#1244: the rows do not swipe) stays open while its agent keeps working: the menu is built again
+    // A row's long-press menu (#1244: the rows do not swipe) stays open while its agent keeps working: the menu is built again
     // only when what it offers changes (`AgentRowMenu`'s ==), not on every push. In the list itself: one machine's
     // agents (the widget's), so the row is near the top.
     @MainActor func testARowMenuStaysOpenThroughUpdates() {
@@ -259,7 +260,7 @@ final class LiveUpdateTests: XCTestCase {
         menuStaysOpen()
     }
 
-    // The same for a search result's ⋯ (a search result is a button, not a link).
+    // The same for a search result's long-press menu (a search result is a button, not a link).
     @MainActor func testASearchResultsMenuStaysOpenThroughUpdates() {
         launch()
         XCTAssertTrue(app.buttons["agents.filter.all"].waitForExistence(timeout: 15))
@@ -271,10 +272,12 @@ final class LiveUpdateTests: XCTestCase {
     }
 
     @MainActor private func menuStaysOpen() {
-        let more = app.buttons.matching(NSPredicate(format: "identifier == 'agents.row.more' AND label CONTAINS %@", "给天气 App 加主屏幕小组件")).firstMatch
+        // Its long-press menu (the row's ⋯ went, #2530).
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier IN {'agents.row', 'agents.compactRow'} AND label CONTAINS %@", "给天气 App 加主屏幕小组件")).firstMatch
         // The row starts below the cards that need you (#836), or under the tab bar on a smaller iPhone (#488).
-        app.bringAboveTabBar(more)
-        more.tap()
+        app.bringAboveTabBar(row)
+        row.press(forDuration: 1.2)
         let close = app.buttons["关闭 Agent…"]
         XCTAssertTrue(close.waitForExistence(timeout: 5), "the row's menu")
         churn()

@@ -241,6 +241,10 @@ const (
 	HubPushLocalized = "push.localized"
 	// HubMailTargets: {} → {targets}: the languages the devices want mail translated into.
 	HubMailTargets = "push.mail_targets"
+	// HubTokenRevoked: {hash} → {}: the manager dropped its extension token of that hash (Authorize's): the hub ends at
+	// once what the token has open through it (the calls and WebSockets on the relay streams to the manager), as for a
+	// revoked device.
+	HubTokenRevoked = "extensions.token_revoked"
 )
 
 // MethodAccept: {id} → {}: the hub holds a request for the manager (a relayed route): it dials the relay with the id.

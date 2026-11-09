@@ -53,7 +53,7 @@ function freshSet(ids: string[]) {
   return { set, has };
 }
 
-function draw(fresh: ReadonlySet<string>, streaming: string) {
+function draw(fresh: ReadonlySet<string>, streaming?: string) {
   act(() =>
     root.render(
       <ChatContext.Provider value={ctx}>
@@ -70,19 +70,20 @@ describe("StepView / FreshAnswer memo", () => {
     const { set, has } = freshSet([]);
     draw(set, "w");
     const first = has.mock.calls.length;
-    expect(first).toBe(5); // one FreshAnswer per run of words
-    expect(host.textContent).toContain("words 9");
+    expect(first).toBe(0); // old persisted narration is hidden while the single live text streams
+    expect(host.querySelector("[data-work-detail]")).toBeNull();
+    expect(host.textContent).not.toContain("words 9");
     for (let i = 0; i < 10; i++) draw(set, "w" + "x".repeat(i + 1));
     expect(has).toHaveBeenCalledTimes(first);
     expect(host.querySelector('[data-answer="streaming"]')).not.toBeNull();
   });
 
   it("words that just came in still learn it through FreshWords", () => {
-    draw(freshSet([]).set, "w");
+    draw(freshSet([]).set);
     const next = freshSet(["a9#0"]);
-    draw(next.set, "w");
-    // the context changed: every FreshAnswer reads it again, though its props did not
-    expect(next.has).toHaveBeenCalledTimes(5);
+    draw(next.set);
+    // Only the latest persisted text is visible and reads freshness, even though the turn contains five text segments.
+    expect(next.has).toHaveBeenCalledTimes(1);
     expect(next.has).toHaveBeenCalledWith("a9#0");
     expect(next.has.mock.results.some((r) => r.value === true)).toBe(true);
   });

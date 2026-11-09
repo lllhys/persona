@@ -208,20 +208,85 @@ func TestEndpointEventsRequireCapability(t *testing.T) {
 }
 
 func TestPairCandidates(t *testing.T) {
-	h := newPublicTestHub(t)
-	h.public.endpoints = []Endpoint{
-		{URL: "http://[2001:db8::1]:18660", Kind: "ipv6", Scheme: "http"},
-		{URL: "https://[2001:db8::1]:19443", Kind: "ipv6", Scheme: "https"},
-		{URL: "https://example.com:19443", Kind: "name", Scheme: "https"},
-		{URL: "https://192.0.2.1:19443", Kind: "lan", Scheme: "https"},
-		{URL: "https://198.51.100.1:19443", Kind: "ipv4", Scheme: "https"},
-	}
-	if got := h.pairCandidates(); !reflect.DeepEqual(got, []string{"https://[2001:db8::1]:19443", "https://example.com:19443"}) {
-		t.Fatalf("pair candidates = %v", got)
-	}
-	h.public.endpoints = []Endpoint{{URL: "https://192.0.2.1:19443", Kind: "lan", Scheme: "https"}}
-	if len(h.pairCandidates()) != 0 {
-		t.Fatal("pair candidates included a LAN address")
+	ipv6 := Endpoint{URL: "https://[2001:db8::1]:19443", Kind: "ipv6", Scheme: "https"}
+	ipv6b := Endpoint{URL: "https://[2001:db8::2]:19443", Kind: "ipv6", Scheme: "https"}
+	ipv6c := Endpoint{URL: "https://[2001:db8::3]:19443", Kind: "ipv6", Scheme: "https"}
+	ipv4 := Endpoint{URL: "https://198.51.100.1:19443", Kind: "ipv4", Scheme: "https"}
+	ipv4b := Endpoint{URL: "https://198.51.100.2:19443", Kind: "ipv4", Scheme: "https"}
+	ipv4c := Endpoint{URL: "https://198.51.100.3:19443", Kind: "ipv4", Scheme: "https"}
+	name := Endpoint{URL: "https://example.com:19443", Kind: "name", Scheme: "https"}
+	nameb := Endpoint{URL: "https://hub.example.com:19443", Kind: "name", Scheme: "https"}
+	lan := Endpoint{URL: "https://192.0.2.1:19443", Kind: "lan", Scheme: "https"}
+	http6 := Endpoint{URL: "http://[2001:db8::1]:18660", Kind: "ipv6", Scheme: "http"}
+	http4 := Endpoint{URL: "http://203.0.113.1:18660", Kind: "ipv4", Scheme: "http"}
+	for _, tc := range []struct {
+		name      string
+		endpoints []Endpoint
+		want      []string
+	}{
+		{
+			name:      "two IPv6 addresses before name and IPv4",
+			endpoints: []Endpoint{ipv6, ipv6b, name, ipv4},
+			want:      []string{ipv6.URL, ipv4.URL},
+		},
+		{
+			name:      "name does not displace IPv4",
+			endpoints: []Endpoint{http6, ipv6, name, lan, ipv4},
+			want:      []string{ipv6.URL, ipv4.URL},
+		},
+		{
+			name:      "IPv6 only keeps first two",
+			endpoints: []Endpoint{ipv6, ipv6b, ipv6c},
+			want:      []string{ipv6.URL, ipv6b.URL},
+		},
+		{
+			name:      "IPv4 only keeps first two",
+			endpoints: []Endpoint{ipv4, ipv4b, ipv4c},
+			want:      []string{ipv4.URL, ipv4b.URL},
+		},
+		{
+			name:      "IPv4 first still returns IPv6 first",
+			endpoints: []Endpoint{ipv4, ipv4b, name, ipv6, ipv6b},
+			want:      []string{ipv6.URL, ipv4.URL},
+		},
+		{
+			name:      "names first still covers both families",
+			endpoints: []Endpoint{name, nameb, ipv4, ipv6},
+			want:      []string{ipv6.URL, ipv4.URL},
+		},
+		{
+			name:      "IPv6 and name preserve candidate order",
+			endpoints: []Endpoint{ipv6, name, ipv6b, http4, lan},
+			want:      []string{ipv6.URL, name.URL},
+		},
+		{
+			name:      "name and IPv4 preserve candidate order",
+			endpoints: []Endpoint{http6, name, lan, ipv4, ipv4b},
+			want:      []string{name.URL, ipv4.URL},
+		},
+		{
+			name:      "names only",
+			endpoints: []Endpoint{name, nameb},
+			want:      []string{name.URL, nameb.URL},
+		},
+		{
+			name:      "single eligible endpoint",
+			endpoints: []Endpoint{http6, lan, ipv4},
+			want:      []string{ipv4.URL},
+		},
+		{
+			name:      "no eligible endpoints",
+			endpoints: []Endpoint{http6, http4, lan},
+		},
+		{name: "empty list"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPublicTestHub(t)
+			h.public.endpoints = tc.endpoints
+			if got := h.pairCandidates(); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("pair candidates = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

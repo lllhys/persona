@@ -1,7 +1,7 @@
 # /agent in Lark
 
 > **Since 2026-11-04 (#1520, extensions step 3, 3c)**: the whole path that connects Lark through the Lark gateway (the App's `/api/v1/lark/…`, the Lark sources of the Inbox and knowledge base, Moments,
-> the assistant's `ol` gate and credentials, /agent, personal Agents) is no longer in the open-source repository; it is provided by the extension that connects Lark (`docs/extensions/extensions.md`, `docs/plans/plan-extensions.md` ("Step 3")).
+> the assistant's `ol` gate and credentials, /agent, personal Agents) is no longer in the open-source repository; it is provided by the extension that connects Lark (`docs/extensions/extensions.md`, `docs/plans/plan-extensions.md` ("Step 3 plan: moving the Lark gateway into an extension")).
 > The behavior described below is provided by the extension unchanged; the hub source files mentioned here (`hub/lark*.go`, the `internal/lark` client…) have been deleted. The open-source version keeps only the official lark-cli, the Lark bot and Lark Mail.
 
 In any Lark conversation (group chat, direct chat, a topic in a topic group, a thread reply in a regular group) or in a document comment, when **I send** a message starting with `/agent`, the hub immediately starts an Agent to handle it.
@@ -33,7 +33,7 @@ When the Lark extension's Agent feature is enabled, either of these triggers can
 
 Document comments still use the prefix trigger, controlled by `agent_trigger_prefix`; self-mentions trigger requests only in chat messages.
 
-## Context handed to the Agent (`larkAgentContext`)
+## Context handed to the Agent
 
 This is the biggest difference from the listener in herdr: a request can come from anywhere and the Agent starts knowing nothing, so the hub gathers context first and puts it in the first message (`<persona-context>` tags):
 

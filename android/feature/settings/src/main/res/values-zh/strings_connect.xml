@@ -18,7 +18,10 @@
     <string name="settings_pairing_welcome_connect">连接 hub</string>
     <string name="settings_pairing_failed_title">连接未完成</string>
     <string name="settings_pairing_failed_body">按下面的提示处理后，再试一次。</string>
-    <string name="settings_pairing_stopped_at">停在「%1$s」：%2$s</string>
+    <string name="settings_pairing_stopped_at">停在「%1$s」</string>
+    <plurals name="settings_pairing_tried_again">
+        <item quantity="other">已试 %1$d 次，仍连不上。</item>
+    </plurals>
     <string name="settings_pairing_reload_machines">重新读取机器</string>
     <string name="settings_pairing_diagnostics">连接诊断</string>
     <string name="settings_pairing_rescan">重新扫码</string>
@@ -35,6 +38,7 @@
     <string name="settings_pairing_address_label">hub 地址或配对链接</string>
     <string name="settings_pairing_code_label">配对码</string>
     <string name="settings_pairing_http_warning">HTTP 不加密，只在内网或 VPN 里使用。在外面请使用加密连接。</string>
+    <string name="settings_pairing_manual_invalid">请检查地址，例如 hub.local:18660</string>
     <string name="settings_pairing_next">下一步</string>
     <string name="settings_pairing_paste">粘贴链接</string>
     <string name="settings_pairing_back_to_scan">返回扫码配对</string>
@@ -59,7 +63,7 @@
     <string name="settings_pairing_primary">主地址</string>
     <string name="settings_pairing_alternate">备用地址 %1$d</string>
     <string name="settings_pairing_identity_note">连接时会核对 hub 身份。</string>
-    <string name="settings_pairing_stage_parse">解析二维码</string>
+    <string name="settings_pairing_stage_parse">读取配对信息</string>
     <string name="settings_pairing_stage_probe">探测地址</string>
     <string name="settings_pairing_stage_verify">校验证书和 hub</string>
     <string name="settings_pairing_stage_exchange">换本机凭据</string>

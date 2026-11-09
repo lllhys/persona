@@ -3,7 +3,7 @@ import XCTest
 /// The shell's Assistant | Agents strip (docs/apple/ios.md「新外壳」, `ShellPager`): a drag to the left on Assistant slides to Agents, a
 /// drag to the right on Agents slides back, a drag to the right on Assistant is still the drawer; pushed pages keep the
 /// system's back swipe, the list scrolls up and down without paging, and Agents' rows have no swipe of their own: a drag
-/// along one pages, and the row's actions are in its ⋯ (#1244).
+/// along one pages, and the row's actions are in its long-press menu (#1244; the ⋯ that held them too went, #2530).
 /// Which page shows is read from the app's probe (`ShellPageProbe.swift`): the hidden page can stay in the accessibility
 /// tree.
 final class ShellPagerTests: XCTestCase {
@@ -115,25 +115,27 @@ final class ShellPagerTests: XCTestCase {
         attachScreen("row drag")
     }
 
-    /// A row ends in its ⋯ (#1244): a tap opens the row's menu, with what its swipes held, and not its chat.
-    @MainActor func testARowsMoreOpensItsMenu() {
+    /// A row's long press opens its menu, with what its swipes held (#1244), and not its chat; the row has no ⋯ (#2530).
+    @MainActor func testARowsLongPressOpensItsMenu() {
         launch()
         toAgents()
         rowMenuOpens("")
     }
 
-    /// The compact list's rows (`CompactSlotRow`) end in their ⋯ too.
-    @MainActor func testACompactRowsMoreOpensItsMenu() {
+    /// The compact list's rows (`CompactSlotRow`) too.
+    @MainActor func testACompactRowsLongPressOpensItsMenu() {
         launch(["-dev.compact", "YES"])
         toAgents()
         rowMenuOpens(" compact")
     }
 
     @MainActor private func rowMenuOpens(_ look: String) {
-        let more = app.buttons.matching(identifier: "agents.row.more").firstMatch
-        XCTAssertTrue(more.waitForExistence(timeout: 5), "no ⋯ on a row")
+        // The row's actions are its long-press menu: no ⋯ at its end (#2530).
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN {'agents.row', 'agents.compactRow'}")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "no agent row")
+        XCTAssertFalse(app.buttons["agents.row.more"].exists, "a ⋯ on a row")
         attachScreen("agents rows" + look)
-        more.tap()
+        row.press(forDuration: 1.2)
         let pin = app.buttons.matching(NSPredicate(format: "label IN {'置顶', '取消置顶'}")).firstMatch
         XCTAssertTrue(pin.waitForExistence(timeout: 3), "the row's menu did not open")
         attachScreen("row menu" + look)
@@ -141,7 +143,7 @@ final class ShellPagerTests: XCTestCase {
         // Closed without choosing: still the list, no chat pushed.
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.12)).tap()
         XCTAssertTrue(pin.waitForNonExistence(timeout: 3), "the menu did not close")
-        XCTAssertTrue(more.isHittable, "the row's chat opened")
+        XCTAssertTrue(row.isHittable, "the row's chat opened")
         expectAgents(true, "the row's menu")
     }
 

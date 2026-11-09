@@ -87,18 +87,19 @@ struct WorktreeSidebarMenu: View, Equatable {
 
     #if os(macOS)
     /// NSHostingMenu extracts an Image's native size, ignoring AgentMark's SwiftUI frame.
-    private func menuIcon(_ session: Session) -> Image {
+    @ViewBuilder private func menuIcon(_ session: Session) -> some View {
         let kind = AgentKind(session)
-        guard let brand = kind.brand, let source = NSImage(named: brand) else {
-            return Image(systemName: Theme.Icon.commandLine)
+        if let brand = kind.brand, let source = NSImage(named: brand) {
+            let size = NSSize(width: Theme.Size.markS, height: Theme.Size.markS)
+            let image = NSImage(size: size, flipped: false) { rect in
+                source.draw(in: rect)
+                return true
+            }
+            let _ = (image.isTemplate = brand != Theme.Brand.claude)
+            Image(nsImage: image)
+        } else {
+            ThemedIcon(Theme.Icon.commandLine)
         }
-        let size = NSSize(width: Theme.Size.markS, height: Theme.Size.markS)
-        let image = NSImage(size: size, flipped: false) { rect in
-            source.draw(in: rect)
-            return true
-        }
-        image.isTemplate = brand != Theme.Brand.claude
-        return Image(nsImage: image)
     }
     #endif
 }

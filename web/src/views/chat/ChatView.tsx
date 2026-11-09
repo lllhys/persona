@@ -269,7 +269,13 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const lastSeg = segs[segs.length - 1];
   const [awaitNow, setAwaitNow] = useState(() => Date.now());
   const turnFailure = session?.failure_reason ? { since: session.state_since } : undefined;
-  const awaiting = !readOnly && awaitingTurn(lastSeg, state, awaitNow, turnFailure);
+  // a message whose wait the hub took a stop for (#2450): it is no longer worked on, so Working… and Interrupt go at
+  // once instead of after AWAIT_MS; a turn the hub reports later still shows through `state`
+  const [stoppedTurn, setStoppedTurn] = useState<string>();
+  const awaitedTurn = !readOnly && awaitingTurn(lastSeg, state, awaitNow, turnFailure) ? lastSeg?.user?.id : undefined;
+  const awaiting = awaitedTurn !== undefined && awaitedTurn !== stoppedTurn;
+  const awaitingNow = useRef<string | undefined>(undefined);
+  awaitingNow.current = awaiting ? awaitedTurn : undefined;
   const lastAnswered = Boolean(lastSeg?.steps.length || lastSeg?.answer);
   useEffect(() => {
     // draw again when the wait runs out, so a message nobody picks up stops looking worked on; once something answers
@@ -325,6 +331,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // waits for its row, because the node would start an Agent for an id nobody has. A lookup that found nothing leaves
   // `session` a stand-in (useRuntimeSession), which is no row either. Retries are refused along with sends.
   const noRow = !session || detail.missing;
+  // the hub could not say what this chat is (an older hub without the cached row, or a session it no longer has): the
+  // notice above the chat says so, and an opening line under it would claim the chat started
+  const noDetails = !readOnly && Boolean(detail.error) && (detail.missing || !session);
   const gone = detail.missing && !isMain;
   const refusedNoRow = noRow && !isMain;
   const unknownGate = useRef({ isMain, gone: detail.missing });
@@ -708,12 +717,14 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     if (stopInFlight.current || !sessionCan(getSession(mid, sid), "interrupt")) return;
     stopInFlight.current = true;
     setStopping(true);
+    const waited = awaitingNow.current;
     try {
       // the hub gives the computer 90 s: past that the link is dead, and a request that never ends must not hold the block
       const r = await apiOp<{ state?: string }>(`${sessionPath(mid, sid)}/interrupt`, { method: "POST", timeout: pastHub(90_000) });
       // a repeat after a gap can read as a success: the hub lost track of the first try, so nothing says it stopped
       if (r.state === "unknown") throw new Error(t("lib-new-agent.outcome_unknown"));
       toast(t("chat-chatview.interrupted"));
+      if (waited) setStoppedTurn(waited);
       stopTimer.current = window.setTimeout(stopDone, STOP_SETTLE_MS);
     } catch (e) {
       toast(t("chat-chatview.interrupt_failed", { error: errorText(e) }), "error");
@@ -727,8 +738,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      // in the terminal view Esc belongs to the program in the terminal
-      if (e.key === "Escape" && state === "working" && view !== "term" && !document.querySelector("[role=dialog],[role=menu]")) {
+      // in the terminal view Esc belongs to the program in the terminal; a message still waiting for its turn to start can be
+      // stopped as a running turn can, as the Interrupt button shows for both
+      if (e.key === "Escape" && (state === "working" || awaiting) && view !== "term" && !document.querySelector("[role=dialog],[role=menu]")) {
         e.preventDefault();
         void interrupt();
       }
@@ -736,7 +748,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, session, view]);
+  }, [state, awaiting, session, view]);
 
   // The hub says its turn is over and a workflow it launched keeps it working (#3434): the exchange is drawn finished
   // (its work folded, the run's card in the open), and the running bar says the workflow, timed from its start, instead
@@ -883,7 +895,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const wfKey = workflowCallsKey(runs);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wfCalls = useMemo(() => workflowCalls(runs), [wfKey]);
-  // a Persona conversation's work lines open while it runs wherever it is opened, the Agents page's /s/<machine>/<id> too
+  // Preserve conversation identity; execution summaries have the same collapsed default everywhere (#2602).
   const lineStyle = workLineStyle(assistant, (session ?? archivedHere)?.assistant);
   const ctx = useMemo<ChatContextValue>(
     () => ({ tasks, subagents: assistant ? NO_SUBAGENTS : (subagents ?? NO_SUBAGENTS), scope: `${mid}/${sid}:`, jumpToCall: jump, workflowCalls: wfCalls, lineStyle }),
@@ -1128,7 +1140,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       )}
       {banner}
       {/* a known session keeps its chat: a failed background read is retried quietly (runtime-session.ts) */}
-      {archivedHere ? <ArchivedNotice session={archivedHere} /> : !readOnly && detail.error && (detail.missing || !session) && <SessionDetailNotice error={detail.error} retry={retryDetail} />}
+      {archivedHere ? <ArchivedNotice session={archivedHere} /> : noDetails && <SessionDetailNotice error={detail.error} retry={retryDetail} />}
       {session && !panel && panes.length > 1 && <PaneTabs sessions={panes} current={sid} onSelect={(s) => navigate(paneRoute(s), true)} />}
 
       {/* the page's middle: the chat and (once shown) the terminal stacked in one box; without a terminal to show it adds no box */}
@@ -1152,7 +1164,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
                 <Loading label={t("chat-chatview.loading_earlier")} />
               </div>
             )}
-            {((!tr.hasMore && !tr.loading && tr.items.length > 0) || opening) && <div className="text-center text-[11.5px] text-ink-3">{session?.cwd && !assistant ? t("chat-chatview.started_in", { path: shortPath(session.cwd) }) : t("chat-chatview.chat_start")}</div>}
+            {/* also over a chat whose first page came back empty (#2450): it reads as loaded and empty, not as still loading;
+                not under a notice that the chat's details are missing */}
+            {((!tr.hasMore && !tr.loading && (tr.items.length > 0 || (!tr.error && !starting && !session?.start_error && !noDetails))) || opening) && <div className="text-center text-[11.5px] text-ink-3">{session?.cwd && !assistant ? t("chat-chatview.started_in", { path: shortPath(session.cwd) }) : t("chat-chatview.chat_start")}</div>}
             {opening && <DayLine date={startOfDay(Date.now())} />}
             {tr.loading && !tr.items.length && !opening && (
               <div className="flex justify-center py-16">
@@ -1323,7 +1337,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           placeholder={offlineLine ? offlineLine : refusedNoRow ? t(gone ? "chat-chatview.session_gone_placeholder" : "chat-chatview.connecting_placeholder") : !sessionCan(session, "send") && session?.source_kind ? t("chat-chatview.view_only") : state === "working" || state === "needs_you" ? t("chat-chatview.queue_placeholder") : assistant ? t("chat-chatview.ask_placeholder", { name: persona.name }) : state === "offline" ? t("chat-chatview.resume_placeholder") : t("chat-chatview.agent_placeholder")}
           machineId={mid}
           uploadDest={session?.space === "health" ? "health" : undefined}
-          working={state === "working"}
+          working={state === "working" || awaiting}
           needsYou={state === "needs_you"}
           onSend={send}
           disabled={Boolean(offlineLine) || (!noRow && !sessionCan(session, "send"))}

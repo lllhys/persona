@@ -137,6 +137,37 @@ func TestBuiltinPresetsAreComplete(t *testing.T) {
 	}
 }
 
+func TestOpenAIPresetSavesAndProbesResponses(t *testing.T) {
+	s, _, _ := modelService(t)
+	code, out := postLauncher(t, s, "en", `{"preset":"builtin/openai","api_key":"sk-test"}`)
+	if code != http.StatusOK {
+		t.Fatalf("save: %d %s", code, out)
+	}
+	var saved LauncherView
+	if err := json.Unmarshal(out["launcher"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Name != "openai" || saved.DisplayName != "OpenAI (official)" || saved.Kind != "api" || saved.API != "responses" ||
+		saved.BaseURL != "https://api.openai.com/v1" || saved.Model != "gpt-5.4" || !saved.HasKey || saved.SmallModel != "" {
+		t.Fatalf("official direct API preset: %+v", saved)
+	}
+	var path, auth string
+	var payload map[string]any
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\"}\n\n"))
+	}))
+	defer gw.Close()
+	// Override only the endpoint to keep this test local; protocol, key and model still come from the preset.
+	result := s.providerTest(context.Background(), probeInput{Preset: "builtin/openai", APIKey: fakeKey, BaseURL: gw.URL + "/v1"})
+	if result["ok"] != true || path != "/v1/responses" || auth != "Bearer "+fakeKey || payload["model"] != "gpt-5.4" || payload["stream"] != true || payload["store"] != false {
+		t.Fatalf("Responses probe: result=%v path=%s body=%v", result, path, payload)
+	}
+}
+
 func TestPresetsMergeBuiltinAndPluginsInTheRequestLanguage(t *testing.T) {
 	s, f, _ := modelService(t)
 	f.presets = []LauncherPreset{

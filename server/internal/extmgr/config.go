@@ -62,7 +62,7 @@ type GoogleConfig struct {
 	Proxy string `json:"proxy,omitempty"`
 }
 
-// MicrosoftConfig is Outlook's "Sign in with Microsoft" (docs/extensions/mail.md "Connecting Outlook").
+// MicrosoftConfig is Outlook's "Sign in with Microsoft" (docs/extensions/mail.md "Outlook: Sign In with Microsoft").
 type MicrosoftConfig struct {
 	ClientID    string `json:"client_id,omitempty"`
 	RedirectURI string `json:"redirect_uri,omitempty"`

@@ -19,7 +19,11 @@
     <string name="settings_pairing_welcome_connect">Connect hub</string>
     <string name="settings_pairing_failed_title">Couldn\'t connect</string>
     <string name="settings_pairing_failed_body">Follow the tip below, then try again.</string>
-    <string name="settings_pairing_stopped_at">Stopped at \"%1$s\": %2$s</string>
+    <string name="settings_pairing_stopped_at">Stopped at \"%1$s\"</string>
+    <plurals name="settings_pairing_tried_again">
+        <item quantity="one">Tried %1$d time, still can\'t connect.</item>
+        <item quantity="other">Tried %1$d times, still can\'t connect.</item>
+    </plurals>
     <string name="settings_pairing_reload_machines">Reload machines</string>
     <string name="settings_pairing_diagnostics">Diagnostics</string>
     <string name="settings_pairing_rescan">Scan again</string>
@@ -36,6 +40,7 @@
     <string name="settings_pairing_address_label">Hub address or pairing link</string>
     <string name="settings_pairing_code_label">Pairing code</string>
     <string name="settings_pairing_http_warning">HTTP isn\'t encrypted. Use it only on your LAN or a VPN; use an encrypted connection elsewhere.</string>
+    <string name="settings_pairing_manual_invalid">Check the address, e.g. hub.local:18660</string>
     <string name="settings_pairing_next">Next</string>
     <string name="settings_pairing_paste">Paste link</string>
     <string name="settings_pairing_back_to_scan">Back to scanning</string>
@@ -60,7 +65,7 @@
     <string name="settings_pairing_primary">Primary</string>
     <string name="settings_pairing_alternate">Alternate %1$d</string>
     <string name="settings_pairing_identity_note">The hub\'s identity is checked when connecting.</string>
-    <string name="settings_pairing_stage_parse">Read QR code</string>
+    <string name="settings_pairing_stage_parse">Read pairing details</string>
     <string name="settings_pairing_stage_probe">Try addresses</string>
     <string name="settings_pairing_stage_verify">Verify certificate and hub</string>
     <string name="settings_pairing_stage_exchange">Get credentials</string>

@@ -34,6 +34,10 @@ nonisolated struct RequestClientMetadata: Equatable, Sendable {
     static let current = RequestClientMetadata()
     let value: String
     var headers: [String: String] { [Self.headerName: value, LegacyNames.clientHeader: value] }
+    /// The header's two halves ("ios-app", "1.2.3+4"), as the hub reads them: what `client_hello` says, so that the hub
+    /// can match this app's requests to the connection that declared a capability (docs/protocol/protocol.md "MCP elicitation").
+    var platform: String { String(value.prefix { $0 != "/" }) }
+    var version: String { value.firstIndex(of: "/").map { String(value[value.index(after: $0)...]) } ?? "" }
 
     init(platform: Platform = .current, surface: Surface? = nil, version: String? = nil) {
         let bundle = Bundle.main

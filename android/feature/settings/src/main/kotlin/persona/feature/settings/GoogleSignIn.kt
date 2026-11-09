@@ -113,7 +113,7 @@ object GoogleSignIn {
     suspend fun signIn(ctx: Context, connectors: ConnectorsManagement, loginHint: String? = null) =
         run(ctx, connectors, Provider.Google, connectors.googleSignInStart(loginHint))
 
-    /** Outlook's "Sign in with a Microsoft account" (docs/extensions/mail.md "Connecting Outlook"): the same flow on Microsoft's page. */
+    /** Outlook's "Sign in with a Microsoft account" (docs/extensions/mail.md "Outlook: Sign In with Microsoft"): the same flow on Microsoft's page. */
     suspend fun signInMicrosoft(ctx: Context, connectors: ConnectorsManagement) =
         run(ctx, connectors, Provider.Microsoft, connectors.microsoftSignInStart())
 

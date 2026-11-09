@@ -1,4 +1,4 @@
-Change one of the user's Persona to-dos: its title, notes, due date, reminder or priority. Only what you give changes; "" clears notes, due or remind. A new reminder time is pushed again even when the old one already was. Done at once, nothing to confirm, also for a task's to-do. To mark it done or open it again use todo_complete / todo_reopen.
+Change one of the user's Persona to-dos: its title, notes, due date, reminder, priority or project. Only what you give changes; "" clears notes, due, remind or project. A new reminder time is pushed again even when the old one already was. Done at once, nothing to confirm, also for a task's to-do. To mark it done or open it again use todo_complete / todo_reopen.
 
 ```json
 {
@@ -28,6 +28,10 @@ Change one of the user's Persona to-dos: its title, notes, due date, reminder or
     "priority": {
       "type": "string",
       "enum": ["high", "normal", "low"]
+    },
+    "project": {
+      "type": "string",
+      "description": "the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project; \"\" takes it out of its project"
     }
   }
 }

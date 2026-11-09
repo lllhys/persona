@@ -12,7 +12,7 @@ enum MacAgentCommands {
         switch ix.kind {
         case .permission: ix.requiresInput ? nil : Resolution(allow: true)
         case .plan: Resolution(approve: true, mode: "acceptEdits")
-        case .question, .screen: nil
+        case .question, .screen, .elicitation: nil
         }
     }
 
@@ -35,7 +35,7 @@ enum MacAgentCommands {
         case .screen:
             guard ix.dialog != nil, let d = ix.screenDialog else { return [] }
             return d.options.filter { $0.kind == .plain }.prefix(9).map { .init(title: $0.label, resolution: Resolution(option: $0.key)) }
-        case .permission, .plan:
+        case .permission, .plan, .elicitation:
             return []
         }
     }

@@ -3,7 +3,7 @@
   "already_answered": "这张卡片已经回答过了",
   "prompt_changed": "电脑上的对话框变了，已按新的屏幕重新生成",
   "send_failed": "没送到：{error}",
-  "hand_back": "交回电脑处理",
+  "hand_back": "交给电脑处理",
   "question": "提问",
   "tool_loop_kicker": "可能陷入工具调用循环",
   "previous_question": "上一题",

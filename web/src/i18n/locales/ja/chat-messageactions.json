@@ -3,7 +3,7 @@
   "select_text": "テキストを選択",
   "quote": "引用",
   "me": "自分",
-  "edit": "編集",
+  "edit": "編集して再送信",
   "fork": "新しいチャットに分岐",
   "copy_message": "メッセージをコピー",
   "copy_reply": "返信をコピー",

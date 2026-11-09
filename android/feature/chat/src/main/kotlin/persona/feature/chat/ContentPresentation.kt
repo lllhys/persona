@@ -4,7 +4,6 @@ import persona.core.designsystem.resolve
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import persona.core.contracts.Item
-import persona.core.contracts.Workflow
 import persona.core.domain.lines.ChatLine
 import persona.core.domain.MessageContext
 import persona.core.domain.decodeXmlEntities
@@ -19,15 +18,13 @@ import kotlinx.serialization.json.*
 /** Presentation options can be supplied by either chat host without changing wire items. */
 data class ChatRenderStyle(
     val collapseThoughts: Boolean = false,
-    /** The work line stays one sentence (Persona's own chat): no live steps under it, the plan as a plain step. */
+    /** Persona's compact summary and plain plan steps; all chat types collapse execution by default. */
     val compactToolSummary: Boolean = false,
     val hideThoughts: Boolean = false,
-    /** A running work line is open, its steps listed as they arrive, and folds when the turn ends (#1614, [WorkOpenState]). */
-    val openLiveWork: Boolean = false,
 ) {
     companion object {
         val Agent = ChatRenderStyle()
-        val Assistant = ChatRenderStyle(collapseThoughts = true, compactToolSummary = true, hideThoughts = true, openLiveWork = true)
+        val Assistant = ChatRenderStyle(collapseThoughts = true, compactToolSummary = true, hideThoughts = true)
     }
 }
 
@@ -252,8 +249,8 @@ internal fun planProgress(todos: List<TodoEntry>): PlanProgress {
 }
 
 /**
- * The plan a work line draws (web `planSteps`): its latest TodoWrite of two or more items, with them. Every other
- * TodoWrite of the line (older updates, an empty list that clears it) is not drawn.
+ * The full plan card a work line draws: its latest TodoWrite of two or more items. Older updates remain ordinary
+ * tool steps in the expanded trace.
  */
 internal data class LinePlan(val id: String, val todos: List<TodoEntry>, val failed: Boolean)
 
@@ -266,64 +263,16 @@ internal fun latestPlan(steps: List<WorkItem>): LinePlan? = steps.asReversed().f
 /** Where the newest plan card is drawn: its line ([lineId]) and the plan. */
 internal data class PlanAnchor(val lineId: String, val plan: LinePlan)
 
-/**
- * The newest plan card the list draws ([lines] newest first, as the page lists them): an open work line's plan step,
- * or a running line's peek ([compact]: Persona's own chat draws no peek). What the "Step N/M" pill scrolls back to.
- */
-internal fun latestPlanLine(lines: List<ChatLine>, plans: Map<String, LinePlan?>, compact: Boolean): PlanAnchor? {
+/** The newest visible plan step. Collapsed work has no preview card to scroll back to. */
+internal fun latestPlanLine(lines: List<ChatLine>, plans: Map<String, LinePlan?>): PlanAnchor? {
     for (line in lines) {
         when (line) {
             is ChatLine.Step -> plans[line.groupId]?.takeIf { it.id == line.step.id }?.let { return PlanAnchor(line.id, it) }
-            is ChatLine.Work -> if (line.live && !compact && !line.open) workPeek(line.steps).plan?.let { return PlanAnchor(line.id, it) }
             else -> Unit
         }
     }
     return null
 }
-
-/** What a running work line shows under its header (web #1990 `previewSteps`): the latest plan, and the newest steps. */
-internal data class WorkPeek(val plan: LinePlan?, val steps: List<WorkItem>)
-
-/**
- * The newest [limit] tool calls and thoughts of a running line, oldest first; the agent's words, notices, folds,
- * subagent calls (Task / Agent) and the Workflow calls in [cards] (drawn as their runs' cards, #3435) are not steps here.
- * Reading the same file again within one run of reads shows once. The plan is not one of the steps: the latest TodoWrite
- * of two or more items is pinned above them.
- */
-internal fun workPeek(steps: List<WorkItem>, limit: Int = 5, cards: Set<String> = emptySet()): WorkPeek {
-    val plan = latestPlan(steps)
-    val out = mutableListOf<WorkItem>()
-    val seen = mutableSetOf<String>()
-    for (step in steps.asReversed()) {
-        if (out.size >= limit) break
-        when (step) {
-            is WorkItem.Thought -> if (step.item.kind == "thinking" && !step.item.text.isNullOrBlank()) out += step
-            is WorkItem.Tool -> {
-                val item = step.call.use.item
-                if (item.toolName == "TodoWrite" || item.toolName == "Task" || item.toolName == "Agent") continue
-                if (item.toolName == "Workflow" && item.toolUseId in cards) continue
-                val read = if (item.toolName == "Read") toolPath(item) else null
-                if (item.toolName != "Read") seen.clear()
-                else if (read != null && !seen.add(read)) continue
-                out += step
-            }
-            else -> Unit
-        }
-    }
-    return WorkPeek(plan, out.asReversed())
-}
-
-/**
- * The runs a work line's Workflow calls launched, in the order of the calls, among [runs] (the session's runs by the
- * call that launched them, #3435): those calls draw their runs' cards. A call whose run the hub does not list (an older
- * hub, a run over a day old, one not read yet) is not here: it stays a row.
- */
-internal fun workflowCalls(steps: List<WorkItem>, runs: Map<String, Workflow>): List<Workflow> = steps.mapNotNull { step ->
-    (step as? WorkItem.Tool)?.call?.use?.item?.takeIf { it.toolName == "Workflow" }?.toolUseId?.let(runs::get)
-}
-
-/** A thought as one line in a running line's peek (web ThinkingLine): its words with the line breaks folded; [empty] when it has none. */
-internal fun thoughtLine(text: String, empty: String): String = text.trim().replace(Regex("\\s+"), " ").ifEmpty { empty }
 
 /** What a tool call does, as the word on its step ([label]) and as the running line's "Reading x" ([running], with the title). */
 internal enum class ToolVerb(@StringRes val label: Int, @StringRes val running: Int) {
@@ -395,14 +344,9 @@ internal fun toolPresentation(res: Resources, item: Item): ToolPresentation {
  */
 internal fun WorkItem.Folded.stepCount(): Int = item.fold?.let { it.tools + it.thoughts } ?: 1
 
-/**
- * The words on a work line. A running one says what it is doing and, given [now], how long it has run (R1, ticking
- * every second like iOS's "Working 39 s"). With [peek] its latest steps show under it, so it only says
- * "Working…"; the time is a leaf of its own beside it (web #1990).
- */
-internal fun workSummary(res: Resources, line: ChatLine.Work, recordedDuration: Long?, now: Instant? = null, peek: Boolean = false): String {
+/** A single execution summary: current action, step count and elapsed time while running, result counts when done. */
+internal fun workSummary(res: Resources, line: ChatLine.Work, recordedDuration: Long?, now: Instant? = null): String {
     val count = line.steps.sumOf { if (it is WorkItem.Folded) it.stepCount() else 1 }
-    if (line.live && peek) return res.getString(R.string.chat_work_working_ellipsis)
     if (line.live) {
         val current = line.steps.lastOrNull()
         val working = res.getString(R.string.chat_work_working)

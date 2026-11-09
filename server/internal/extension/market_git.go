@@ -79,7 +79,9 @@ func (m *Market) git(ctx context.Context, dir string, args ...string) error {
 	if os.Getenv("GIT_SSH_COMMAND") == "" {
 		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=20")
 	}
+	inOwnGroup(cmd)
 	out, err := cmd.CombinedOutput()
+	err = endGroup(cmd, err)
 	if errors.Is(err, exec.ErrNotFound) { // no output to show: say what is missing (the Docker image has no git)
 		return i18n.Err("extension-market_git.git_missing")
 	}

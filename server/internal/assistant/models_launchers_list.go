@@ -197,21 +197,13 @@ func (s *Service) machineLaunchers(ctx context.Context, machine string) ([]proto
 }
 
 // launcherAvailable: whether the machine can still run this launcher name (plain claude always; a deleted managed
-// launcher or a renamed ~/.zshrc one does not). A failed list counts as available.
+// launcher or a renamed ~/.zshrc one does not; one hub.json names for it does). A failed list counts as available.
 func (s *Service) launcherAvailable(ctx context.Context, machine, name string) bool {
-	if name == "" || name == "claude" {
+	if s.launcherEverywhere(ctx, name) {
 		return true
 	}
-	if slices.ContainsFunc(s.storedLaunchers(ctx), func(l storedLauncher) bool { return l.Name == name }) {
-		return true
-	}
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	list, err := s.machineLaunchers(cctx, machine)
-	if err != nil {
-		return true
-	}
-	return slices.ContainsFunc(list, func(l proto.Launcher) bool { return l.Name == name })
+	list, known := s.launchersHere(ctx, machine) // launcher_fit.go
+	return !known || slices.ContainsFunc(list, func(l proto.Launcher) bool { return l.Name == name })
 }
 
 // launcherHasModel: whether the launcher offers model (its id or what an alias resolves to), from its list as it was

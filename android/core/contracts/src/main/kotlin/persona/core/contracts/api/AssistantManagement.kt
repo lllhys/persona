@@ -154,7 +154,7 @@ data class ScheduledTask(
         const val ONCE = "once"
         const val DAILY = "daily"
         const val INTERVAL = "interval"
-        /** "Only when it asks to" (docs/assistant/assistant.md "Push when done"). */
+        /** "Only when it asks to" (docs/assistant/assistant.md "Push after running"). */
         const val PUSH_ASKED = "asked"
         /** The hello feature of a hub that reads and writes [push]. */
         const val PUSH_FEATURE = "task_push"

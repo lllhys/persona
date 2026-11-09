@@ -144,8 +144,10 @@ describe("PendingCards", () => {
     const dialogHtml = cards({ narrow: false, interactions: [], answered: [{ ix: dialog, resolution: { option: "1" } }] });
     expect(dialogHtml).not.toContain("data-answered-about");
     expect(dialogHtml).not.toContain("终端等你处理");
-    // handed back: nothing was decided about it
-    expect(cards({ narrow: false, interactions: [], answered: [{ ix: perm, resolution: { dismiss: true } }] })).not.toContain("data-answered-about");
+    // handed back (#2450): nothing was decided, so no answer line repeats the head; the line says which request went back
+    const handed = cards({ narrow: false, interactions: [], answered: [{ ix: perm, resolution: { dismiss: true } }] });
+    expect(handed).toContain("data-answered-about");
+    expect(handed).not.toContain("交回电脑处理");
   });
 
   it("says which subagent asks for a permission", () => {
@@ -251,9 +253,9 @@ describe("tap areas", () => {
     for (const label of ["添加图片或文件", "引用文件或会话", "命令", "发送"]) expect(hit(html, label), label).toBe(true);
   });
 
-  it("covers a card's ×, a question's options and its arrows", () => {
+  it("covers a card's hand back, a question's options and its arrows", () => {
     const html = cards({ narrow: false });
-    expect(hit(html, "交回电脑处理")).toBe(true);
+    expect(hit(html, "交给电脑处理")).toBe(true);
     expect(html).toMatch(/<button[^>]*aria-pressed="false"[^>]*class="touch-hit /);
     expect(hit(html, "下一题") || hit(html, "发送回答")).toBe(true);
   });

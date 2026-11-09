@@ -78,6 +78,15 @@ func (n *Node) ensureCodexRemote(ctx context.Context, spec proto.CodexServer) {
 		r.mu.Unlock()
 		return
 	}
+	r.mu.Unlock()
+	now, print := time.Now(), codexEndpointPrint(spec.Endpoint) // a few lstats, outside the lock
+	r.mu.Lock()
+	old = r.remotes[spec.ID]
+	if old != nil && old.spec == spec || old == nil && !r.retryDue(spec, now, print) { // codex_backoff.go
+		r.mu.Unlock()
+		return
+	}
+	r.attempted(spec, now, print)
 	cctx, cancel := context.WithCancel(ctx)
 	c := &codexRemote{n: n, spec: spec, generation: newUUID(), ctx: cctx, cancel: cancel, done: make(chan struct{}), threads: map[string]remoteThread{}, asks: map[string]*remoteAsk{}, finished: map[string]bool{}}
 	r.remotes[spec.ID] = c
@@ -159,11 +168,13 @@ func codexSocketPath(path string) (string, error) {
 }
 
 func (c *codexRemote) run() {
+	reached := false // the handshake went through: the endpoint's backoff ends (codex_backoff.go)
 	defer func() {
 		c.close()
 		c.n.codices.mu.Lock()
 		if c.n.codices.remotes[c.spec.ID] == c {
 			delete(c.n.codices.remotes, c.spec.ID)
+			c.n.codices.attemptEnded(c.spec, reached)
 		}
 		c.n.codices.mu.Unlock()
 	}()
@@ -228,6 +239,7 @@ func (c *codexRemote) run() {
 	c.mu.Lock()
 	c.ready = true
 	c.mu.Unlock()
+	reached = true
 	c.n.notifyCodex()
 	go c.loadModels()
 	tick := time.NewTicker(5 * time.Second)

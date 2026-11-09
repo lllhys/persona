@@ -85,7 +85,8 @@ func (s *Service) replyWorked(machine, sid string) {
 	b.mu.Unlock()
 }
 
-// shownList is machine's list as last told the hub (decorated), or decorated now when none was told yet.
+// shownList is machine's rows awaiting a reply as last told the hub (decorated, awaitingReply), or its whole list
+// decorated now when none was told yet.
 func (s *Service) shownList(machine string) []proto.Session {
 	f := &s.fleet
 	f.shownMu.Lock()

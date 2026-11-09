@@ -26,9 +26,23 @@ object PairingInput {
     /** A full pairing link (`persona://`) is parsed whole instead of being treated as a hub address. */
     fun isLink(value: String): Boolean = Pairing.isLink(value)
 
-    fun manual(address: String, token: String): PairingRequest =
-        if (isLink(address)) parse(address)
-        else validate(PairingRequest(address.trim(), token.trim()))
+    /**
+     * The manual form's request. An address without a scheme gets the one it would be reached with: `http://` on this
+     * device and the local network (the hosts plaintext is allowed for), `https://` anywhere else. [metadata] is a
+     * scanned link whose address was edited in the form; it keeps the link's hub id and fingerprint.
+     */
+    fun manual(address: String, token: String, metadata: PairingRequest? = null): PairingRequest {
+        if (isLink(address)) return parse(address)
+        val url = withScheme(address.trim())
+        return validate(metadata?.copy(url = url, token = token.trim()) ?: PairingRequest(url, token.trim()))
+    }
+
+    // A string check, not URI's scheme: "persona:18660" is a host and port.
+    private fun withScheme(address: String): String {
+        if (address.isEmpty() || "://" in address) return address
+        val host = runCatching { URI("http://$address").host }.getOrNull()
+        return (if (host != null && localHost(host)) "http://" else "https://") + address
+    }
 
     /**
      * Metadata after the manual address field changes to [value]. A pairing link replaces all metadata

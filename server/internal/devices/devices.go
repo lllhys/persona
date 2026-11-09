@@ -147,8 +147,14 @@ type Devices struct {
 
 	metrics metricsBook // the machines' monitoring (metrics.go)
 	usage   usageBook   // their token usage (metrics.go)
-	// usageWrites: the usage notifications to store, in order (usage.go's usageLoop).
+	// usageWrites: the usage notifications to store, in order (usage.go's usageLoop); usageWait: how long it takes the
+	// ones that come after one to store them together (usageGather as New found it).
 	usageWrites chan usageWrite
+	usageWait   time.Duration
+	// metricWrites: the samples to store (metrics.go's writeMetrics); metricsWait: how long it waits for a tick's other
+	// samples (metricsGather as New found it).
+	metricWrites chan db.MachineSample
+	metricsWait  time.Duration
 
 	usageWin usageWindowsHub // subscription rate-limit windows across machines (usagewindows.go, #2432)
 	usageGW  usageGateways   // the account-pool gateways that add accounts to it (usagegateways.go, #2595)
@@ -164,7 +170,8 @@ func New(o Options) *Devices {
 		o.Logf = func(string, ...any) {}
 	}
 	d := &Devices{opts: o, logf: o.Logf, gotCh: make(chan struct{}), ready: make(chan struct{}), byID: map[string]*Machine{}, ownWait: ownListWait,
-		reportDue: make(chan struct{}, 1), usageWrites: make(chan usageWrite, 1024), reqPrefix: strconv.FormatInt(time.Now().UnixNano(), 36)}
+		reportDue: make(chan struct{}, 1), usageWrites: make(chan usageWrite, 1024), usageWait: usageGather,
+		metricWrites: make(chan db.MachineSample, metricsQueue), metricsWait: metricsGather, reqPrefix: strconv.FormatInt(time.Now().UnixNano(), 36)}
 	// The account-pool gateways' usage windows (usagegateways.go, #2595): manager.json's usage section as it is now.
 	var usage UsageConfig
 	if o.ConfigFile != "" {
@@ -199,6 +206,13 @@ func (d *Devices) Run(ctx context.Context) error {
 	go d.probeServices(mctx)
 	go d.measureLoop(mctx)
 	go d.metricsLoop(mctx)
+	if st := d.metricsStore(); st != nil {
+		d.workers.Add(1) // waited for below: what came before the machines stopped is stored
+		go func() {
+			defer d.workers.Done()
+			d.writeMetrics(mctx, st)
+		}()
+	}
 	go d.usageLoop(mctx)
 	go d.usageGW.run(ctx) // the account-pool gateways (usagegateways.go)
 	// The hub's hand-over, or after ownListWait the manager's own list (ownlist.go) until it comes.

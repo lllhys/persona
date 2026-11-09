@@ -86,13 +86,15 @@ class SettingsCriticalPathTest {
             "persona:18660", "")) {
             assertFalse(address, PairingInput.isLink(address))
         }
-        // A machine named "persona" is an address: typing it keeps the metadata, and without a scheme it fails
-        // exactly like any other scheme-less host:port instead of taking the pairing-link path.
+        // A machine named "persona" is an address: typing it keeps the metadata, and without a scheme it gets one exactly
+        // like any other host:port instead of taking the pairing-link path (#2481): http on this device and the local
+        // network, https anywhere else.
         assertEquals(scanned.copy(url = "persona:18660"), PairingInput.editedAddress(scanned, "persona:18660"))
-        val plain = assertThrows(PairingException::class.java) { PairingInput.manual("hub:18660", "tok") }.reason
-        for (address in listOf("persona:18660")) {
-            assertEquals(plain, assertThrows(PairingException::class.java) { PairingInput.manual(address, "tok") }.reason)
+        for ((address, url) in listOf("127.0.0.1:18760" to "http://127.0.0.1:18760", "hub.local:18660" to "http://hub.local:18660",
+            "persona:18660" to "https://persona:18660", "hub:18660" to "https://hub:18660")) {
+            assertEquals(address, url, PairingInput.manual(address, "tok").url)
         }
+        assertEquals(PairingFailure.InvalidCode, assertThrows(PairingException::class.java) { PairingInput.manual("a b:99999", "tok") }.reason)
         assertEquals("https://persona:18660", PairingInput.manual("https://persona:18660", "tok").url)
         assertEquals("https://hub.example.com", PairingInput.manual(" https://hub.example.com ", " fixture ").url)
     }

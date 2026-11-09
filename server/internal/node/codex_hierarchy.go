@@ -146,12 +146,12 @@ func resolveCodexHierarchy(sessions []proto.Session) {
 // programRun: a one-shot run a program started (`codex exec`, an SDK; an evaluation opens dozens at once, #2131),
 // known only from its rollout: not one of the user's agents. A thread a shared app-server holds is drivable and stays,
 // as does a run the Codex App lists in its sidebar.
-func (n *Node) programRun(id string, src codexSource) bool {
+func (n *Node) programRun(id string, src codexSource, pass *codexListPass) bool {
 	if src.path == "" || !readCodexOrigin(src.path).exec {
 		return false
 	}
 	if _, _, err := n.codexOwner(id); err != errCodexNoOwner {
 		return false
 	}
-	return !codexDesktopChat(src)
+	return !codexDesktopChatIn(src, pass)
 }

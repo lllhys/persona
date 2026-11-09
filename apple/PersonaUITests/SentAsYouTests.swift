@@ -1,6 +1,6 @@
 import XCTest
 
-/// Settings › Sent as You (#5278, docs/extensions/connectors.md "Sent as the user"): the row after Connectors, the list with how each send
+/// Settings › Connectors › Records sent as you (#5278, #2522): the nested entry, the list with how each send
 /// was let through (orange where the user did not decide), a row's details with the whole text, the chat that asked, Load
 /// Earlier, the connector chips, and the empty / no database / no full access / older hub / unreachable states. Against
 /// scripts/mock/mock_hub.py with MOCK_SENT=1 (scripts/mock/sent_ledger_mock.py: about seventy made-up rows, newest id 70):
@@ -57,27 +57,52 @@ final class SentAsYouTests: XCTestCase {
 
     @MainActor private func shot(_ app: XCUIApplication, _ name: String) {
         guard let dir = env["PERSONA_SHOTS"] else { return }
-        try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appending(path: "\(name).png"))
+        let png = URL(fileURLWithPath: dir).appending(path: "\(name).png")
+        try? app.screenshot().pngRepresentation.write(to: png)
+        if env["PERSONA_SIMCTL_SHOTS"] == "1", name.hasPrefix("ios-") {
+            let ready = png.appendingPathExtension("ready")
+            let captured = png.appendingPathExtension("captured")
+            try? FileManager.default.removeItem(at: captured)
+            try? Data().write(to: ready)
+            let receipt = expectation(for: NSPredicate { _, _ in FileManager.default.fileExists(atPath: captured.path) }, evaluatedWith: nil)
+            wait(for: [receipt], timeout: 30)
+            try? FileManager.default.removeItem(at: ready)
+        }
     }
 
     // MARK: the entry
 
-    /// The row sits in its own section after Connectors (and before Extensions where the hub has them).
+    /// Only Connectors is top-level; its bottom entry opens the existing ledger and Back returns to Connectors.
     @MainActor func testTheEntryComesAfterConnectors() throws {
-        let app = launch(try freshMock(), ["-tab", "settings"])
+        let app = launch(try freshMock(), ["-tab", "settings", "-dev.openChat", ""])
         let list = any(app, "settings-list")
         XCTAssertTrue(list.waitForExistence(timeout: 15))
-        let entry = app.buttons["settings.sent"]
-        for _ in 0..<12 where !entry.isHittable { list.swipeUp() }
-        XCTAssertTrue(entry.isHittable, "no 以你的名义发出 row:\n\(app.debugDescription)")
-        XCTAssertTrue(entry.label.contains("以你的名义发出"), entry.label)
-        let connectors = app.staticTexts["连接器"]
-        XCTAssertTrue(connectors.exists, "no 连接器 heading")
-        XCTAssertLessThan(connectors.frame.minY, entry.frame.minY, "the row must follow Connectors")
-        let extensions = app.buttons["settings-plugins"]
-        if extensions.exists { XCTAssertLessThan(entry.frame.maxY, extensions.frame.minY, "the row must precede Extensions") }
+        XCTAssertFalse(app.buttons["settings.sent"].exists)
+        let connectors = app.buttons["settings.connectors"]
+        for _ in 0..<12 where !connectors.isHittable { list.swipeUp() }
+        XCTAssertTrue(connectors.isHittable, "no Connectors entry:\n\(app.debugDescription)")
+        connectors.tap()
+        let entry = app.buttons["connectors.sent"]
+        reveal(app, entry, swipes: 12)
+        XCTAssertTrue(entry.isHittable, "no nested ledger entry:\n\(app.debugDescription)")
+        XCTAssertTrue(entry.label.contains("以你的名义发出的记录"), entry.label)
+        let bot = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "飞书机器人")).firstMatch
+        XCTAssertTrue(bot.exists)
+        XCTAssertLessThan(bot.frame.maxY, entry.frame.minY, "the record entry must follow the connector list")
         entry.tap()
         XCTAssertTrue(app.buttons["sent.row.70"].waitForExistence(timeout: 15), "the page did not open:\n\(app.debugDescription)")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(any(app, "connectors-list").waitForExistence(timeout: 10))
+        XCTAssertTrue(entry.exists, "Back must return to Connectors, not top-level Settings")
+    }
+
+    @MainActor func testLegacyLaunchReturnsToConnectors() throws {
+        let app = openPage(try freshMock())
+        XCTAssertTrue(app.buttons["sent.row.70"].waitForExistence(timeout: 15))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(any(app, "connectors-list").waitForExistence(timeout: 10))
+        reveal(app, app.buttons["connectors.sent"], swipes: 12)
+        XCTAssertTrue(app.buttons["connectors.sent"].isHittable)
     }
 
     /// Demo Mode has no hub to read a ledger from: no row (the rest of Settings is there).
@@ -98,10 +123,14 @@ final class SentAsYouTests: XCTestCase {
         settings.tap()
         let leave = app.buttons["settings.leaveDemo"]
         XCTAssertTrue(leave.waitForExistence(timeout: 10), "Settings is not the demo's:\n\(app.debugDescription)")
-        let connectors = app.staticTexts["连接器"]
-        for _ in 0..<8 where !(connectors.exists && connectors.isHittable) { app.swipeUp() }
-        XCTAssertTrue(connectors.exists, "scrolled past nothing: no 连接器 heading")
-        XCTAssertFalse(app.buttons["settings.sent"].exists, "Demo Mode has a Sent as You row")
+        let connectors = app.buttons["settings.connectors"]
+        reveal(app, connectors, swipes: 12)
+        XCTAssertTrue(connectors.isHittable)
+        connectors.tap()
+        XCTAssertTrue(any(app, "connectors-list").waitForExistence(timeout: 10))
+        for _ in 0..<8 { app.swipeUp() }
+        XCTAssertFalse(app.buttons["connectors.sent"].exists, "Demo Mode has a ledger entry")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
         // Demo Mode is remembered: leave it, so the tests after this one start from the pairing page
         for _ in 0..<12 where !(leave.exists && leave.isHittable) { app.swipeDown() } // it is at the top of the list
         XCTAssertTrue(leave.exists && leave.isHittable, "no 退出体验模式:\n\(app.debugDescription)")
@@ -315,13 +344,18 @@ final class SentAsYouTests: XCTestCase {
         let hub = try freshMock()
         guard env["PERSONA_SHOTS"] != nil else { throw XCTSkip("set PERSONA_SHOTS for the screenshots") }
         for look in ["light", "dark"] {
-            let app = openPage(hub, extra: ["-ui.scheme", look])
-            XCTAssertTrue(app.buttons["sent.row.70"].waitForExistence(timeout: 20), "no rows (\(look)):\n\(app.debugDescription)")
+            let app = launch(hub, ["-tab", "settings", "-openConnectors", "YES", "-ui.scheme", look])
             let ok = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons.firstMatch
-            if ok.waitForExistence(timeout: 6) { ok.tap() }
-            // The top of the page, as the other Settings shots: the chips and the newest rows
+            if ok.waitForExistence(timeout: 3) { ok.tap() }
+            app.activate()
+            XCTAssertTrue(any(app, "connectors-list").waitForExistence(timeout: 20))
+            let entry = app.buttons["connectors.sent"]
+            reveal(app, entry, swipes: 12)
+            XCTAssertTrue(entry.isHittable)
+            shot(app, "ios-connectors-entry-\(look)")
+            entry.tapCenter()
+            XCTAssertTrue(app.buttons["sent.row.70"].waitForExistence(timeout: 20), "no rows (\(look)):\n\(app.debugDescription)")
             XCTAssertTrue(app.buttons["sent.filter.all"].waitForExistence(timeout: 5), "no chips (\(look))")
-            sleep(1)
             shot(app, "ios-sent-as-you-\(look)")
             app.terminate()
         }

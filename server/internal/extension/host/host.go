@@ -532,6 +532,11 @@ func (p *Proc) BeginHTTP(ctx context.Context) (end func(), err error) {
 	return end, nil
 }
 
+// healthBodyMost is how much of a /health answer Healthy reads. The verdict is the status code alone; the body is read
+// only so the connection can be reused, and one that goes on longer (or forever) costs a new connection on the next
+// check instead of being read for the whole HealthTimeout.
+const healthBodyMost = 4 << 10
+
 // Healthy says whether its HTTP side answers GET /health with 200.
 func (p *Proc) Healthy(ctx context.Context) bool {
 	if p.client == nil {
@@ -544,7 +549,7 @@ func (p *Proc) Healthy(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_, _ = io.Copy(io.Discard, res.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, healthBodyMost))
 	res.Body.Close()
 	return res.StatusCode == http.StatusOK
 }

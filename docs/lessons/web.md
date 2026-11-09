@@ -1,5 +1,13 @@
 # Lessons: web UI and interactions
 
+## A collapsed execution default is more than an open-state flag (#2602)
+
+The old Agent work line was called folded, but still previewed five tool/thinking steps and left every intermediate text visible. The assistant-only default-open change then exposed the full trace. Removing just that default does not implement a single replace-in-place text segment: grouping, stream-to-item handoff, preview rendering and manual history loading must agree. Keep a stable text-slot identity, put every tool kind and older text inside the same summary, and do not use text length or Markdown shape to exempt intermediate narration. Retain all plan updates for manual inspection even when the composer selects only the latest plan.
+
+External jump/search reveals use the expansion-memory API, not the summary button. When run overrides are separate from remembered history state, bridge those reveals into the live override and collapse both at completion. Mark untouched resumed runs too: otherwise an earlier historical expansion can return automatically at completion. A fold's virtual block ID can differ from its first real nonzero block; test the real segment parser and stabilize both the transcript row and summary identity, while leaving wire IDs unchanged. Preserve existing input-backed segment identities.
+
+A background wake can reopen an exchange before its recap. Find the live exchange from the latest source item rather than the last drawn block; keep continuation calls in the normal summary, not a second drawer. Test actual browser replacement, manual expansion, folded history, recap wakes and reload. A lazy collapse can retain its children during its closing animation; checking raw `textContent` then is not a visibility assertion. Use the latest-text slot and folded header state, or browser-visible locators.
+
 
 ## Report evidence is separate from report prose (#2554)
 
@@ -10,6 +18,13 @@ The supervision feed's `body.evidence` is a separate array, not part of `body.te
 - `source: installed` does not grant a full-rights web client owner-only management of local or attached installations. Market lifecycle actions follow the manager-owned `origin` and the existing endpoint policy; a manifest field or arbitrary URL cannot grant that capability. Keep unavailable controls visible with a reason rather than inventing an API request.
 - A saved Auto-upgrade preference is not its effective execution state. Show the saved value while separately explaining extension-disabled, removed-market and manager-global pauses. Read global preferences and catalog refreshes with the same explicit manager as the extension; a default-manager read can describe the wrong same-ID copy.
 - Preserve dirty configuration when maintenance reads or lifecycle writes return an entire detail. A catalog with a newer version must not become a misleading “no new version” notice merely because the background upgrade list has not caught up; use the catalog's authoritative `upgradable` result and retain the consent preview.
+
+## Chat states need their way out, and fallbacks need a second trigger (#2450)
+
+- An action that ends a card leaves the same receipt an answer does; a card that just vanishes reads as a failure. Name it in words on its own row, not an icon in the head, so it is not mistaken for "close".
+- When the composer says Working…, Interrupt and Esc must work too: derive both from the same condition (`state === "working" || awaiting`), not one from `state` alone. A state that otherwise only times out (`awaiting` lasts `AWAIT_MS`) must also end on the action that ends it: once the hub takes the interrupt, or Working… and Interrupt stay and a second press sends another stop.
+- Do not put a native `confirm()` in front of a reversible step such as replacing the draft: replace at once and offer Undo that restores the text, its quotes and the caret. Offer it for everything the step drops: a box with no text but a quote or a comment card on its bar loses the user's own writing too.
+- An older-hub fallback that re-reads on an event the older hub never sends stays stale. Re-read when the data it reads first arrives (here: the chat's row in the store), and stop watching once it has.
 
 ## Cards in a scrolling flex box: `shrink-0`, and `overflow-clip` for sticky (#2017)
 
@@ -290,6 +305,8 @@ Exercise the actual hook and upload helper together with a synthetic XHR transpo
 
 ### Talking to hub
 
+- Explicit task diagnostics are reads even when their endpoint uses POST (#1373). Give them a bounded timeout past the hub’s own judgment limit, admit once synchronously and keep their result separate from status and supervised review. Scope admission, result, error and finally to task, manager and credential generation; abort retirement and test late responses with the real REST client so stale 401 handling is exercised. A stamped manager on a merged task list belongs on the diagnostic request, while an unstamped task follows the default. Only route-level 404 evidence identifies an unsupported endpoint; a missing task must remain a missing task.
+
 - **Per-chat rule removal has a durable retry state** (#1481): DELETE `store_failed` disables the live rule before its durable removal succeeds. Retain the original opaque ID and destination separately from the GET list, which can already omit it, and keep Retry revoke until a successful DELETE. Fence both ledger and rule reads at mutation admission and across credential generations, navigation and manager changes; an old page must not revive a removed rule. Exercise the actual settings component with the real REST client and deferred synthetic responses, including normal current-owner 401 handling.
 
 - **A failed to-do read is not an empty list** (#5173): both the full refresh and the dedicated retry must record the shared `errorText` result and clear it on success. Apply the existing request-order guard to errors as well as lists: a late failure must not overwrite a newer success or repopulate state after sign-out. Show the failure only when the underlying list is empty, not when a search merely filters out existing rows; retain 404 as the unsupported-hub case. Hide the header counts during an empty-list failure too: zero counts imply a successful empty read even when the body explains the failure.
@@ -562,6 +579,13 @@ If the header grows, elements below it (App.tsx connection-status pill) cannot a
 - **Chat answers remount wholesale**: when streaming ends, item `Answer` replaces the streaming version. When another answer joins the same segment, `SegmentView`'s live-dependent `cut` changes and moves the old answer between `WorkNodes` groups. Remounting `Markdown` with `fade` creates a new timeline: already-visible text visibly fades out / in, one span per word, then switches back to ordinary Markdown after 0.35 s. This explains CPU-profile long frames at both start and end; more answers in a segment make it slower. Now remember recent timelines by text (`rememberShown` / `shownBefore` in `wordFade.ts`); remounts reuse them, and finished words render normally.
 - **Measure these frames with 2× CPU throttling first**: unthrottled, longest frames with fade on / off both lie at 50–100 ms, obscured by other processes; 2× gives stable differences. Restart mock hub before each measurement group; `/mock/say` appends replies to the same ever-growing segment.
 - **`useSyncExternalStore` updates are always synchronous**, even within `startTransition`. To redraw answers in a transition after a lazy-loaded plugin arrives, use `useState` + subscription. Plugins are functions: `useState(plugin)` / `setState(plugin)` calls them as initializer / updater, so use `() => plugin`.
+
+## A lazy rehype plugin re-renders every reply; keep finished trees by content (#2465)
+
+- **Whole-reply plugins make their arrival a full re-render**: rehype-highlight ran as a plugin of each reply, so when its chunk arrived every reply with a fenced block re-rendered and was parsed again from scratch, off-screen ones included (about 2,600 component renders while scrolling right after opening a 200-turn chat). Work that only a part of a block needs belongs in that part's component, which can then take it up near the viewport only (`CodeBlock`, `stream/highlight.ts`).
+- **rehype-highlight builds its lowlight inside the plugin**: `createLowlight(common)` runs every time a processor is made, that is once per block per draw; a shared instance cost 156 ms for all 325 blocks of the same history against about 1.7 s through the plugin.
+- **react-markdown's `Markdown()` is a plain function** (no hooks: create processor, parse, `runSync`, to JSX), so its result can be kept and drawn again. The key must hold everything the tree is made from: the text, the remark plugin list, each rehype plugin that runs, and whatever the components close over (machine, directory); a new input to the tree joins the key, or a kept tree is drawn stale. Components built in a `useMemo` per mount make a kept tree's component types differ from a fresh one's; share them per key instead.
+- **Count with a `<Profiler>` per block and a probe on a hook the reply calls** (`highlight-lazy.test.tsx`): a Profiler's `onRender` fires for any commit in its subtree, so it tells which blocks updated, not whether the reply itself rendered again.
 
 ## Cleanup warnings after successful uninstall (#4757)
 

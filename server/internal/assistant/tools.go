@@ -323,6 +323,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
 		a.Cwd = proto.ExpandHome(a.Cwd, am.Home)
+		own := startPick{launcher: strings.TrimSpace(a.Launcher), effort: strings.TrimSpace(a.Effort)} // before the tier
 		// The tier is resolved first (an unknown one asks and starts nothing), then Model Settings' Agents laid over it as
 		// the start lays it: what runs is said on the card (a hand-off from the health space asks) and in the answer.
 		tier, runs := strings.TrimSpace(a.Tier), ""
@@ -343,12 +344,30 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 				}
 			}
 		}
+		// What it runs on this computer, before the user is asked (#2640, launcher_fit.go): a launcher named here that
+		// the computer lacks starts nothing; a default it lacks gives way to one it has, and the card and answer say so.
+		run := map[string]any{"launcher": a.Launcher, "model": a.Model, "effort": a.Effort}
+		if err := s.applyModel(ctx, "agent.new", run); err != nil {
+			return "", err
+		}
+		swapped, err := s.fitLauncher(ctx, am, own, run)
+		if err != nil {
+			return "", fmt.Errorf("%w; no agent was started", err)
+		}
+		if swapped != "" {
+			a.Launcher, _ = run["launcher"].(string)
+			a.Model, _ = run["model"].(string)
+			a.Effort, _ = run["effort"].(string)
+			tier, runs = "", "" // the tier's launcher is not what runs
+		}
 		branch := strings.TrimSpace(a.Worktree.Branch)
 		where := am.Name + " · " + a.Cwd
 		if branch != "" {
 			where += i18n.T(s.lang(ctx), "assistant-tools.new_worktree", i18n.Args{"branch": branch})
 		}
 		switch { // the user sees what it will run on before saying yes
+		case swapped != "":
+			where += " · " + swapped
 		case runs != "":
 			where += i18n.T(s.lang(ctx), "assistant-tools.with_tier", i18n.Args{"tier": tier, "runs": runs})
 		case a.Model != "":
@@ -392,6 +411,9 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		}
 		if runs != "" {
 			note = " Preset " + tier + ": runs on " + runs + "." + note
+		}
+		if swapped != "" {
+			note = " Note: " + swapped + "." + note
 		}
 		if branch != "" { // the machine's engine makes the worktree (herdr's or Orca's own), the agent starts in it
 			wt, err := s.newWorktree(sctx, am.ID, a.Cwd, branch)

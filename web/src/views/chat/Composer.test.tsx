@@ -4,7 +4,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sendDraft } from "../../lib/drafts";
+import { addQuote, getQuotes, sendDraft, setQuotes } from "../../lib/drafts";
+import { toast } from "../../ui/atoms";
 import { Composer, type Outgoing } from "./Composer";
 import { t } from "../../i18n";
 
@@ -17,6 +18,8 @@ vi.mock("../../lib/attachments", async (orig) => ({
   imagePayload: () => new Promise<{ mime: string; data: string }>((resolve) => reads.push(resolve)),
   sendFile: () => new Promise<string>((resolve) => uploads.push(resolve)),
 }));
+
+vi.mock("../../ui/atoms", async (orig) => ({ ...(await orig<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -369,6 +372,63 @@ describe("Composer draft typed just before leaving (#4591)", () => {
     act(() => root.unmount());
     root = createRoot(host);
     expect(localStorage.getItem("draft:a")).toBeNull();
+  });
+});
+
+describe("Composer Edit over unsent words (#2450)", () => {
+  const box = () => host.querySelector("textarea")!;
+  const typeInto = (text: string) =>
+    act(() => {
+      const el = box();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, text);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  const edit = (text: string) => act(() => void sendDraft("e", { type: "replace", text }));
+  const undoToast = () => vi.mocked(toast).mock.calls.find(([text]) => text === t("chat-composer.replaced"));
+  beforeEach(() => {
+    vi.mocked(toast).mockClear();
+    setQuotes("e", []);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("replaces the draft without asking, and Undo brings back the words and the quotes", () => {
+    const ask = vi.spyOn(window, "confirm");
+    render("e");
+    typeInto("half a thought");
+    act(() => void addQuote("e", { text: "the quoted reply", from: "Claude" }, false));
+    const quotes = getQuotes("e").list;
+    edit("the sent message");
+    expect(ask).not.toHaveBeenCalled();
+    expect(box().value).toBe("the sent message");
+    expect(getQuotes("e").list).toEqual([]);
+    const [, tone, action] = undoToast()!;
+    expect(tone).toBe("ok");
+    expect(action?.label).toBe(t("chat-composer.undo"));
+    act(() => action!.run());
+    expect(box().value).toBe("half a thought");
+    expect(getQuotes("e").list).toEqual(quotes);
+  });
+
+  it("says nothing when the box was empty or held the same words", () => {
+    render("e");
+    edit("the sent message");
+    expect(box().value).toBe("the sent message");
+    edit("the sent message ");
+    expect(undoToast()).toBeUndefined();
+  });
+
+  it.each([
+    ["a quote", { text: "the quoted reply", from: "Claude" }],
+    ["a comment card", { text: "fetchAll", comment: { body: "rename fetchAll before merging" } }],
+  ])("offers Undo for %s on the bar when the box is empty", (_, quote) => {
+    render("e");
+    act(() => void addQuote("e", quote, false));
+    const quotes = getQuotes("e").list;
+    edit("the sent message");
+    expect(getQuotes("e").list).toEqual([]);
+    act(() => undoToast()![2]!.run());
+    expect(getQuotes("e").list).toEqual(quotes);
+    expect(box().value).toBe("");
   });
 });
 

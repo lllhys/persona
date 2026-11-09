@@ -7,7 +7,7 @@ Why not a web page / shipped code: iOS enforces code signing at runtime (App Sto
 but a heavily interactive UI like chat feels bad that way, and the extension code would run on the phone with access to the App's credentials, which conflicts with "extensions don't run code in the App" (`docs/extensions/extensions.md` ("Declarative UI")).
 So this follows the same idea as declarative UI: **the extension supplies only data and actions, and the App draws them with its own design system**; the "components" here are just message-level (conversations, messages, segments, composer modes).
 
-This document is the protocol spec; the data format is defined by `schema/extension/messaging.schema.json` (the types for all four clients are generated from it, see `schema/extension/README.md`).
+This document is the protocol spec; the data format is defined by `schema/extension/messaging.schema.json` (the types for all four clients are generated from it, see `schema/extension/README.md`). Type names here leave out the `Messaging` prefix that the schema and the generated types carry: `Outgoing` is `MessagingOutgoing`.
 The plan and phases are in #2138; the Lark implementation of this protocol lives in the repository of the extension that connects to Lark.
 
 ## 1. Overview

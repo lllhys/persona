@@ -111,6 +111,7 @@ type Node struct {
 	spare     *assistantProc             // warm process waiting for the next new conversation
 	akeys     map[string]*assistantProc  // the key a Codex conversation's MCP server reports until its thread exists
 	lastList  string                     // serialized last sessions.changed payload
+	sent      sentList                   // the last sessions.changed as written, not written twice (sessions_sent.go)
 	lastRevs  map[string]int64           // session id -> rev as last pushed (sessions.changed or sessions.revs)
 	metas     map[string]quickMeta       // transcript path -> cached meta; deleted ones leave it (meta_prune.go)
 	goneDirs  map[string]time.Time       // cwd -> newest mtime of a deleted transcript pruned from metas (dirsByUse)
@@ -814,6 +815,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	case "sessions.list":
 		n.configured()          // a hub that lists without engine.use keeps herdr (engine.go)
 		n.useBotmux(true, true) // and one that lists without saying botmux keeps it, as before (hostbotmux.go)
+		n.sent.answering(ctx)   // the manager may take this list as its own: the next push goes whatever it is
 		return map[string]any{"sessions": n.sessionList(ctx, true)}, nil
 	case "session.start":
 		if !wantsUltracode(p.Ultracode) {

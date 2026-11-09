@@ -56,9 +56,6 @@ func TestOnlyExactContextTagsAreProjected(t *testing.T) {
 	if out := LegacyContextTags(in); out != expected {
 		t.Fatal(out)
 	}
-	if out := NormalizeContextTags(expected); out != in {
-		t.Fatal(out)
-	}
 }
 func TestProjectionIsScopedAndPreservesOpaqueValues(t *testing.T) {
 	focus := []byte(`{"type":"herdr_focus","source":"persona","id":"persona-circuit","mine":true}`)

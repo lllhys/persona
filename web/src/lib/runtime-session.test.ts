@@ -1,7 +1,12 @@
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "./api";
-import { exactSession, SessionDetailLoader, UnsupportedSessionLookup, type DetailState } from "./runtime-session";
+import { exactSession, SessionDetailLoader, UnsupportedSessionLookup, useRuntimeSession, type DetailState } from "./runtime-session";
+import { getState, reset, upsertSession } from "./store";
 import type { Session } from "./types";
+import { t } from "../i18n";
 
 vi.mock("./api", async (original) => ({ ...await original<typeof import("./api")>(), api: vi.fn() }));
 const row = (title = "Full session"): Session => ({ machine_id: "demo", session_id: "row/with/slashes", title, cwd: "/demo", status: "idle", state: "idle", background: [{ id: "bg", kind: "shell" }], subagents: [], workflows: [], queued: ["Queued demo instruction"], permission_mode: "default", effort: "high" });
@@ -198,5 +203,34 @@ describe("older-hub fallback never reloads the whole collection", () => {
     expect(api).toHaveBeenCalledTimes(1);
     expect(commit).not.toHaveBeenCalled();
     expect(states.at(-1)?.legacy).toBe(true);
+  });
+});
+
+describe("older-hub chat opened before the list brings its row (#2450)", () => {
+  it("clears the no-details notice once the row lands, without asking for the list", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    reset();
+    Object.assign(getState(), { conn: "online", features: [] });
+    vi.mocked(api).mockResolvedValue({});
+    const seen: DetailState[] = [];
+    const Probe = () => {
+      seen.push(useRuntimeSession("demo", "row/with/slashes").detail);
+      return null;
+    };
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    try {
+      await act(async () => root.render(createElement(Probe)));
+      await act(tick);
+      expect(seen.at(-1)).toMatchObject({ loading: false, legacy: true, error: t("runtime-session.metadata_unavailable") });
+      await act(async () => upsertSession(row()));
+      await act(tick);
+      expect(seen.at(-1)).toMatchObject({ loading: false, legacy: true, error: "" });
+      // only the per-session info route, once: the list (/sessions) is never asked for
+      expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual(["/sessions/demo/row%2Fwith%2Fslashes/info"]);
+    } finally {
+      act(() => root.unmount());
+      reset();
+    }
   });
 });

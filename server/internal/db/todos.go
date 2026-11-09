@@ -43,6 +43,8 @@ type TodoRow struct {
 	RemindAt   *time.Time `json:"remind_at"`
 	RemindedAt *time.Time `json:"reminded_at"`
 	Priority   string     `json:"priority"`
+	// Project is the slug of the knowledge-base project the todo belongs to (#2581), "" for none.
+	Project string `json:"project"`
 }
 
 // A todo's priorities besides normal ("").
@@ -84,12 +86,12 @@ type TodoAgentRow struct {
 }
 
 const todoColumns = `id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by, done_reason, reopened_at, quiet,
-	due_at, due_date, remind_at, reminded_at, priority`
+	due_at, due_date, remind_at, reminded_at, priority, project`
 
 // todoDest is where a row of todoColumns is scanned to.
 func todoDest(r *TodoRow) []any {
 	return []any{&r.ID, &r.Title, &r.Notes, &r.DoneAt, &r.CreatedAt, &r.UpdatedAt, &r.Origin, &r.PlanID, &r.StartError, &r.DoneBy,
-		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority}
+		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority, &r.Project}
 }
 
 // ListTodos returns all todos ordered by created_at DESC.
@@ -163,10 +165,10 @@ func (d *DB) GetTodo(ctx context.Context, id string) (*TodoRow, error) {
 // CreateTodo inserts a new todo.
 func (d *DB) CreateTodo(ctx context.Context, t TodoRow) error {
 	_, err := d.pool.Exec(ctx, `INSERT INTO todos (id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by,
-		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority, project)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		t.ID, t.Title, t.Notes, t.DoneAt, t.CreatedAt, t.UpdatedAt, t.Origin, t.PlanID, t.StartError, t.DoneBy, t.DoneReason, t.ReopenedAt, t.Quiet,
-		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority)
+		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority, t.Project)
 	return err
 }
 
@@ -176,7 +178,8 @@ func (d *DB) UpdateTodo(ctx context.Context, id string, title *string, notes *st
 }
 
 // TodoEdit is a change to a todo by the user or the assistant on their behalf (#1683): the fields that are non-nil, and
-// the due date and the reminder when SetDue / SetRemind (nil clears them).
+// the due date and the reminder when SetDue / SetRemind (nil clears them). Project is a project's slug, "" for none
+// (#2581); the caller has checked it names one.
 type TodoEdit struct {
 	Title, Notes *string
 	Done         *bool
@@ -186,6 +189,7 @@ type TodoEdit struct {
 	SetRemind    bool
 	RemindAt     *time.Time
 	Priority     *string
+	Project      *string
 }
 
 // Apply makes the edit to cur at the moment at: done stamps done_at (once), not done reopens it (reopened_at, no
@@ -222,6 +226,9 @@ func (e TodoEdit) Apply(cur *TodoRow, at time.Time) {
 	if e.Priority != nil {
 		cur.Priority = *e.Priority
 	}
+	if e.Project != nil {
+		cur.Project = *e.Project
+	}
 	cur.UpdatedAt = at
 }
 
@@ -252,9 +259,9 @@ func (d *DB) EditTodo(ctx context.Context, id string, e TodoEdit, updatedAt time
 		e.Apply(&cur, updatedAt)
 		_, err = tx.Exec(ctx, `UPDATE todos SET title = $2, notes = $3, done_at = $4, updated_at = $5, start_error = $6,
 			done_by = $7, done_reason = $8, reopened_at = $9, due_at = $10, due_date = $11, remind_at = $12, reminded_at = $13,
-			priority = $14 WHERE id = $1`,
+			priority = $14, project = $15 WHERE id = $1`,
 			cur.ID, cur.Title, cur.Notes, cur.DoneAt, cur.UpdatedAt, cur.StartError, cur.DoneBy, cur.DoneReason, cur.ReopenedAt,
-			cur.DueAt, cur.DueDate, cur.RemindAt, cur.RemindedAt, cur.Priority)
+			cur.DueAt, cur.DueDate, cur.RemindAt, cur.RemindedAt, cur.Priority, cur.Project)
 		if err != nil {
 			return err
 		}

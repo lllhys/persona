@@ -1,235 +1,234 @@
 // @vitest-environment jsdom
-// #1614: in a Persona conversation the running exchange's work line is open, each tool call its own row as it comes;
-// once the exchange ends it folds back to its summary, and a tap opens it again with every call. A fold the reader
-// made during the run holds for the run and is dropped when it ends. A coding agent's chat keeps its folded default.
+// #2602: every conversation shares one collapsed summary and one replace-in-place latest text slot.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyTaskIndex } from "../../lib/tasks";
 import type { Item } from "../../lib/types";
-import type { Segment, Step } from "../../lib/turns";
+import { segments, segmentIdentity, type Segment, type Step } from "../../lib/turns";
 import type { WorkLineStyle } from "../../lib/work-groups";
 import { ChatContext, type ChatContextValue } from "./chat-context";
-import { forgetExpanded } from "./expanded";
+import { forgetExpanded, openExpanded } from "./expanded";
 import { SegmentView } from "./SegmentView";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 const T0 = Date.parse("2026-11-04T10:00:00Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
 const tool = (n: number, done = true): Step => ({
-  kind: "tool",
-  id: `t${n}#0`,
+  kind: "tool", id: `t${n}#0`,
   use: { id: `t${n}#0`, seq: n, role: "assistant", kind: "tool_use", tool_name: "Bash", tool_use_id: `c-${n}`, tool_input: { command: `echo ${n}` }, ts: at(n) },
   result: done ? { id: `t${n}-r#0`, seq: n, role: "user", kind: "tool_result", tool_use_id: `c-${n}`, text: "ok", ts: at(n + 1) } : undefined,
   images: [],
 });
 const words = (n: number, text: string): Step => {
-  const item = { id: `a${n}#0`, seq: n, role: "assistant", kind: "text", text, ts: at(n) } as Item;
+  const item: Item = { id: `a${n}#0`, seq: n, role: "assistant", kind: "text", text, ts: at(n) };
   return { kind: "text", id: item.id, item };
 };
 const seg = (steps: Step[]): Segment => ({ id: "seg", steps, tools: steps.length, thoughts: 0, replies: 0, folds: [], start: at(0) });
-const expandFold = async () => {};
-
 let host: HTMLDivElement;
 let root: Root;
-
 beforeEach(() => {
   forgetExpanded();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
 });
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-});
-
-function draw(style: WorkLineStyle, s: Segment, live: boolean, expand: (f: Item) => Promise<void> = expandFold) {
+afterEach(() => { act(() => root.unmount()); host.remove(); });
+function draw(style: WorkLineStyle, s: Segment, live: boolean, expand: (f: Item) => Promise<void> = async () => {}, streaming?: string) {
   const ctx: ChatContextValue = { tasks: emptyTaskIndex(), subagents: [], scope: "x:", lineStyle: style };
-  act(() =>
-    root.render(
-      <ChatContext.Provider value={ctx}>
-        <SegmentView seg={s} live={live} mid="m" sid="s" expandFold={expand} />
-      </ChatContext.Provider>,
-    ),
-  );
+  act(() => root.render(<ChatContext.Provider value={ctx}><SegmentView key={segmentIdentity(s)} seg={s} live={live} mid="m" sid="s" expandFold={expand} streaming={streaming} /></ChatContext.Provider>));
 }
-
 const header = () => host.querySelector<HTMLButtonElement>("[data-work-group] > button")!;
 const detail = () => host.querySelector("[data-work-detail]");
 const detailText = () => detail()?.textContent ?? "";
+const slot = () => host.querySelector("[data-latest-text]");
 const tap = () => act(() => header().click());
+const running = [tool(1), words(2, "First progress."), tool(3), words(4, "Latest progress."), tool(5, false)];
+const finished = [...running.slice(0, -1), tool(5), words(9, "Final result.")];
 
-// seven calls (more than the five a live group peeks), the last still running
-const running = [1, 2, 3, 4, 5, 6].map((n) => tool(n)).concat(tool(7, false));
-const finished = [1, 2, 3, 4, 5, 6, 7].map((n) => tool(n)).concat(words(9, "Done."));
-
-describe("assistant work line (#1614)", () => {
-  it("is open while the exchange runs, every call its own row, the running one too", () => {
-    draw("assistant", seg(running), true);
-    expect(header().getAttribute("aria-expanded")).toBe("true");
-    for (let n = 1; n <= 7; n++) expect(detailText()).toContain(`echo ${n}`);
+describe.each(["assistant", "agents"] as const)("%s compact execution", (style) => {
+  it("starts folded with one latest text, no tool or thinking preview", () => {
+    draw(style, seg(running), true);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    expect(detail()).toBeNull();
+    expect(slot()?.textContent).toContain("Latest progress.");
+    expect(host.textContent).not.toContain("First progress.");
+    expect(host.textContent).not.toContain("echo 5");
+    expect(host.querySelectorAll("[data-work-group]")).toHaveLength(1);
     expect(host.querySelector("[data-live-preview]")).toBeNull();
   });
-
-  it("lists a call as it arrives, and opens even with one call", () => {
-    draw("assistant", seg([tool(1, false)]), true);
+  it("replaces text in the same DOM slot, retaining older text for manual inspection", () => {
+    draw(style, seg(running), true);
+    const originalSlot = slot();
+    draw(style, seg([...running, words(6, "New progress."), tool(7, false)]), true);
+    expect(slot()).toBe(originalSlot);
+    expect(slot()?.textContent).toContain("New progress.");
+    expect(host.textContent).not.toContain("Latest progress.");
+    tap();
+    expect(detailText()).toContain("First progress.");
+    expect(detailText()).toContain("Latest progress.");
+    for (const n of [1, 3, 5, 7]) expect(detailText()).toContain(`echo ${n}`);
+  });
+  it("folds long intermediate Markdown too, keeping only the final result", () => {
+    draw(style, seg([tool(1), words(2, `## Intermediate report\n${"Example progress. ".repeat(50)}`), tool(3), words(4, "Final result.")]), false);
+    expect(host.textContent).not.toContain("Intermediate report");
+    expect(slot()?.textContent).toContain("Final result.");
+    tap();
+    expect(detailText()).toContain("Intermediate report");
+  });
+  it("opens a single running call manually; later calls do not reset the choice", () => {
+    draw(style, seg([tool(1, false)]), true);
     expect(header().disabled).toBe(false);
-    expect(detailText()).toContain("echo 1");
-    draw("assistant", seg([tool(1), tool(2, false)]), true);
-    expect(detailText()).toContain("echo 2");
-  });
-
-  it("folds to its summary when the exchange ends, and a tap opens it with every call", () => {
-    draw("assistant", seg(running), true);
-    draw("assistant", seg(finished), false);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    tap();
-    expect(header().getAttribute("aria-expanded")).toBe("true");
-    for (let n = 1; n <= 7; n++) expect(detailText()).toContain(`echo ${n}`);
-    tap();
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("a fold during the run holds while it runs, and is dropped when it ends", () => {
-    draw("assistant", seg(running), true);
-    tap();
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    expect(host.querySelector("[data-live-preview]")).toBeNull(); // just the summary: no steps peek out
-    draw("assistant", seg([...running.slice(0, 6), tool(7), tool(8, false)]), true);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    // opened again during the run: that is dropped too, the ended line folds
-    tap();
-    expect(header().getAttribute("aria-expanded")).toBe("true");
-    draw("assistant", seg(finished), false);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("opening the summary of an exchange with words between its calls lists every call (inner lines open)", () => {
-    const steps = [tool(1), tool(2), words(3, "Now the tests."), tool(4), tool(5), words(9, "Done.")];
-    draw("assistant", seg(steps), false);
-    tap();
-    for (const n of [1, 2, 4, 5]) expect(detailText()).toContain(`echo ${n}`);
-  });
-
-  it("a reloaded finished exchange starts folded and opens with every call", () => {
-    draw("assistant", seg(finished), false);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    tap();
-    for (let n = 1; n <= 7; n++) expect(detailText()).toContain(`echo ${n}`);
-  });
-});
-
-describe("agents work line (unchanged)", () => {
-  it("is folded while running: the newest five calls peek out", () => {
-    draw("agents", seg(running), true);
     expect(detail()).toBeNull();
-    const peek = host.querySelector("[data-live-preview]")?.textContent ?? "";
-    expect(peek).not.toContain("echo 2");
-    expect(peek).toContain("echo 7");
-  });
-
-  it("a short live line does not open; a finished one stays folded; inner lines stay folded", () => {
-    draw("agents", seg([tool(1, false)]), true);
-    expect(header().disabled).toBe(true);
-    draw("agents", seg(finished), false);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    const steps = [tool(1), tool(2), words(3, "Now the tests."), tool(4), tool(5), words(9, "Done.")];
-    draw("agents", seg(steps), false);
     tap();
-    expect(detailText()).not.toContain("echo 1");
+    expect(detailText()).toContain("echo 1");
+    draw(style, seg([tool(1), tool(2, false)]), true);
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    expect(detailText()).toContain("echo 2");
+    tap();
+    draw(style, seg([tool(1), tool(2), tool(3, false)]), true);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+  });
+  it("completion collapses a manually opened run and replaces progress with final text in place", () => {
+    draw(style, seg(running), true);
+    const originalSlot = slot();
+    tap();
+    draw(style, seg(finished), false);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    expect(slot()).toBe(originalSlot);
+    expect(slot()?.textContent).toContain("Final result.");
+    tap();
+    for (const n of [1, 3, 5]) expect(detailText()).toContain(`echo ${n}`);
+    expect(detailText()).toContain("Latest progress.");
+    tap();
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+  });
+  it("does not restore a historical expansion when a resumed untouched run completes", () => {
+    draw(style, seg(finished), false);
+    tap();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    draw(style, seg([...finished, tool(10, false)]), true);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    draw(style, seg([...finished, tool(10), words(12, "Resumed result.")]), false);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    tap();
+    expect(detailText()).toContain("echo 10");
+  });
+  it("streaming replaces persisted narration, then commits the final text without a duplicate", () => {
+    draw(style, seg(running), true);
+    const originalSlot = slot();
+    draw(style, seg(running), true, undefined, "New streamed progress.");
+    expect(slot()).toBe(originalSlot);
+    expect(slot()?.querySelectorAll("[data-answer]")).toHaveLength(1);
+    expect(slot()?.textContent).toContain("New streamed progress.");
+    expect(host.textContent).not.toContain("Latest progress.");
+    tap();
+    expect(detailText()).toContain("Latest progress.");
+    draw(style, seg(finished), false);
+    expect(slot()).toBe(originalSlot);
+    expect(slot()?.querySelectorAll("[data-answer]")).toHaveLength(1);
+    expect(slot()?.textContent).toContain("Final result.");
+  });
+  it("keeps a text-only summary open when its first tool arrives", () => {
+    const steps = [words(1, "Earlier text."), words(2, "Latest text.")];
+    draw(style, seg(steps), true);
+    tap();
+    expect(detailText()).toContain("Earlier text.");
+    draw(style, seg([...steps, tool(3, false)]), true);
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    expect(detailText()).toContain("echo 3");
+  });
+  it("does not drop earlier text across an unloaded history gap", () => {
+    const first = words(1, "Earlier history text.");
+    const later = words(2, "Latest history text.") as Extract<Step, { kind: "text" }>;
+    draw(style, seg([first, { ...later, item: { ...later.item, ts: at(3600) } }]), false);
+    expect(host.textContent).toContain("Earlier history text.");
+    expect(slot()?.textContent).toContain("Latest history text.");
+  });
+  it("jump-to-call opens a running summary and completion still collapses it", () => {
+    draw(style, seg(running), true);
+    const id = host.querySelector<HTMLElement>("[data-work-group]")!.dataset.groupId!;
+    act(() => openExpanded([`x:${id}`]));
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    expect(detailText()).toContain("echo 1");
+    draw(style, seg(finished), false);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+  });
+  it("all tool kinds and every plan update stay inside one summary until manually opened", () => {
+    const named = (n: number, name: string, input: Record<string, unknown>): Step => {
+      const s = tool(n) as Extract<Step, { kind: "tool" }>;
+      return { ...s, use: { ...s.use, tool_name: name, tool_input: input } };
+    };
+    const steps = [
+      named(1, "TodoWrite", { todos: [{ content: "First plan", status: "pending" }, { content: "Second step", status: "pending" }] }),
+      named(2, "TodoWrite", { todos: [{ content: "Revised plan", status: "pending" }, { content: "Last step", status: "pending" }] }),
+      named(3, "Agent", { description: "Example subagent", prompt: "Check the example" }),
+      named(4, "Workflow", { name: "Example workflow" }), words(5, "Latest text."),
+    ];
+    draw(style, seg(steps), true);
+    expect(host.querySelectorAll("[data-work-group]")).toHaveLength(1);
+    expect(host.textContent).not.toContain("Example subagent");
+    expect(host.textContent).not.toContain("Example workflow");
+    tap();
+    expect(detailText()).toContain("Example subagent");
+    expect(detailText()).toContain("Example workflow");
+    expect(detailText()).toContain("First plan");
+    expect(detailText()).toContain("Revised plan");
+  });
+  it("reloaded completed history starts folded and remains manually inspectable", () => {
+    draw(style, seg(finished), false);
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    tap();
+    expect(detailText()).toContain("First progress.");
+    expect(detailText()).toContain("echo 1");
   });
 });
 
-// The hub folds earlier work (fold_work): a run of calls comes as one fold step, fetched by from_seq / through_seq when
-// its group opens. Seqs: calls n at n; a fold of calls a..b stands at a, through b.
 const fold = (a: number, b: number): Step => {
-  const item = { id: `fold:t${a}#0`, seq: a, role: "assistant", kind: "fold", ts: at(a), fold: { items: (b - a + 1) * 2, tools: b - a + 1, thoughts: 0, until: at(b + 1), through_seq: b } } as Item;
+  const item: Item = { id: `fold:t${a}#0`, seq: a, role: "assistant", kind: "fold", ts: at(a), fold: { items: (b - a + 1) * 2, tools: b - a + 1, thoughts: 0, until: at(b + 1), through_seq: b } };
   return { kind: "fold", id: item.id, item };
 };
 const calls = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => tool(a + i));
-
-/** A chat whose folds come in: expandFold swaps a fold for its calls and draws again, as useTranscript does. */
 function foldingChat(style: WorkLineStyle, start: Step[], live: boolean) {
   let steps = start;
-  let isLive = live;
-  const fetched: number[] = [];
   const expand = vi.fn(async (f: Item) => {
-    fetched.push(f.seq);
-    await new Promise((r) => setTimeout(r, 3)); // the request
-    steps = steps.flatMap((s) => (s.kind === "fold" && s.item.id === f.id ? calls(f.seq, f.fold!.through_seq) : [s]));
-    // as useTranscript's apply: the steps are set and drawn a moment later, the promise settles at once, so the
-    // fetch goes on to the next fold before the chat draws this one's steps
-    setTimeout(() => draw(style, seg(steps), isLive, expand));
+    steps = steps.flatMap((s) => s.kind === "fold" && s.item.id === f.id ? calls(f.seq, f.fold!.through_seq) : [s]);
+    draw(style, seg(steps), live, expand);
   });
-  return {
-    fetched,
-    draw: () => draw(style, seg(steps), isLive, expand),
-    set: (next: Step[], nextLive: boolean) => {
-      steps = next;
-      isLive = nextLive;
-      draw(style, seg(steps), isLive, expand);
-    },
-  };
+  return { expand, draw: () => draw(style, seg(steps), live, expand) };
 }
-/** Lets the fetches and draws run their course: in short acts, as one long act would hold every draw to its end. */
-const settle = async () => {
-  for (let i = 0; i < 30; i++) await act(() => new Promise<void>((r) => setTimeout(r, 2)));
-};
-const groups = () => [...host.querySelectorAll<HTMLElement>("[data-work-group]")];
-const allText = () => host.textContent ?? "";
-/** The headers' "loading the folded steps" spinners (Spinner size 11). */
-const loadingSpinners = () => host.querySelectorAll('[data-work-group] > button span[style*="width: 11px"]').length;
-
-describe("assistant work line with the hub's folds and words between calls (#1614)", () => {
-  // calls 1-3 (folded by the hub), words, calls 5-7 (folded), words, 11-12 running
-  const runningSteps = () => [fold(1, 3), words(4, "First notes read."), fold(5, 7), words(8, "Checking the rest."), tool(11), tool(12, false)];
-
-  it("while it runs every call of the turn is listed, those before the words too: their folds are fetched", async () => {
-    const chat = foldingChat("assistant", runningSteps(), true);
-    chat.draw();
-    await settle();
-    expect(chat.fetched.sort((a, b) => a - b)).toEqual([1, 5]);
-    for (const g of groups()) expect(g.querySelector(":scope > button")!.getAttribute("aria-expanded")).toBe("true");
-    for (const n of [1, 2, 3, 5, 6, 7, 11, 12]) expect(allText()).toContain(`echo ${n}`);
-    expect(loadingSpinners()).toBe(0);
-  });
-
-  it("ended, it folds; reopened, every call is listed (inner lines open, folds fetched), and no spinner stays", async () => {
-    const ended = [fold(1, 3), words(4, "First notes read."), fold(5, 7), words(8, "Checking the rest."), ...calls(11, 13), words(20, "Done.")];
-    const chat = foldingChat("assistant", ended, false);
-    chat.draw();
-    await settle();
-    expect(groups()).toHaveLength(1);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    expect(chat.fetched).toEqual([]);
+const settle = async () => { for (let i = 0; i < 10; i++) await act(() => new Promise<void>((r) => setTimeout(r, 2))); };
+describe.each(["assistant", "agents"] as const)("%s folded history", (style) => {
+  it("keeps manual expansion when a fold resolves to a nonzero tool block", async () => {
+    const folded = fold(1, 1);
+    const text = words(3, "Latest text.");
+    const first = tool(1) as Extract<Step, { kind: "tool" }>;
+    const expanded = { ...first, id: "t1#1", use: { ...first.use, id: "t1#1" } };
+    const sourceSegment = (steps: Step[]) => segments(steps.flatMap((s) => s.kind === "tool" ? [s.use, ...(s.result ? [s.result] : [])] : [s.item]))[0];
+    const before = sourceSegment([folded, text]);
+    const after = sourceSegment([expanded, text]);
+    expect(before.id).not.toBe(after.id);
+    const expand = vi.fn(async () => draw(style, after, true, expand));
+    draw(style, before, true, expand);
+    const originalSlot = slot();
     tap();
     await settle();
-    expect(new Set(chat.fetched)).toEqual(new Set([1, 5]));
-    for (const n of [1, 2, 3, 5, 6, 7, 11, 12, 13]) expect(detailText()).toContain(`echo ${n}`);
-    for (const g of groups()) expect(g.querySelector(":scope > button")!.getAttribute("aria-expanded")).toBe("true");
-    // every fold came in: the header's loading spinner is gone (it stayed when the last fold ended a superseded fetch)
-    expect(loadingSpinners()).toBe(0);
+    expect(slot()).toBe(originalSlot);
+    expect(expand).toHaveBeenCalledTimes(1);
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    expect(detailText()).toContain("echo 1");
   });
-
-  it("from running to ended: all listed, then the one summary, folded", async () => {
-    const chat = foldingChat("assistant", runningSteps(), true);
+  it.each([true, false])("fetches folded tools only when manually opened (live=%s)", async (live) => {
+    const chat = foldingChat(style, [fold(1, 3), words(4, "Earlier progress."), fold(5, 7), words(8, "Latest text.")], live);
     chat.draw();
     await settle();
-    chat.set([...calls(1, 3), words(4, "First notes read."), ...calls(5, 7), words(8, "Checking the rest."), ...calls(11, 12), words(20, "Done.")], false);
-    expect(groups()).toHaveLength(1);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
+    expect(chat.expand).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("Earlier progress.");
     tap();
-    for (const n of [1, 2, 3, 5, 6, 7, 11, 12]) expect(detailText()).toContain(`echo ${n}`);
-  });
-
-  it("agents: earlier lines stay folded while it runs and nothing is fetched", async () => {
-    const chat = foldingChat("agents", runningSteps(), true);
-    chat.draw();
     await settle();
-    expect(chat.fetched).toEqual([]);
-    expect(allText()).not.toContain("echo 2");
+    expect(new Set(chat.expand.mock.calls.map(([f]) => f.seq))).toEqual(new Set([1, 5]));
+    for (const n of [1, 2, 3, 5, 6, 7]) expect(detailText()).toContain(`echo ${n}`);
+    expect(detailText()).toContain("Earlier progress.");
+    expect(host.querySelectorAll('[data-work-group] > button span[style*="width: 11px"]')).toHaveLength(0);
   });
 });

@@ -1,4 +1,4 @@
-// Settings › Assistant (docs/assistant/assistant.md "Profile page and avatar", the iOS app's AssistantProfileView / AssistantNotesView /
+// Settings › Assistant (docs/assistant/assistant.md "Profile and avatar", the iOS app's AssistantProfileView / AssistantNotesView /
 // AssistantMemoryView, Android's assistant settings): what Persona does on its own (a line into "Scheduled tasks"), what it knows about you
 // ("About me" = `notes`, saved on "Save" or when leaving; "Memory" = its memory files: read, edit the whole file, delete), and where
 // it runs (read-only here). Its model is Settings › Models › Main chat, not here (#1291).

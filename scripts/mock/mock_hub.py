@@ -255,6 +255,12 @@ def day_from_now(days):
     return (NOW + timedelta(days=days)).date().isoformat()
 
 
+def today_at(hour, minute=0, days=0):
+    """A to-do's due_at at a clock time on this machine (#2029's calendar: 18:00 today, not 50 hours from now), as UTC."""
+    local = (NOW.astimezone() + timedelta(days=days)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return local.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _mock_qr(text, n=29):
     """A QR-looking grid of "0" / "1" rows for text: three finder squares and noise from its hash (not scannable)."""
     seed = hashlib.sha256(text.encode()).digest()
@@ -1704,8 +1710,9 @@ TODOS_INIT = [
         "id": "todo_weather",
         "title": "天气 App 发 1.3 版",
         "notes": "1.3 的内容：主屏幕小组件、网络层补测试、发布说明。周五前提交审核。",
-        # Due at a moment (#1683): the list shows it under the title, the detail page edits it.
-        "due_at": later(hours=50),
+        # Due at a moment (#1683): the list shows it under the title, the detail page edits it; on the calendar (#2029)
+        # beside the blog's at the same time.
+        "due_at": today_at(18),
         # The stage bar on the todo detail (#2776): how far the work got, and the PR it is in.
         "stage": "develop",
         "pr_url": "https://example.com/pull/128",
@@ -1802,6 +1809,7 @@ TODOS_INIT = [
     {
         "id": "todo_blog",
         "title": "博客迁移到 Astro",
+        "due_at": today_at(18),
         "notes": "32 篇文章都能正常构建，旧链接全部加了 301 跳转。",
         # The stage bar on the todo detail (#2776): how far the work got, and the PR it is in.
         "stage": "review",
@@ -1828,6 +1836,7 @@ TODOS_INIT = [
     {
         "id": "todo_orders",
         "title": "排查 /orders 接口变慢",
+        "due_at": today_at(16),
         "notes": "慢在订单列表的 N+1 查询，正在改成一次 JOIN 并补索引。",
         "done_at": None,
         "created_at": ago(hours=6),
@@ -1851,6 +1860,7 @@ TODOS_INIT = [
     {
         "id": "todo_review",
         "title": "检查 PR #42",
+        "due_at": today_at(10),  # #2029: the calendar's day has a morning, an afternoon and an evening
         "notes": "PR #42 看完了：逻辑没问题，留了两条关于命名的小建议。",
         "done_at": None,
         "created_at": ago(hours=8),
@@ -1989,8 +1999,8 @@ def format_todo(t):
 
 
 def apply_todo_plan(t, body):
-    """A POST / PATCH body's due_at | due_date, remind_at and priority (#1683, server/internal/assistant/todo_plan.go):
-    null or "" clears; a new reminder time is pushed again. The error to answer with 400, else None."""
+    """A POST / PATCH body's due_at | due_date, remind_at, priority (#1683, server/internal/assistant/todo_plan.go) and
+    project (#2581): null or "" clears; a new reminder time is pushed again. The error to answer with 400, else None."""
     if "due_at" in body or "due_date" in body:
         at, day = body.get("due_at") or None, body.get("due_date") or None
         if at and day: return "give due_at or due_date, not both"
@@ -2004,6 +2014,14 @@ def apply_todo_plan(t, body):
         pr = "" if pr == "normal" else pr
         if pr not in ("", "high", "low"): return "priority must be high, normal or low"
         t["priority"] = pr
+    if "project" in body:  # a knowledge-base project's slug or name, "" for none (#2581, todo_project.go)
+        name = (body.get("project") or "").strip()
+        if not name:
+            t.pop("project", None)
+        else:
+            e = next((e for e in KB["projects"] if name in (e["id"], e["name"]) and not e.get("extra", "").endswith("ignored")), None)
+            if e is None: return f"no knowledge-base project {name!r}"
+            t["project"] = e["id"]
     return None
 
 
@@ -4811,6 +4829,11 @@ PREFS = {"input": True, "done": "long", "live_activity": True, "lock_details": F
          # quiet hours (#5806): never set until a client sets them; MOCK_QUIET_HOURS=1 starts with 23:00–07:00 on
          "quiet": {"enabled": True, "start": "23:00", "end": "07:00"} if os.environ.get("MOCK_QUIET_HOURS") else {"enabled": False, "start": "", "end": ""}}  # one device is enough
 RESOLVED = []  # resolve calls, newest last (GET /mock/resolved)
+DEVICES = []  # POST /api/v1/devices, newest last (GET /mock/devices): each one's id, kind and push `features` (#2433)
+# The last client_hello's features, platform and version, and the X-Persona-Client of the last GET /api/v1/interactions
+# (GET /mock/hello): the hub lists MCP elicitation cards in REST answers only when the two match (docs/protocol/protocol.md
+# "MCP elicitation").
+HELLO = {}
 # Settings › Connectors › Lark bot (GET/PUT /api/v1/bots/feishu); MOCK_BOT=pairing shows a code waiting, =off a fresh hub.
 FEISHU_BOT = {"enabled": True, "app_id": "cli_example0001", "domain": "https://open.feishu.cn", "has_secret": True,
               "from_config": False, "connected": True, "bot_name": "Persona", "target": "主对话",
@@ -7951,6 +7974,54 @@ def mock_report_fold():
 
 if os.environ.get("MOCK_REPORT_FOLD") == "1":
     mock_report_fold()
+
+
+# MOCK_PEER_FOLD=1: messages other sessions sent an agent (#2010): a long progress report folds to three lines with
+# Expand, a short one stays whole with no button. Synthetic text.
+PEERS = "a1f3c2d4-0000-4000-8000-0000000c1e0a"
+
+
+def mock_peer_fold():
+    report = ("## 搜索改版：索引重建完成\n\n今天把站内搜索从前端索引换成了服务端索引，下面是进展和还没做的事。\n\n"
+              "- 索引覆盖全部 412 篇文档，中文按词切分，英文按词干；重建一次 38 秒。\n"
+              "- 搜索结果按标题、小标题、正文三档加权，同分时新文档在前。\n"
+              "- 结果页加了高亮和所在章节的路径，点开直接跳到对应的小标题。\n"
+              "- 旧的前端索引文件已经从构建里去掉，首页的包小了 1.2 MB。\n\n"
+              "还没做：\n\n- 拼写纠错（「接口」打成「借口」时给出建议）。\n- 搜索词的统计，等隐私说明定下来再加。\n\n"
+              "有一处要你定：版本切换后，搜索只搜当前版本，还是所有版本一起搜、当前版本排前面？")
+    ITEMS[PEERS] = [
+        it("user", "text", 40, text="文档站改版拆给了两个会话，它们的进展会直接发到这里，你来汇总"),
+        it("assistant", "text", 39, text="好的，收到它们的消息后我来汇总，有要你定的事会单独列出来。"),
+        it("user", "text", 12, text=report, **{"from": "docs-search"}),
+        it("user", "text", 8, text="深色主题的对比度修好了，截图在 PR 里。", **{"from": "docs-theme"}),
+        it("assistant", "text", 6, text="两边都有进展：搜索的索引重建完了，深色主题的对比度也修好了。有一件要你定：版本切换后搜索的范围。"),
+    ]
+    SESSIONS.append(sess("macbook", PEERS, "文档站改版", "/Users/me/code/docs-site", "done", "unread", "docs-site", 18, "peers", 1, 6,
+                         "有一件要你定：版本切换后搜索的范围。"))
+
+
+if os.environ.get("MOCK_PEER_FOLD") == "1":
+    mock_peer_fold()
+
+
+# MOCK_REPLY_BREAKS=1: a reply written line by line (#2088): bold lines with steps right under them, one list numbered
+# on from 5, and a bold line with its sentence on the next line; in an Agents chat and at the end of Persona's
+# conversation. Synthetic text.
+BREAKS = "a1f3c2d4-0000-4000-8000-0000000c1e0b"
+BREAKS_REPLY = ("有两种做法：\n\n**直接在测试环境复现**\n1. 用昨天的构建装一台测试机\n2. 按报告里的步骤操作一遍\n"
+                "3. 录屏，记下出错的那一步\n4. 把录屏发到群里\n\n**也可以先看日志，更快**\n5. 附上出错时间前后五分钟的日志\n"
+                "6. 标出第一条报错\n7. 对照最近的改动找原因\n\n**怎么确认修好了**\n同样的步骤再走一遍，页面不再卡住，日志里没有新的报错。")
+
+
+def mock_reply_breaks():
+    ITEMS[BREAKS] = [it("user", "text", 6, text="设置页偶尔卡住，怎么查？"), it("assistant", "text", 5, text=BREAKS_REPLY)]
+    SESSIONS.append(sess("macbook", BREAKS, "设置页卡住", "/Users/me/code/shop-app", "done", "unread", "shop-app", 19, "breaks", 1, 5,
+                         "怎么确认修好了。"))
+    ITEMS[ASK1] = ITEMS[ASK1] + [it("user", "text", 2, text="设置页偶尔卡住，怎么查？"), it("assistant", "text", 1, text=BREAKS_REPLY)]
+
+
+if os.environ.get("MOCK_REPLY_BREAKS") == "1":
+    mock_reply_breaks()
 
 
 # MOCK_WORK_GROUPS=1: one finished conversation with every way a work group reads (#1963, web): a short run (five steps
@@ -13847,7 +13918,9 @@ class H(BaseHTTPRequestHandler):
             t = next((x for x in TODOS if x["id"] == tid), None)
             if not t: return self.send_json({"error": "待办不存在"}, 404)
             return self.send_json({"todo": format_todo(t)})
-        if p == "/api/v1/interactions": return self.send_json({"interactions": out_by_machine(mock_interactions())})
+        if p == "/api/v1/interactions":
+            HELLO["request_client"] = self.headers.get("X-Persona-Client")
+            return self.send_json({"interactions": out_by_machine(mock_interactions())})
         if p == "/api/v1/fleet":
             return self.send_json({"fleet": mock_fleet() if MOCK_FLEET else {"phase": "", "needsYou": 0, "working": 0, "unread": 0, "items": []}})
         if p == "/api/v1/interactions/history":
@@ -13855,6 +13928,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/mock/delegate": return self.send_json(*mock_delegate(q))
         if p == "/mock/reanswered": return self.send_json({"reanswered": REANSWERED})
         if p == "/mock/resolved": return self.send_json({"resolved": RESOLVED})
+        if p == "/mock/devices": return self.send_json({"devices": DEVICES})
+        if p == "/mock/hello": return self.send_json(HELLO)
         if p == "/mock/phone":
             with FAULT_LOCK:
                 return self.send_json({"registrations": [x["registration"] for x in PHONES.values()], "results": TOOL_RESULTS})
@@ -14497,7 +14572,7 @@ class H(BaseHTTPRequestHandler):
         if not stem: stem, dot, ext = ext, "", ""
         path = "/tmp/%s-%s%s%s" % (stem, datetime.now().strftime("%Y%m%d-%H%M%S"), dot, ext)
         if video: FILES[path] = b"".join(body)  # downloadable again, like a node's temp file (#981)
-        UPLOADS.append({"name": name, "size": n, "path": path})
+        UPLOADS.append({"name": name, "size": n, "path": path, "machine": urlparse(self.path).path.split("/")[4]})
         return self.send_json({"path": path, "name": path.rsplit("/", 1)[1], "size": n})
 
     def do_POST(self):
@@ -14521,6 +14596,10 @@ class H(BaseHTTPRequestHandler):
             key = p.rsplit("/", 1)[-1]
             ALWAYS_GRANTS[:] = [g for g in ALWAYS_GRANTS if g["key_hash"] != key]
             return self.send_json({"ok": True, "restart_required": False})
+        if p == "/api/v1/devices":  # a push registration: kept without its token, key or grant
+            d = json.loads(self.last_body or b"{}")
+            DEVICES.append({k: d.get(k) for k in ("device_id", "kind", "features")})
+            return self.send_json({"ok": True, "push": {"route": "relay"}})
         if p == "/mock/frames":
             run = json.loads(self.last_body or b"{}")
             run["test"] = run.get("name") or FRAMES["label"]
@@ -16077,6 +16156,7 @@ class H(BaseHTTPRequestHandler):
                             hb_condition.notify()
                     with FAULT_LOCK:
                         client["features"] = set(declared)
+                    HELLO.update(features=declared, platform=msg.get("platform"), version=msg.get("version"))
                     send({"type": "client_hello_ack", "heartbeat": dict(heartbeat)})
                     continue
                 if msg.get("type") == "ping":

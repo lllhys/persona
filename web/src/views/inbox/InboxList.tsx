@@ -297,7 +297,7 @@ function Section({ k, title, count, open, onToggle, action, children }: { k: Sec
   );
   return (
     <section className="mt-4" data-section={k}>
-      <div className="flex items-center gap-2 px-1 pb-1.5">
+      <div className="flex items-center gap-2 px-1 pb-1">
         {onToggle ? (
           <button type="button" onClick={onToggle} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
             {head}
@@ -312,7 +312,9 @@ function Section({ k, title, count, open, onToggle, action, children }: { k: Sec
           </button>
         )}
       </div>
-      <Collapse open={open}>
+      {/* the clip pulled out by 2px with 2px of padding inside: the cards stay put and the selected one's 1.5px ring
+          (and the cards' shadow) is not cut at the sides; the top 2px stays while closed, so the header keeps its 6px */}
+      <Collapse open={open} className="-mx-0.5" clipClassName="px-0.5 pt-0.5">
         <div inert={!open} className="flex flex-col gap-1.5 pb-0.5">{children}</div>
       </Collapse>
     </section>

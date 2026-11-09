@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/textfmt"
 	"github.com/nwverse/persona/server/internal/transcript"
@@ -36,6 +38,9 @@ func interactionPayloadIn(l i18n.Lang, ix proto.Interaction, machine string) map
 		proto.IxQuestion:    "push.question_title", proto.IxPlan: "push.plan_title", proto.IxPermission: "push.permission_title", proto.IxScreen: "push.screen_title",
 	}[ix.Kind]; ok {
 		title = i18n.T(l, key)
+	}
+	if ix.Kind == proto.IxElicitation && ix.MCPServerName != "" {
+		title = i18n.T(l, "push.elicitation_server_title", i18n.Args{"server": ix.MCPServerName})
 	}
 	if ix.ToolName == "ask_user" {
 		title = i18n.T(l, "push.assistant_asks")
@@ -65,6 +70,8 @@ func interactionPayloadIn(l i18n.Lang, ix proto.Interaction, machine string) map
 		body = planTitle(ix.Plan)
 	case proto.IxScreen:
 		body = screenAlertBody(l, ix)
+	case proto.IxElicitation:
+		body = elicitationAlertBody(l, ix)
 	}
 	if d := ix.Delegate; d != nil && d.Recommend != "" { // the assistant left it to the user (assistant/fleet_delegate.go)
 		body += i18n.T(l, "push.delegate_recommend_suffix", i18n.Args{"answer": d.Recommend})
@@ -121,6 +128,38 @@ func askRev(q proto.Question) string {
 	}{q.Question, labels, q.MultiSelect})
 	hash := sha256.Sum256(b)
 	return hex.EncodeToString(hash[:])[:12]
+}
+
+// elicitationAlertBody is an MCP form's or link's push body (#2433): the server's message with every link in it cut
+// down to its host, since a link may carry a token. The push never has the link it asks to open or a form's values; a
+// form's says it is filled in in Persona, as a card with fields does.
+func elicitationAlertBody(l i18n.Lang, ix proto.Interaction) string {
+	msg := ix.Summary
+	if e := ix.Elicitation; e != nil && e.Message != "" {
+		msg = e.Message
+	}
+	msg = strings.TrimSpace(alertLink.ReplaceAllStringFunc(msg, linkHost))
+	if msg == "" {
+		msg = i18n.T(l, "push.elicitation_body")
+	}
+	if e := ix.Elicitation; e == nil || e.Mode != "url" {
+		msg += i18n.T(l, "push.fill_in_suffix")
+	}
+	return msg
+}
+
+// alertLink is a link in a push's text: http(s):// up to the next space, quote or bracket, or CJK punctuation (the
+// CJK Symbols and Punctuation block, full-width forms).
+var alertLink = lazyre.New(`(?i)\bhttps?://[^\s\p{Z}<>"'()\[\]{}\x{3000}-\x{303F}\x{FF00}-\x{FFEF}]+`)
+
+// linkHost is a link's host, "…" when it names none; a sentence's full stop after it stays.
+func linkHost(link string) string {
+	bare := strings.TrimRight(link, ".,;:!?")
+	tail := link[len(bare):]
+	if u, err := url.Parse(bare); err == nil && u.Hostname() != "" {
+		return u.Hostname() + tail
+	}
+	return "…" + tail
 }
 
 // screenAlertMost is how many characters of a screen card's dialog its push shows.

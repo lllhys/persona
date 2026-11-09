@@ -1,9 +1,12 @@
 package assistant
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -240,5 +243,29 @@ func TestAgentSessionArchiveServiceHTTP(t *testing.T) {
 		if row.Archived {
 			t.Fatalf("HTTP restore missing from inventory: %+v", row)
 		}
+	}
+}
+
+// decoratedSession decorates one listed row on its own, and finds an archived row its node no longer lists; either
+// way it is the row the whole decorated list has (#2472).
+func TestDecoratedSessionIsTheListsRow(t *testing.T) {
+	ft, rows := archiveTestService(t)
+	if w := archiveRequest(ft.s, "mac", "codex-session", roleFull, true); w.Code != 200 {
+		t.Fatalf("archive: %d %s", w.Code, w.Body)
+	}
+	done := proto.Session{MachineID: "mac", SessionID: "done-session", Agent: "claude", Status: proto.StatusDone, PaneID: "p1",
+		Title: "Fix the login", LastText: "Fixed. Shall I push it to beta?", UpdatedAt: time.Now()}
+	ft.s.markSeen(context.Background(), "mac", "claude-session")
+	for _, listed := range [][]proto.Session{{rows[0], rows[1], done}, {rows[0], done}} { // then codex's row is gone
+		ft.d.setSessions("mac", slices.Clone(listed))
+		for _, want := range ft.s.decorated("mac") {
+			got, ok := ft.s.decoratedSession("mac", want.SessionID)
+			if !ok || !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s (listed %d): decoratedSession\n%+v\nthe list's row\n%+v", want.SessionID, len(listed), got, want)
+			}
+		}
+	}
+	if got, ok := ft.s.decoratedSession("mac", "codex-session"); !ok || !got.Archived {
+		t.Fatalf("the archived row the node no longer lists: %+v (found %v)", got, ok)
 	}
 }

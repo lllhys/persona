@@ -900,6 +900,9 @@ against disposable Git with an independent writer at the last read before remova
   Direct `wrangler deploy` inside `site/` (done during domain change) replaces all static assets, immediately making `/dl/*` and `/install.sh` 404 and breaking hub update checks / installation.
   Recovery: find the last release with `wrangler deployments list`, then `wrangler rollback <version>` (custom domains aren't versioned, so unaffected), restored in about 3 minutes.
 - For `site/`-only changes (domains, pages), use `SITE_ONLY=1 ./scripts/release/publish.sh`: reuse published production artifacts, no new release (#951).
+- Renaming the Worker (`name` in `site/wrangler.jsonc`) deploys a new Worker without the old one's secrets: the push relay answered 503 "push relay not configured"
+  for every hub without its own APNs key until the secrets were put on the new name (2026-11-07, #1263). Move the secrets first; `publish.sh` now fails a deploy
+  after which a relay that was healthy no longer is (`docs/operations/site.md`).
   Large-file downloads on this machine often reset connections, so curl uses `--retry-all-errors` (default `--retry` doesn't retry "Connection reset").
 - Decide what happens to the old domain: shipped Apps hardcode the push-relay address and deployed personad checks old-domain `/dl/` for updates.
   With only 301 redirects, POST (push relay) isn't resent unchanged and breaks; the user accepted this on 2026-11-05, redirecting the whole old domain with 301 (#2389, `docs/operations/site.md` ("Old domain")).
@@ -1450,3 +1453,18 @@ When decorating a large session list, reserve the timestamp snapshot by the smal
 A Hub-only receipt requires unchanged node versions. When the user explicitly enables automatic node updates, that condition would reject legitimate guarded transfers. Require matching verified packages and unchanged machine IDs, owners and UIDs instead; report each node's observed deployment state without treating Hub confirmation as fleet completion. Never send deployment requests from the publisher. Prefer the effective policy returned by the running Hub over its bootstrap file, and retain the strict unchanged-inventory check when the policy is off.
 
 After activating matching native and downloadable packages, reapply an enabled runtime node policy through its existing settings route so managers recheck the new pointer. A filesystem pointer change has no consumer watcher. Check the current policy first so an intervening disable is respected; a failed recheck must not produce a completed publication receipt.
+
+## A skip decided from two counters, and a test that swaps a served peer (2026-11-10, #2439)
+
+`sendSessions` skips a byte-identical list only when no `sessions.list` answer is pending and the epoch has not moved;
+an answer moves the epoch and then drops the pending count when it ends. Read the pending count first and the epoch
+second. Read the other way round, an answer that starts and ends between the two reads leaves the old epoch and a zero
+count, and the list is skipped behind an answer the manager may have taken instead. With a 20 µs pause injected between
+the reads, 199 of 200 runs skipped; with the order swapped, 0 of 200. Without the pause it never showed in 2 million
+runs, which is why only reasoning about the order, not a test, catches it.
+
+A test helper that has already started `go n.peer.Serve(...)` must not assign `n.peer` afterwards: the goroutine reads the
+field, so `-race` reports it, and it may end up serving the new peer too. Pass what the test needs (here a writer that
+records the node's lines) into the constructor, and serve the peer through a local variable. A rule test also needs
+steps that differ only in the guarded rule: revs followed by a list that differs anyway, or a `call` that waits for the
+pending count to drop, pass with the rule deleted.

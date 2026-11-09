@@ -9,13 +9,16 @@ final class ConnectorsTests: XCTestCase {
         }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", pair, "-tab", "settings", "-dev.openChat", ""]
+        app.launchArguments = ["-pairURL", pair, "-tab", "settings", "-openConnectors", "YES", "-dev.openChat", ""]
         app.launchPinned()
         func row(_ label: String) -> XCUIElement {
             let r = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
-            // From the top, down to it: after a back the list may be anywhere.
-            for _ in 0..<3 { app.swipeDown() }
-            for _ in 0..<6 where !(r.exists && r.isHittable) { app.swipeUp() }
+            let list = app.descendants(matching: .any)["connectors-list"].firstMatch
+            XCTAssertTrue(list.waitForExistence(timeout: 10))
+            // Scroll only the connector list and only when needed; dragging the whole short page can dismiss Settings.
+            for _ in 0..<4 where !(r.exists && r.isHittable) { list.swipeDown() }
+            for _ in 0..<8 where !(r.exists && r.isHittable) { list.swipeUp() }
+            XCTAssertTrue(r.exists && r.isHittable, "no connector \(label):\n\(app.debugDescription)")
             return r
         }
         func shot(_ name: String) {
@@ -40,8 +43,8 @@ final class ConnectorsTests: XCTestCase {
         shot("list-github")
         github.tap()
         XCTAssertTrue(app.staticTexts["alice"].waitForExistence(timeout: 10), "GitHub page shows no account:\n\(app.debugDescription)")
-        XCTAssertTrue(app.staticTexts["已连接"].exists)
-        // A LabeledContent row reads as one element, Sign In and its value together.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "已连接")).firstMatch.waitForExistence(timeout: 10),
+                      "GitHub must show a connected state, optionally followed by its manager name")
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "来自 MacBook 的 gh 登录")).firstMatch.exists)
         shot("github")
         // GitHub's inbox options (docs/assistant/inbox.md「连接器：GitHub」): the CI choice and the muted repositories.

@@ -620,7 +620,7 @@
         },
         "launcher": {
           "type": "string",
-          "description": "shell command that starts claude (default: the machine's default)"
+          "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has); empty: the default, or one the machine has when it lacks the default (claude first; the answer says so)"
         },
         "ultracode": {
           "type": "boolean",
@@ -1533,7 +1533,7 @@
               },
               "launcher": {
                 "type": "string",
-                "description": "launcher name; empty: the default"
+                "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has); empty: the default, or one the machine has when it lacks the default (claude first; the why says so)"
               },
               "model": {
                 "type": "string",
@@ -1585,6 +1585,10 @@
                 "type": "integer",
                 "minimum": 0,
                 "description": "about how long the task should take, in minutes; a task with no progress for 1.5× that (at least 20 minutes) counts as stuck"
+              },
+              "project": {
+                "type": "string",
+                "description": "optional: the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project"
               },
               "todo_id": {
                 "type": "string",
@@ -1680,7 +1684,7 @@
   },
   {
     "name": "todo_list",
-    "description": "List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): open ones by default, earliest due first (those without a due date last), each with its id, title, state, priority, due date, reminder and the agents on it, and the first line of its notes. Times are in the user's time zone. Filter by state, by due date (due_before / due_after: a day or a moment), overdue ones only, with or without agents, or a word in the title or notes. Use it before changing a to-do, to find its id; ask with todo_get for one in full.",
+    "description": "List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): open ones by default, earliest due first (those without a due date last), each with its id, title, state, priority, project, due date, reminder and the agents on it, and the first line of its notes. Times are in the user's time zone. Filter by state, by due date (due_before / due_after: a day or a moment), overdue ones only, with or without agents, by knowledge-base project, or a word in the title or notes. Use it before changing a to-do, to find its id; ask with todo_get for one in full.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1713,6 +1717,10 @@
           "type": "string",
           "description": "words to find in the title or notes"
         },
+        "project": {
+          "type": "string",
+          "description": "only the to-dos in this knowledge-base project (its slug or name)"
+        },
         "limit": {
           "type": "integer",
           "description": "at most this many (default 50, at most 200)"
@@ -1738,7 +1746,7 @@
   },
   {
     "name": "todo_create",
-    "description": "Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day.",
+    "description": "Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day. When it clearly belongs to one of the user's areas of work, give project: the To-dos page groups to-dos by it.",
     "input_schema": {
       "type": "object",
       "required": [
@@ -1769,13 +1777,17 @@
             "low"
           ],
           "description": "normal when left out"
+        },
+        "project": {
+          "type": "string",
+          "description": "the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project"
         }
       }
     }
   },
   {
     "name": "todo_update",
-    "description": "Change one of the user's Persona to-dos: its title, notes, due date, reminder or priority. Only what you give changes; \"\" clears notes, due or remind. A new reminder time is pushed again even when the old one already was. Done at once, nothing to confirm, also for a task's to-do. To mark it done or open it again use todo_complete / todo_reopen.",
+    "description": "Change one of the user's Persona to-dos: its title, notes, due date, reminder, priority or project. Only what you give changes; \"\" clears notes, due, remind or project. A new reminder time is pushed again even when the old one already was. Done at once, nothing to confirm, also for a task's to-do. To mark it done or open it again use todo_complete / todo_reopen.",
     "input_schema": {
       "type": "object",
       "required": [
@@ -1809,6 +1821,10 @@
             "normal",
             "low"
           ]
+        },
+        "project": {
+          "type": "string",
+          "description": "the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project; \"\" takes it out of its project"
         }
       }
     }

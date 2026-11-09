@@ -249,15 +249,9 @@ func (d *Devices) nodeTarget(info proto.NodeInfo) string {
 	return r.pkg.Version
 }
 
-// resolvedTarget is nodeTarget once the lookup is done (it may fetch manifests).
-func (d *Devices) resolvedTarget(ctx context.Context, info proto.NodeInfo) string {
-	v, _ := d.resolvedTargetKnown(ctx, info)
-	return v
-}
-
-// resolvedTargetKnown is resolvedTarget, and whether it is known: false when the release site did not answer (and
-// nothing found before stands in), so the hub's version is a guess. A lookup that found no build at all leaves the
-// hub's version as the target, which is known.
+// resolvedTargetKnown is nodeTarget once the lookup is done (it may fetch manifests), and whether it is known: false
+// when the release site did not answer (and nothing found before stands in), so the hub's version is a guess. A lookup
+// that found no build at all leaves the hub's version as the target, which is known.
 func (d *Devices) resolvedTargetKnown(ctx context.Context, info proto.NodeInfo) (string, bool) {
 	pkg, known := d.resolvedPackageKnown(ctx, info)
 	return pkg.Version, known

@@ -2,8 +2,10 @@ package node
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,7 +59,10 @@ func (n *Node) sessionList(ctx context.Context, refreshAgents bool) []proto.Sess
 	seen := map[string]bool{}
 	livePanes := map[string]bool{} // the resting Claudes' panes, whose screens are read for a dialog
 	now := time.Now()
-	for id, a := range agents {
+	// In id order, not the map's: the list is sorted by UpdatedAt with a stable sort, and rows that tie on it (live panes
+	// with no transcript yet all have none) came out in a new order on every pass, each one a whole new list for the hub.
+	for _, id := range slices.Sorted(maps.Keys(agents)) {
+		a := agents[id]
 		if !onList[id] { // a pane on Claude's agents list stays idle: the transcript is its parked session's (claudebg.go)
 			a.AgentStatus = n.claudeStatus(id, a, now)
 		}
@@ -361,7 +366,8 @@ func (n *Node) pollAgents(ctx context.Context) {
 // publish pushes a rebuilt list to the hub: the whole list when anything it shows changed, else only the revs that
 // moved (a transcript grew: a few bytes instead of the list, so the app can pull those sessions). It returns the
 // revs that moved. Runtimes (runtimes.go) publish through it too when their list changes. Nothing goes while the hub
-// has yet to say whether botmux's sessions are listed (botmuxPending).
+// has yet to say whether botmux's sessions are listed (botmuxPending), nor a list the manager holds already, byte for
+// byte (sessions_sent.go).
 func (n *Node) publish(list []proto.Session) map[string]int64 {
 	if n.botmuxPending() {
 		return nil
@@ -379,9 +385,9 @@ func (n *Node) publish(list []proto.Session) map[string]int64 {
 		return revs
 	}
 	if changed {
-		_ = n.peer.Notify("sessions.changed", map[string]any{"sessions": list})
+		n.sendSessions(list)
 	} else if len(revs) > 0 {
-		_ = n.peer.Notify("sessions.revs", map[string]any{"revs": revs})
+		n.sendRevs(revs)
 	}
 	return revs
 }

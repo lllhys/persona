@@ -1,4 +1,5 @@
 import PersonaKit
+import PhotosUI
 import SwiftUI
 
 /// Start a session inside an existing space (a new herdr tab next to the other agents).
@@ -76,9 +77,16 @@ struct NewChatView: View {
     @State private var inWorktree = false
     /// The worktree's branch as typed; "": the one the computer picks.
     @State private var worktreeBranch = ""
+    /// Photos and files for the first message (#2321), and the pickers that add them.
+    @State private var attachments = NewAgentAttachments()
+    @State private var photoPicks: [PhotosPickerItem] = []
+    @State private var showPhotos = false
+    @State private var showCamera = false
+    @State private var showFiles = false
     @FocusState private var promptFocused: Bool
     #if DEBUG
     @State private var debugLaunchers = false
+    @State private var debugAttached = false
     #endif
 
     /// `machineID` is what is remembered: the machine id, "group|id" for another group of hubs (`MachineRef.path`).
@@ -150,7 +158,16 @@ struct NewChatView: View {
     /// Nothing missing for Start Chat, and the machine's own launchers and directories are in.
     private var ready: Bool {
         machine?.online == true && defaultsFor == machineID && !cwd.isEmpty && (!launcher.isEmpty || unifiedModels)
-            && !(codex && contextBlock == nil && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && !codexNeedsMessage && attachmentsHold == nil
+    }
+
+    private var codexNeedsMessage: Bool {
+        codex && contextBlock == nil && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// What the attachments hold the start back for (a Codex launcher, uploads still going); nil: nothing.
+    private var attachmentsHold: String? {
+        FirstMessage.hold(codex: codex, attached: !attachments.isEmpty, uploading: attachments.uploading)
     }
 
     /// Why Start Chat is greyed out, the first thing missing in `ready`'s order; nil when it is ready (or still loading).
@@ -169,7 +186,8 @@ struct NewChatView: View {
         guard defaultsFor == machineID else { return nil }
         if cwd.isEmpty { return String(localized: "Choose a directory first") }
         if launcher.isEmpty && !unifiedModels { return launchers.isEmpty ? String(localized: "This computer has no launchers") : String(localized: "Choose a launcher first") }
-        return String(localized: "Codex needs a first message")
+        if codexNeedsMessage { return String(localized: "Codex needs a first message") }
+        return attachmentsHold
     }
 
     private var startingLabel: String {
@@ -332,7 +350,20 @@ struct NewChatView: View {
                     promptField
                         .focused($promptFocused)
                         .accessibilityIdentifier("newChat.prompt")
-                } header: { Text("First Message") }
+                    // A Codex launcher takes no attachments: no menu, only those picked before to take out (#2321).
+                    NewAgentAttachmentRows(attachments: attachments, adds: !codex, photos: { showPhotos = true },
+                                           camera: CameraPicker.isAvailable ? { showCamera = true } : nil,
+                                           files: { showFiles = true })
+                } header: { Text("First Message") } footer: {
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        if codex && !attachments.isEmpty {
+                            Text(FirstMessage.codexRefusal).accessibilityIdentifier("newChat.codexNote")
+                        }
+                        if let note = attachments.note {
+                            Text(note).accessibilityIdentifier("newChat.attachNote")
+                        }
+                    }
+                }
 
                 Section {
                     TextField(String(localized: "Leave empty to name it from the first message"), text: $tabName)
@@ -349,7 +380,12 @@ struct NewChatView: View {
             .navigationTitle("New Chat [Quick Actions ea4b29]")
             .navigationBarTitleDisplayMode(.inline)
             .pageToolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        attachments.cancelUploads()
+                        dismiss()
+                    }
+                }
                 #if os(macOS)
                 // A Mac sheet's primary button sits beside Cancel and answers ⏎ (docs/apple/mac.md「和 iOS 的对应」).
                 ToolbarItem(placement: .confirmationAction) {
@@ -371,10 +407,13 @@ struct NewChatView: View {
                         .background(.regularMaterial, in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
                         .accessibilityIdentifier("newChat.error")
                 } else if let notReadyReason {
-                    // A grey button alone left the user checking every row for what was missing.
+                    // A grey button alone left the user checking every row for what was missing. On the error's card:
+                    // the form scrolls under this inset, and bare text mixed with the form's (#2677).
                     Label(notReadyReason, systemImage: Theme.Icon.info)
                         .font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Theme.Space.m)
+                        .background(.regularMaterial, in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
                         .accessibilityIdentifier("newChat.notReady")
                 }
                 #if os(iOS) || os(visionOS)
@@ -425,6 +464,40 @@ struct NewChatView: View {
                 if let preset { machineID = preset.machineID; cwd = preset.cwd } else { pickDefaultMachine() }
             }
             .onChange(of: model.machines) { _, _ in if preset == nil { pickDefaultMachine() } }
+            // A file is on the computer it was uploaded to (#2321): another one picked takes the files out.
+            .onChange(of: machineID) { _, now in
+                attachments.computerChanged(to: now) { model.machine(MachineRef(path: $0))?.name }
+            }
+            .photosPicker(isPresented: $showPhotos, selection: $photoPicks, maxSelectionCount: MessagePhotos.limit,
+                          matching: .images, preferredItemEncoding: .current)
+            .onChange(of: photoPicks) { _, items in
+                guard !items.isEmpty else { return }
+                Task {
+                    await attachments.load(items, model: model)
+                    photoPicks = []
+                }
+            }
+            .fileUploadPicker(isPresented: $showFiles) { urls in attachments.upload(urls, to: ref, model: model) }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker { img in attachments.add(img, model: model) }.ignoresSafeArea()
+            }
+            #if DEBUG && (os(iOS) || os(visionOS))
+            // `-openNewAgentAttachments photo,build.log`: once this computer's launchers are in, the made-up photo
+            // attached and a made-up 3 MB file uploading for every other name, for screenshots and UI tests (#2321).
+            .onChange(of: defaultsFor) { _, now in
+                guard !now.isEmpty, !debugAttached, let list = UserDefaults.standard.string(forKey: "openNewAgentAttachments") else { return }
+                debugAttached = true
+                for name in list.split(separator: ",").map(String.init) {
+                    if name == "photo" {
+                        attachments.add(ChatView.debugPhoto, model: model)
+                        continue
+                    }
+                    let url = FileManager.default.temporaryDirectory.appending(path: name)
+                    try? Data(count: 3 << 20).write(to: url)
+                    attachments.upload([url], to: ref, model: model)
+                }
+            }
+            #endif
             .interactiveDismissDisabled(starting)
         }
         .sheet(item: $childSource) { source in
@@ -744,7 +817,10 @@ struct NewChatView: View {
             UserDefaults.standard.set(cwd, forKey: "cwd.\(machineID)")
             Haptics.success()
             model.adopt(s)
-            if !outgoing.isEmpty { model.sendNow(s.key, text: outgoing) }
+            // The photos and the uploaded files' paths go with it (#2321).
+            let photos = attachments.images.map(\.1)
+            let first = FirstMessage.text(prompt: prompt, contextBlock: contextBlock, paths: attachments.paths, photos: photos.count)
+            if !first.isEmpty { model.sendNow(s.key, text: first, images: photos) }
             onStarted(s)
         } catch {
             if sendsUltracode, Ultracode.refused(error) {

@@ -76,6 +76,21 @@ Without a reset it follows the usual rules: unavailable for 6 hours, checked at 
 - `task_plan` defaults to `machine_policy: "fixed"`, also for saved plans without the field. Preview, start and retry retain that machine and its directory. A known unusable launcher fails on that target without starting elsewhere; normal health recovery (a passing check, including Test availability on that computer) permits a later retry there. A terminal-shell `not_in_terminal` refusal can only be cleared by a real terminal start, so an explicit task retry rechecks that shell on the same computer; it still runs the normal native authentication and startup gates. Set `machine_policy: "flexible"` only for portable work that may move. A card edit that changes the machine pins the new target unless it explicitly chooses flexible placement.
 - The tool answers `Queued` while asynchronous dispatch is pending. This is not proof of an Agent start: errors appear on the same task and its failure receipt. A missing or foreign session in a start response is rejected; a `starting` session is not recorded as a successful launcher check.
 
+## A launcher the computer doesn't have (#2640)
+
+Model configuration › Agents (`agent.new`) is the one launcher purpose with no computer, and a model profile's tiers have none either, so their launcher can be a ~/.zshrc function or a wrapper script that only some computers have.
+Health records can't catch that in time: the periodic checks are off by default, so the first sign used to be a failed start (`zsh:1: command not found: <launcher>`), and from then on a fixed task was refused there as unhealthy.
+Every new Agent is now held to what its target computer can start before anything goes out (`launcher_fit.go`, `fitLauncher`): `task_plan`'s card and its dispatch (`startTaskAgent`, on the computer a flexible task lands on), `agent_start`, the App's New Agent (`agents.start_params`) and a message resuming an Agent started outside Persona (`agents.resume_params`).
+
+- **What the computer has**: `machineLaunchers` (its own list without the hidden ones, plus Persona-managed ones), the launchers `hub.json` names for it, plain `claude` and every managed launcher (both run anywhere). The same answer backs `launcherAvailable`, which keeps the main chat off a launcher that is gone.
+- **A default it lacks** (the caller named no launcher; the `agent.new` binding, a profile or a tier gave it): the start runs on `claude` when the computer has Claude Code (its node reported a version, or its list names `claude`), otherwise on the first launcher in its list that takes a prompt (not a runtime's), otherwise on `claude` anyway.
+  The default's model and effort are dropped (the new launcher runs its own default model; an effort the caller gave stays), and so is a tier that no longer applies.
+  The task's `why` says so in the user's language ("<launcher> isn't on <computer>, so this runs on claude with its default model"), and the plan card names the launcher that will run: the plan is changed when the card is made, or, when the computer's list couldn't be read then, at dispatch (the card updates).
+  `agent_start` puts the same line on its confirmation and in its answer (`Note: …`).
+- **A launcher the caller named** that the computer lacks: refused before any tab opens, naming the ones the computer has: `task_plan` fails that task, `agent_start` starts nothing (before the user is asked to confirm), New Agent gets a 400. A plan card moved to such a computer fails that task at dispatch the same way.
+- **A list that can't be read** (computer offline, a 10-second timeout, an older node) counts as having the launcher, as `launcherAvailable` always has: nothing is refused or swapped on a guess.
+- The swap comes before the fixed-policy health check, which then concerns the launcher that will actually run; a flexible task's move to another computer (above) is unchanged and the check runs where it lands.
+
 ## Automatic repair
 
 - One repair round per computer at a time (several launchers on one computer usually share one cause: the gateway config is broken and every launcher returns 400); at most two repairs per round, then it is recorded as `blocked` and waits for a person.

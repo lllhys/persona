@@ -17,7 +17,7 @@ import (
 
 // A connector's program writes a feed's public posts into the knowledge base's post archive (moments/ in the data
 // dir, the name it had when the hub's own crawler was the only writer) and reads which posts' comments to read again:
-// connector.KnowledgeBase, docs/assistant/knowledge.md "External posts". The program calls the hub; the hub checks the connector may
+// connector.KnowledgeBase, docs/assistant/knowledge.md "Pipeline", External posts. The program calls the hub; the hub checks the connector may
 // write now ("Send to knowledge base") and passes the call on with the connector's names (kb.posts_*, kb.archived_chats). The archive
 // is the knowledge base's to keep: the index, pruning past the text retention, and finding each project's posts
 // (kb.LinkMoments) stay here whoever writes the posts.

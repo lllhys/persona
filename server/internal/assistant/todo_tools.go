@@ -54,6 +54,7 @@ func (s *Service) toolTodoList(ctx context.Context, args json.RawMessage) (strin
 		Overdue    bool   `json:"overdue"`
 		WithAgents *bool  `json:"with_agents"`
 		Query      string `json:"query"`
+		Project    string `json:"project"`
 		Limit      int    `json:"limit"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
@@ -87,6 +88,14 @@ func (s *Service) toolTodoList(ctx context.Context, args json.RawMessage) (strin
 		after = at
 	}
 	q := strings.ToLower(strings.TrimSpace(a.Query))
+	project := ""
+	if p := strings.TrimSpace(a.Project); p != "" {
+		slug, err := s.todoProject(ctx, p)
+		if err != nil {
+			return "", err
+		}
+		project = slug
+	}
 
 	var list []Todo
 	s.todos.mu.RLock()
@@ -107,6 +116,9 @@ func (s *Service) toolTodoList(ctx context.Context, args json.RawMessage) (strin
 			return true
 		}
 		if a.WithAgents != nil && *a.WithAgents != todoHasAgents(t) {
+			return true
+		}
+		if project != "" && t.Project != project {
 			return true
 		}
 		return q != "" && !strings.Contains(strings.ToLower(t.Title+"\n"+t.Notes), q)
@@ -200,6 +212,7 @@ func (s *Service) toolTodoCreate(ctx context.Context, machine, self string, args
 		Due      string `json:"due"`
 		Remind   string `json:"remind"`
 		Priority string `json:"priority"`
+		Project  string `json:"project"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("arguments: %w", err)
@@ -221,6 +234,9 @@ func (s *Service) toolTodoCreate(ctx context.Context, machine, self string, args
 		return "", err
 	}
 	plan.Priority = &pr
+	if err := s.setTodoProject(ctx, &a.Project, &plan); err != nil {
+		return "", err
+	}
 	if t, ok := s.openTodoLike(title, plan); ok {
 		return "Already there, not created again: " + todoLine(t, now, loc), nil
 	}
@@ -242,6 +258,7 @@ func (s *Service) toolTodoUpdate(ctx context.Context, machine, self string, args
 		Due      json.RawMessage `json:"due"`
 		Remind   json.RawMessage `json:"remind"`
 		Priority json.RawMessage `json:"priority"`
+		Project  json.RawMessage `json:"project"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("arguments: %w", err)
@@ -274,6 +291,7 @@ func (s *Service) toolTodoUpdate(ctx context.Context, machine, self string, args
 			e.Priority = &pr
 			return err
 		}},
+		{"project", a.Project, func(v string) error { return s.setTodoProject(ctx, &v, &e) }},
 	} {
 		v, set, err := optionalText(f.raw, f.name)
 		if err == nil && set {
@@ -285,7 +303,7 @@ func (s *Service) toolTodoUpdate(ctx context.Context, machine, self string, args
 		changed = changed || set
 	}
 	if !changed {
-		return "", errors.New("nothing to change: give title, notes, due, remind or priority")
+		return "", errors.New("nothing to change: give title, notes, due, remind, priority or project")
 	}
 	if ok, err := s.confirmOutbound(ctx, machine, self, "todo_update", t.Title, args); err != nil || !ok {
 		return todoNotAllowed(err)
@@ -395,15 +413,18 @@ func (s *Service) toolTodoArg(args json.RawMessage) (Todo, error) {
 	return formatTodo(t), nil
 }
 
-// openTodoLike is an open todo with this title and the due date of plan: a create retried (or a list of to-dos handed in
-// twice) is not made twice.
+// openTodoLike is an open todo with this title, the due date of plan and its project: a create retried (or a list of
+// to-dos handed in twice) is not made twice.
 func (s *Service) openTodoLike(title string, plan db.TodoEdit) (Todo, bool) {
 	probe := Todo{}
 	probe.setPlan(db.TodoRow{DueAt: plan.DueAt, DueDate: plan.DueDate})
+	if plan.Project != nil {
+		probe.Project = *plan.Project
+	}
 	s.todos.mu.RLock()
 	defer s.todos.mu.RUnlock()
 	for _, t := range s.todos.todos {
-		if t.DoneAt == nil && strings.TrimSpace(t.Title) == title && t.DueDate == probe.DueDate &&
+		if t.DoneAt == nil && strings.TrimSpace(t.Title) == title && t.DueDate == probe.DueDate && t.Project == probe.Project &&
 			(t.DueAt == nil) == (probe.DueAt == nil) && (t.DueAt == nil || t.DueAt.Equal(*probe.DueAt)) {
 			return formatTodo(copyTodoLocked(t)), true
 		}
@@ -468,6 +489,9 @@ func todoLine(t Todo, now time.Time, loc *time.Location) string {
 		b.WriteString(", task")
 	}
 	b.WriteString("]")
+	if t.Project != "" {
+		fmt.Fprintf(&b, " · project %s", t.Project)
+	}
 	if t.DueAt != nil {
 		fmt.Fprintf(&b, " · due %s", t.DueAt.In(loc).Format(toolTimeLayout))
 	} else if d, err := time.Parse(dayLayout, t.DueDate); err == nil {

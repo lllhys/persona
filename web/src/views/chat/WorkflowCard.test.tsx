@@ -337,17 +337,21 @@ describe("in the chat's flow", () => {
     );
   };
 
-  it("keeps a running run's card out of the folded work, like a running subagent", () => {
+  it("keeps a running workflow inside the summary until manual expansion", () => {
     draw([running()]);
+    expect(q("[data-workflow-call]")).toBeNull();
+    act(() => q("[data-work-group] > button")!.click());
     const card = q("[data-workflow-call]")!;
-    expect(card.closest("[data-work-group]")).toBeNull();
+    expect(card.closest("[data-work-group]")).not.toBeNull();
     expect(q("[data-work-group]")).not.toBeNull(); // the Grep before it folded
   });
 
-  it("keeps an ended run's card in the open, folded to its head and what it was for", () => {
+  it("keeps an ended workflow inspectable inside the folded execution summary", () => {
     draw([running({ running: false, status: "completed", ended_at: at(100) })]);
+    expect(q("[data-workflow-call]")).toBeNull();
+    act(() => q("[data-work-group] > button")!.click());
     const card = q('[data-workflow-call="completed"]')!;
-    expect(card.closest("[data-work-group]")).toBeNull();
+    expect(card.closest("[data-work-group]")).not.toBeNull();
     expect(card.querySelector("button[aria-expanded]")!.getAttribute("aria-expanded")).toBe("false");
     expect(text("[data-workflow-summary]")).toBe("Audit each area, verify each finding");
     expect(q("[data-work-group]")!.textContent).toContain("已工作"); // the Grep before it folded
@@ -355,6 +359,8 @@ describe("in the chat's flow", () => {
 
   it("ends in place: the same card turns its chip and folds, nothing leaves the chat", () => {
     draw([running()]);
+    expect(q("[data-workflow-call]")).toBeNull();
+    act(() => q("[data-work-group] > button")!.click());
     const card = q("[data-workflow-call]")!;
     push([running({ running: false, status: "completed", ended_at: at(100), agents_running: 0, agents_done: 5 })]);
     expect(q("[data-workflow-call]")).toBe(card); // not unmounted and drawn again elsewhere
@@ -381,40 +387,50 @@ describe("in the chat's flow", () => {
     return seg;
   };
 
-  it("fetches a fold of the hub's that holds a run's call, running or ended", () => {
+  const openSummary = async () => { await act(async () => q("[data-work-group] > button")!.click()); };
+  it("fetches folded workflow calls only when the reader expands the summary, live or ended", async () => {
     const expand = vi.fn(async (_f: Item) => {});
     const seg = drawFolded([running()], expand);
+    expect(expand).not.toHaveBeenCalled();
+    await openSummary();
     expect(expand).toHaveBeenCalledTimes(1);
     expect(expand.mock.calls[0][0].id).toBe("fold:x#0");
-    drawFolded([running()], expand, seg); // drawn again as it is: not asked again
-    expect(expand).toHaveBeenCalledTimes(1);
+    drawFolded([running()], expand, seg);
+    expect(expand).toHaveBeenCalledTimes(1); // redrawing a closed summary does not fetch
     act(() => root.render(<></>));
     const ended = vi.fn(async (_f: Item) => {});
     drawFolded([running({ running: false, status: "completed", ended_at: at(100) })], ended);
+    expect(ended).not.toHaveBeenCalled();
+    await openSummary();
     expect(ended).toHaveBeenCalledTimes(1);
-    // no run listed: nothing fetched
     act(() => root.render(<></>));
     const none = vi.fn(async (_f: Item) => {});
     drawFolded([], none);
     expect(none).not.toHaveBeenCalled();
+    await openSummary();
+    expect(none).toHaveBeenCalledTimes(1); // even a workflow no longer listed can be inspected
   });
 
-  it("asks again when the chat is loaded afresh (the same fold comes back), and after a failure", async () => {
+  it("fetches reloaded history on manual open and supports an explicit retry after failure", async () => {
     const expand = vi.fn(async (_f: Item) => {});
     drawFolded([running()], expand);
-    act(() => root.render(<></>)); // another chat, then back: the transcript loads again with the same fold
+    await openSummary();
+    act(() => root.render(<></>));
     drawFolded([running()], expand);
+    expect(expand).toHaveBeenCalledTimes(1);
+    await openSummary();
     expect(expand).toHaveBeenCalledTimes(2);
     act(() => root.render(<></>));
     const flaky = vi.fn(async (_f: Item) => {}).mockRejectedValueOnce(new Error("offline"));
     drawFolded([running()], flaky);
+    await openSummary();
     expect(flaky).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    act(() => vi.advanceTimersByTime(5000));
+    const retry = q("[data-work-group] [role=status] button");
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
     expect(flaky).toHaveBeenCalledTimes(2);
   });
+
 });
 
 describe("the dialog's card", () => {

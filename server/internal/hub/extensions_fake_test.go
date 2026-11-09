@@ -34,6 +34,8 @@ type fakeExt struct {
 	// asked are the extensions.authorize the hub sent; served the escaped paths of the requests it relayed here.
 	asked  []extwire.Authorize
 	served []string
+	// authorizing, when set, runs as the hub asks whose the token of a hash is, before the answer.
+	authorizing func(hash string)
 }
 
 var fakeExts sync.Map // *Hub → *fakeExt
@@ -83,7 +85,11 @@ func (f *fakeExt) Request(_ context.Context, method string, params json.RawMessa
 		f.mu.Lock()
 		f.asked = append(f.asked, a)
 		out, ok := f.tokens[a.Hash]
+		authorizing := f.authorizing
 		f.mu.Unlock()
+		if authorizing != nil {
+			authorizing(a.Hash)
+		}
 		if !ok {
 			return extwire.Authorized{}, true, nil
 		}

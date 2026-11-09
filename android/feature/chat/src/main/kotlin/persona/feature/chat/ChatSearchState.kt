@@ -70,7 +70,7 @@ internal fun ChatSearchNavigation(search: ChatSearchState, list: ChatListState, 
             list.setExpanded(list.position.expanded + target.expand)
             return@LaunchedEffect
         }
-        if (lines.none { it.id == target.rowId }) return@LaunchedEffect
+        if (lines.none { it.contentKey == target.rowId }) return@LaunchedEffect
         withFrameNanos { }
         if (list.scrollToEntry(ChatListEntry(target.rowId), alignTop = true)) {
             search.pending = false
@@ -83,7 +83,7 @@ internal fun ChatSearchNavigation(search: ChatSearchState, list: ChatListState, 
         val rowId = origin.rowId
         withFrameNanos { }
         if (rowId == null) list.returnToLatest()
-        else if (rowId.startsWith("outbox-") || lines.any { it.id == rowId }) {
+        else if (rowId.startsWith("outbox-") || lines.any { it.contentKey == rowId }) {
             if (!list.scrollToEntry(ChatListEntry(rowId, offsetPx = origin.offsetPx))) return@LaunchedEffect
         } else {
             // Expansion changes are projected asynchronously before the saved key becomes available.

@@ -484,8 +484,8 @@ func TestRunLockAndSavedStatus(t *testing.T) {
 	if err != nil || st.State != "connected" || st.HubName != "家里" || st.MeshHubs != 2 || st.PID != 7 || !st.Updated.Equal(now) {
 		t.Fatalf("%+v %v", st, err)
 	}
-	if StatusPath(path) != filepath.Join(filepath.Dir(path), "link.status.json") || LogPath(path) != filepath.Join(filepath.Dir(path), "link.log") {
-		t.Fatal(StatusPath(path), LogPath(path))
+	if StatusPath(path) != filepath.Join(filepath.Dir(path), "link.status.json") {
+		t.Fatal(StatusPath(path))
 	}
 }
 

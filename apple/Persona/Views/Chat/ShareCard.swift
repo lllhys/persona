@@ -14,15 +14,16 @@ struct ShareMessage: Identifiable {
 }
 
 /// The message laid out as a card: who said it, where, the words, and a quiet Persona mark — drawn into an image.
+/// `width`: the card's, chosen for its content (`ShareCardWidth`, #2216).
 struct MessageShareCard: View {
     var message: ShareMessage
     var dark: Bool
+    var width = ShareCardWidth.base
 
-    static let width: CGFloat = 390
     /// Very long answers are cut: a picture of ten screens helps nobody.
     static let maxChars = 3000
 
-    private var text: String {
+    var text: String {
         let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.count > Self.maxChars ? String(t.prefix(Self.maxChars)) + "\n\n…" : t
     }
@@ -58,7 +59,10 @@ struct MessageShareCard: View {
         .background(dark ? Color(white: 0.11) : .white, in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         .shadow(color: .black.opacity(dark ? 0.4 : 0.08), radius: 16, y: 6)
         .padding(24)
-        .frame(width: Self.width)
+        // The gradient fills the whole image: the renderer can size it a little taller than the card is laid out
+        // (a table measures itself in two passes), which left a transparent band above and below it.
+        .frame(width: width)
+        .frame(maxHeight: .infinity)
         .background(LinearGradient(colors: dark ? [Color(hex: 0x1C2440), Color(hex: 0x2B1D3F)] : [Color(hex: 0xDCE8FF), Color(hex: 0xF1E4FF)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing))
         .environment(\.colorScheme, dark ? .dark : .light)
@@ -83,11 +87,22 @@ struct MessageShareCard: View {
         }
     }
 
+    /// Drawn as wide as its tables and code need, or a little wider when it would be a thin strip (`ShareCardWidth`).
     @MainActor static func render(_ message: ShareMessage, dark: Bool) -> UIImage? {
-        let r = ImageRenderer(content: MessageShareCard(message: message, dark: dark))
+        let card = MessageShareCard(message: message, dark: dark)
+        let width = ShareCardWidth.width(natural: ShareCardWidth.natural(card.text), height: size(card, width: ShareCardWidth.base).height)
+        let r = ImageRenderer(content: MessageShareCard(message: message, dark: dark, width: width))
         r.proposedSize = ProposedViewSize(width: width, height: nil) // measured at the width it is drawn at
         r.scale = 3
         return r.uiImage
+    }
+
+    /// The card's size at `width`, in points.
+    @MainActor private static func size(_ card: MessageShareCard, width: CGFloat) -> CGSize {
+        let r = ImageRenderer(content: card)
+        r.proposedSize = ProposedViewSize(width: width, height: nil)
+        r.scale = 1
+        return r.uiImage?.size ?? .zero
     }
 }
 
@@ -96,6 +111,12 @@ extension MarkdownUI.Theme {
     /// draws no scroll views at all).
     @MainActor static let card = MarkdownUI.Theme.persona
         .text { FontSize(15) }
+        .paragraph { config in
+            config.label
+                .fixedSize(horizontal: false, vertical: true)
+                .relativeLineSpacing(.em(0.26))
+                .markdownMargin(top: 0, bottom: 10)
+        }
         .codeBlock { config in
             config.label
                 .relativeLineSpacing(.em(0.2))
@@ -111,6 +132,78 @@ extension MarkdownUI.Theme {
                 .markdownTableBackgroundStyle(.alternatingRows(Color.clear, Color.primary.opacity(0.03)))
                 .markdownMargin(top: 4, bottom: 12)
         }
+}
+
+/// How wide a message's card is drawn (#2216). Plain text keeps a phone's width; tables, code blocks and their long lines
+/// widen it to their own width, up to `cap`, past which a table wraps its cells instead. A card that would still be a
+/// thin strip, taller than `tallest` times its width, widens too, also up to `cap`: about 28 Chinese characters a line
+/// at 15 pt, still a comfortable line to read, and filling a phone's screen the words are about three quarters as big.
+nonisolated enum ShareCardWidth {
+    static let base: CGFloat = 390
+    static let cap: CGFloat = 520
+    static let tallest: CGFloat = 2.6
+    /// Around the words: the 24 pt margin and the 22 pt padding on each side.
+    static let chrome: CGFloat = 2 * (24 + 22)
+
+    /// natural: the widest table or code block at its own width (0 for none); height: the card's height at `base`.
+    static func width(natural: CGFloat, height: CGFloat) -> CGFloat {
+        var width = base
+        if natural > 0 { width = max(width, natural + chrome) }
+        if height > tallest * base {
+            // The words keep about the same area as they widen: height × width of the text ≈ the same.
+            let area = height * (base - chrome)
+            let fit = (tallest * chrome + (tallest * tallest * chrome * chrome + 4 * tallest * area).squareRoot()) / (2 * tallest)
+            width = max(width, fit)
+        }
+        return min(width.rounded(), cap)
+    }
+
+    /// The widest of the text's tables and code blocks drawn at their own width, as the card draws them.
+    @MainActor static func natural(_ text: String) -> CGFloat {
+        ShareCardBlocks.wide(text).map { block in
+            let r = ImageRenderer(content: Markdown(block).markdownTheme(.card).fixedSize())
+            r.proposedSize = .unspecified
+            r.scale = 1
+            return r.uiImage?.size.width ?? 0
+        }.max() ?? 0
+    }
+}
+
+/// The parts of a message that want width: its fenced code blocks and its tables (a row of pipes over a delimiter row),
+/// each as the Markdown that draws it alone.
+nonisolated enum ShareCardBlocks {
+    static func wide(_ text: String) -> [String] {
+        let lines = text.components(separatedBy: "\n")
+        var out: [String] = [], i = 0
+        while i < lines.count {
+            let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
+            if let fence = MarkdownFence.opening(trimmed) {
+                var j = i + 1
+                while j < lines.count, !fence.isClosed(by: lines[j].trimmingCharacters(in: .whitespaces)) { j += 1 }
+                out.append(lines[i...min(j, lines.count - 1)].joined(separator: "\n"))
+                i = j + 1
+            } else if trimmed.contains("|"), i + 1 < lines.count, isDelimiter(lines[i + 1]) {
+                var j = i + 2
+                while j < lines.count, lines[j].contains("|"), !lines[j].trimmingCharacters(in: .whitespaces).isEmpty { j += 1 }
+                out.append(lines[i..<j].joined(separator: "\n"))
+                i = j
+            } else {
+                i += 1
+            }
+        }
+        return out
+    }
+
+    /// `| --- | :-: |`, `---|---`: a table's second line (with a pipe: a lone `---` is a rule).
+    static func isDelimiter(_ line: String) -> Bool {
+        let cells = line.trimmingCharacters(in: .whitespaces).split(separator: "|", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard line.contains("|"), !cells.isEmpty else { return false } // a lone "---" is a rule
+        return cells.allSatisfy { c in
+            let core = c.drop { $0 == ":" }.reversed().drop { $0 == ":" }
+            return !core.isEmpty && core.allSatisfy { $0 == "-" }
+        }
+    }
 }
 
 /// Preview of the card, light or dark, with the image viewer's bars (#4714, `ViewerTopBar` / `ViewerBottomBar`): a round

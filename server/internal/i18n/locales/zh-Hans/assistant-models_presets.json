@@ -1,6 +1,8 @@
 {
   "name_anthropic": "Anthropic 官方",
   "desc_anthropic": "Claude 官方 API，需要海外账号和支付方式",
+  "name_openai": "OpenAI 官方",
+  "desc_openai": "OpenAI Responses 官方 API，用于翻译、分诊等直接 API 任务",
   "name_deepseek": "DeepSeek",
   "desc_deepseek": "深度求索，国内直接开通，按量付费",
   "name_kimi": "Kimi（月之暗面）",

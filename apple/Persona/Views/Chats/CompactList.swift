@@ -123,7 +123,7 @@ struct CompactInteractionRow: View {
 
     var body: some View {
         HStack(spacing: CompactList.gap) {
-            ThemedIcon(interaction.kind.symbol)
+            ThemedIcon(interaction.symbol)
                 .font(CompactList.metaStrong)
                 .foregroundStyle(StatusPalette.needsYou.dot)
                 .scaledFrame(width: CompactList.mark)

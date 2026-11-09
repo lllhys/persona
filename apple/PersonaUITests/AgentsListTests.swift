@@ -244,7 +244,7 @@ final class AgentsListTests: XCTestCase {
         launch(fresh: false)
         reach(row(0, compact: true), "still compact after a relaunch")
         listMenu().tap()
-        see(app.buttons["卡片"], "卡片 in the menu").tap()
+        see(app.buttons["头像"], "头像 in the menu").tap() // the default style (#2530)
         reach(row(0), "card rows again")
         XCTAssertFalse(row(0, compact: true).exists)
     }

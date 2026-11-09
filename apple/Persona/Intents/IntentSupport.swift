@@ -43,6 +43,9 @@ nonisolated enum IntentText {
             return String(localized: "A permission request is waiting for you")
         case .screen:
             return String(localized: "The terminal is waiting for your input")
+        case .elicitation:
+            if let m = ix.askLine(includeToolName: false) { return m }
+            return String(localized: "An MCP request is waiting for you")
         }
     }
 
@@ -58,6 +61,7 @@ nonisolated enum IntentText {
         switch kind {
         case .question: String(localized: "This is a question. Open Persona to answer it.")
         case .screen: String(localized: "The terminal is waiting for your input. Open Persona.")
+        case .elicitation: String(localized: "This MCP request needs the app. Open Persona to answer it.")
         case .plan, .permission: String(localized: "Open Persona to handle this.")
         }
     }

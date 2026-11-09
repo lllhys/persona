@@ -1,6 +1,8 @@
 {
   "name_anthropic": "Anthropic",
   "desc_anthropic": "Claude の公式 API",
+  "name_openai": "OpenAI（公式）",
+  "desc_openai": "翻訳やトリアージなどの直接 API タスク向けの OpenAI Responses 公式 API",
   "name_deepseek": "DeepSeek",
   "desc_deepseek": "従量課金",
   "name_kimi": "Kimi（中国版）",

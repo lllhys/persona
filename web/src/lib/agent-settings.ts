@@ -360,7 +360,7 @@ export function mailProviderBadge(a: MailAccount): string | null {
   return null;
 }
 
-/** GET / PUT /api/v1/mail/oauth/microsoft/config (docs/extensions/mail.md "Connecting Outlook"): whether Outlook sign-in can start,
+/** GET / PUT /api/v1/mail/oauth/microsoft/config (docs/extensions/mail.md "Outlook: Sign In with Microsoft"): whether Outlook sign-in can start,
  *  with which client ID (not a secret) from where (app | config), and the redirect URI to register in Microsoft Entra. */
 export interface MicrosoftConfig {
   configured: boolean;

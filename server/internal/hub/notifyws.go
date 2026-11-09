@@ -71,9 +71,12 @@ func (h *Hub) notifyInteraction(owner string, ix proto.Interaction, machine stri
 		"interaction_id": ix.ID, "kind": ix.Kind, "summary": ix.Summary})
 	wants := pushWants{Kind: "input"}
 	if ix.Kind == proto.IxElicitation {
+		// Only what can show an MCP form or link: the phones that registered for one (#2433; a tap opens the card,
+		// the push has no buttons) and the connections that declared it.
+		h.push.sendCard(owner, build, ix.ID, wants.fn(), wants.quiet(), takesElicitation)
 		h.notifyWSFrom(owner, "interaction", build, wants.fn(), wants.quiet(), "elicitation")
 	} else {
-		h.push.sendCard(owner, build, ix.ID, wants.fn(), wants.quiet())
+		h.push.sendCard(owner, build, ix.ID, wants.fn(), wants.quiet(), nil)
 		h.notifyWSFrom(owner, "interaction", build, wants.fn(), wants.quiet())
 	}
 }

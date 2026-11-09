@@ -5,6 +5,8 @@
   "task_no_machine": "“{task}”: there’s no computer {machine}",
   "no_machine": "There’s no computer {machine}",
   "fixed_launcher_unhealthy": "Launcher {launcher} is unavailable on fixed computer {machine}: {reason}. This task stays on that computer; retry after its health recovers.",
+  "launcher_not_on_machine": "Launcher {launcher} isn’t on {machine}, so nothing was started. Launchers that computer has: {launchers}",
+  "launcher_swapped": "{launcher} isn’t on {machine}, so this runs on {to} with its default model",
   "start_identity_conflict": "The start response did not identify a session on the requested computer.",
   "failed_start": "Didn’t start: {reason}",
   "task_failed_title": "“{name}” couldn’t be started",

@@ -325,14 +325,30 @@ func (h *Hub) tlsPin() (port int, fp string) {
 }
 
 // pairCandidates keeps the QR small and never includes plaintext or LAN addresses.
+// Prefer one literal address per family, IPv6 first, when both are available.
+// Names do not guarantee either family; otherwise keep the first two eligible candidates.
 func (h *Hub) pairCandidates() []string {
 	var urls []string
+	var ipv6, ipv4 string
 	for _, endpoint := range h.endpointList() {
-		if endpoint.Scheme == "https" && endpoint.Kind != "lan" {
+		if endpoint.Scheme != "https" || endpoint.Kind == "lan" {
+			continue
+		}
+		if len(urls) < 2 {
 			urls = append(urls, endpoint.URL)
-			if len(urls) == 2 {
-				break
+		}
+		switch endpoint.Kind {
+		case "ipv6":
+			if ipv6 == "" {
+				ipv6 = endpoint.URL
 			}
+		case "ipv4":
+			if ipv4 == "" {
+				ipv4 = endpoint.URL
+			}
+		}
+		if ipv6 != "" && ipv4 != "" {
+			return []string{ipv6, ipv4}
 		}
 	}
 	return urls

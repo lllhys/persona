@@ -1,4 +1,4 @@
-List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): open ones by default, earliest due first (those without a due date last), each with its id, title, state, priority, due date, reminder and the agents on it, and the first line of its notes. Times are in the user's time zone. Filter by state, by due date (due_before / due_after: a day or a moment), overdue ones only, with or without agents, or a word in the title or notes. Use it before changing a to-do, to find its id; ask with todo_get for one in full.
+List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): open ones by default, earliest due first (those without a due date last), each with its id, title, state, priority, project, due date, reminder and the agents on it, and the first line of its notes. Times are in the user's time zone. Filter by state, by due date (due_before / due_after: a day or a moment), overdue ones only, with or without agents, by knowledge-base project, or a word in the title or notes. Use it before changing a to-do, to find its id; ask with todo_get for one in full.
 
 ```json
 {
@@ -28,6 +28,10 @@ List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): o
     "query": {
       "type": "string",
       "description": "words to find in the title or notes"
+    },
+    "project": {
+      "type": "string",
+      "description": "only the to-dos in this knowledge-base project (its slug or name)"
     },
     "limit": {
       "type": "integer",

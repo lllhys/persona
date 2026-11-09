@@ -50,6 +50,10 @@ type principal struct {
 	Extension string
 	Scopes    []string
 	Manager   string
+	// extHash, an extension token's hash: what it relays is kept under it, with Manager (relayID), which that manager
+	// names when it drops the token (extwire.HubTokenRevoked). extAt: when the hub asked the managers whose it is.
+	extHash string
+	extAt   time.Time
 	// extOpens, extScope: an extension's token opens the request's route (the manager said), else the scope it lacks.
 	extOpens bool
 	extScope string

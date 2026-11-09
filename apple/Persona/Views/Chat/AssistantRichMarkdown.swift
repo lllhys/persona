@@ -27,7 +27,7 @@ struct AssistantRichMarkdown: View {
                     if let block = part.block, let conversation {
                         card(block, conversation: conversation)
                     } else if let markdown = part.markdown, !markdown.isEmpty {
-                        let source = Links.markdown(MathMarkdown.rewrite(markdown))
+                        let source = Links.markdown(MathMarkdown.rewrite(ReplyBreaks.apply(markdown)))
                         LinkedMarkdown(plain: MarkdownContent(source), paths: PathMarkdown(source), key: memoKey + "/" + part.id)
                     }
                 }

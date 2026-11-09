@@ -371,7 +371,32 @@ nonisolated enum ConnectorRow: Hashable, Identifiable {
     }
 }
 
-/// The Connectors section of Settings: one row per connector with what it has now; with several managers the hub's
+/// Settings › Connectors: the existing sources followed by the sent ledger, never a top-level Settings entry.
+struct ConnectorsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        SettingsForm {
+            ConnectorsSection()
+            if !model.isDemo {
+                Section {
+                    NavigationLink(value: SettingsPage.sent) {
+                        SettingsRow(title: String(localized: "Records sent as you"), symbol: Theme.Icon.sentAsYou, tint: Theme.Hue.orange)
+                            .lineLimit(1)
+                    }
+                    .accessibilityIdentifier("connectors.sent")
+                } footer: {
+                    Text("What Persona sent in your name, and why it was allowed")
+                }
+            }
+        }
+        .accessibilityIdentifier("connectors-list")
+        .themedPage()
+        .detailTitle(String(localized: "Connectors"))
+    }
+}
+
+/// The Connectors section: one row per connector with what it has now; with several managers the hub's
 /// connectors follow in a section per manager, under its name.
 struct ConnectorsSection: View {
     @Environment(AppModel.self) private var model

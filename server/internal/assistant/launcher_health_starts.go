@@ -56,14 +56,16 @@ func (s *Service) followStarts(ctx context.Context, d DeviceSessions) {
 	var worked []string
 	var failed []failure
 	now := time.Now()
-	listed := make(map[string]proto.Session, len(d.Sessions))
+	// started: whether each followed start's last row says it started (neither starting nor failed). Only followed
+	// ones are looked up below, and the last row of a session id is the one that left it followed or not, so the
+	// rest of the list is not copied.
+	var started map[string]bool
 	b := &s.health
 	b.mu.Lock()
 	if b.starting == nil {
 		b.starting = map[[2]string]startWatch{}
 	}
 	for _, sess := range d.Sessions {
-		listed[sess.SessionID] = sess
 		key := [2]string{d.MachineID, sess.SessionID}
 		switch {
 		case sess.Starting:
@@ -83,14 +85,20 @@ func (s *Service) followStarts(ctx context.Context, d DeviceSessions) {
 				failed = append(failed, failure{cmp.Or(sess.Launcher, "claude"), sessionStartErr(sess)})
 			}
 		}
+		if _, followed := b.starting[key]; followed {
+			if started == nil {
+				started = map[string]bool{}
+			}
+			started[sess.SessionID] = !sess.Starting && sess.StartError == ""
+		}
 	}
 	for key, w := range b.starting {
 		if key[0] != d.MachineID {
 			continue
 		}
-		sess, ok := listed[key[1]]
+		clean, listed := started[key[1]]
 		switch {
-		case ok && !sess.Starting && sess.StartError == "":
+		case listed && clean:
 			worked = append(worked, w.launcher)
 			delete(b.starting, key)
 		case now.Sub(w.seen) > startFollowFor:

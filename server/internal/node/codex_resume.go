@@ -35,9 +35,12 @@ const codexResumeHold = 2 * time.Minute
 var codexResumes sync.Map
 
 // codexResumable: thread id is a Codex history row that may be resumed in a terminal of this machine's engine.
-func (n *Node) codexResumable(id string) bool {
+func (n *Node) codexResumable(id string) bool { return n.codexResumableIn(id, nil) }
+
+// codexResumableIn is codexResumable within a list pass (codexListPass).
+func (n *Node) codexResumableIn(id string, pass *codexListPass) bool {
 	src, ok := n.codexSource(id)
-	if !ok || src.path == "" || src.thread != id || n.codexBlocked(id) || n.isAssistantSession(id) || n.ownedAssistantSource(src.thread) {
+	if !ok || src.path == "" || src.thread != id || n.codexBlocked(id) || n.isAssistantSessionIn(id, pass) || n.ownedAssistantSource(src.thread) {
 		return false
 	}
 	if _, live := n.agent(id); live {

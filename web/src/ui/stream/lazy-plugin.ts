@@ -12,6 +12,13 @@ export interface LazyPlugin<P> {
   /** The plugin once loaded, when `wanted` (asking for it then); null otherwise, so a reply that has no use for it is not
    *  drawn again when it arrives. */
   use: (wanted: boolean) => P | null;
+  /** Asks for it once the page is idle when `wanted`, without drawing the caller again when it arrives (code blocks
+   *  take the highlighter up themselves, highlight.ts). */
+  ask: (wanted: boolean) => void;
+  /** The plugin, or null while it is not loaded. */
+  loaded: () => P | null;
+  /** Calls `listener` when it arrives; returns the unsubscribe. */
+  subscribe: (listener: () => void) => () => void;
 }
 
 /** The longest a reply waits for an idle moment before its plugin is asked for. */
@@ -52,5 +59,15 @@ export function lazyPlugin<P>(importer: () => Promise<P>): LazyPlugin<P> {
     }, [wanted, ready]);
     return wanted ? (ready ?? plugin) : null;
   }
-  return { load, use };
+  function ask(wanted: boolean): void {
+    useEffect(() => {
+      if (!wanted || plugin) return;
+      return whenIdle(() => void load().catch(() => {}), IDLE_MS);
+    }, [wanted]);
+  }
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => void listeners.delete(listener);
+  };
+  return { load, use, ask, loaded: () => plugin, subscribe };
 }

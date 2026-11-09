@@ -205,6 +205,11 @@ var prLink = lazyre.New(`https://github\.com/[\w.-]+/[\w.-]+/pull/\d+`)
 // finds the work finished.
 func (s *Service) taskTurnEnded(ctx context.Context, machine, sid string) {
 	time.Sleep(s.settleDelay(ctx)) // a turn that ends to ask, or goes on at once, is not the end
+	s.taskTurnSettled(ctx, machine, sid)
+}
+
+// taskTurnSettled is taskTurnEnded once the turn stayed still: after its sleep, or afterSettle's timer.
+func (s *Service) taskTurnSettled(ctx context.Context, machine, sid string) {
 	t, ok := s.taskOf(ctx, machine, sid)
 	if !ok {
 		return
@@ -301,7 +306,7 @@ func (s *Service) taskTurnEnded(ctx context.Context, machine, sid string) {
 		if latest, ok := s.session(cctx, last.MachineID, last.SessionID); ok &&
 			(latest.Status != last.Status || latest.Rev != last.Rev || latest.LastText != last.LastText || !latest.UpdatedAt.Equal(last.UpdatedAt)) &&
 			s.takeTaskAnswerRetry(machine, sid) {
-			go s.taskTurnEnded(context.WithoutCancel(ctx), machine, sid)
+			s.afterSettle(context.WithoutCancel(ctx), s.taskTurnSettled, machine, sid)
 		}
 		return
 	}

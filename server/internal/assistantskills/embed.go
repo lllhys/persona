@@ -355,12 +355,6 @@ func List(user string, connectors []string) []Skill {
 	return out
 }
 
-// Has says whether the assistant directory's skills (dir) include name.
-func Has(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name, "SKILL.md"))
-	return err == nil
-}
-
 // description is the `description:` of a SKILL.md's front matter (a folded `>` or `|` one joined on one line).
 func description(md string) string {
 	sc := bufio.NewScanner(strings.NewReader(md))

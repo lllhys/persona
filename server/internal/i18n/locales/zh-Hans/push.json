@@ -1,5 +1,7 @@
 {
   "elicitation_title": "MCP 请求等你处理",
+  "elicitation_server_title": "MCP 服务 {server} 等你处理",
+  "elicitation_body": "打开 Persona 处理",
   "question_title": "Claude 在问你",
   "plan_title": "计划等你审批",
   "permission_title": "需要你授权",

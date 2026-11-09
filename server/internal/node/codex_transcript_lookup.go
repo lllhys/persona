@@ -31,8 +31,8 @@ func (n *Node) oldCodexTranscript(id string) string {
 			}
 			var matches []string
 			for _, path := range paths {
-				match := rolloutIDRe.FindStringSubmatch(filepath.Base(path))
-				if match == nil || codexSourceID(home, match[1], cfg.LegacyHome) != id {
+				thread := rolloutID(path)
+				if thread == "" {
 					continue
 				}
 				// Configured home aliases are canonicalized, but a nested symlink
@@ -44,8 +44,7 @@ func (n *Node) oldCodexTranscript(id string) string {
 					}
 					continue // A concurrently moved or unavailable transcript is not readable.
 				}
-				target := rolloutIDRe.FindStringSubmatch(filepath.Base(real))
-				if target == nil || target[1] != match[1] {
+				if rolloutID(real) != thread {
 					continue
 				}
 				rel, err := filepath.Rel(home, real)
@@ -64,7 +63,7 @@ func (n *Node) oldCodexTranscript(id string) string {
 					}
 					continue
 				}
-				if st.Mode().IsRegular() {
+				if st.Mode().IsRegular() && codexSourceID(home, rolloutThreadID(home, real), cfg.LegacyHome) == id {
 					matches = append(matches, real)
 				}
 			}

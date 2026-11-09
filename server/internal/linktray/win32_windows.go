@@ -44,7 +44,6 @@ var (
 	procGetSystemMetricsForDpi        = user32.NewProc("GetSystemMetricsForDpi")
 	procMonitorFromPoint              = user32.NewProc("MonitorFromPoint")
 	procMonitorFromRect               = user32.NewProc("MonitorFromRect")
-	procMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
 	procGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
 	procCreateIconIndirect            = user32.NewProc("CreateIconIndirect")
 	procDestroyIcon                   = user32.NewProc("DestroyIcon")
@@ -52,13 +51,6 @@ var (
 	procKillTimer                     = user32.NewProc("KillTimer")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procIsWindowVisible               = user32.NewProc("IsWindowVisible")
-	procSetWindowTextW                = user32.NewProc("SetWindowTextW")
-	procGetForegroundWindow           = user32.NewProc("GetForegroundWindow")
-	procGetWindowRect                 = user32.NewProc("GetWindowRect")
-	procGetClientRect                 = user32.NewProc("GetClientRect")
-	procPrintWindow                   = user32.NewProc("PrintWindow")
-	procGetDC                         = user32.NewProc("GetDC")
-	procReleaseDC                     = user32.NewProc("ReleaseDC")
 
 	procShellNotifyIconW       = shell32.NewProc("Shell_NotifyIconW")
 	procShellNotifyIconGetRect = shell32.NewProc("Shell_NotifyIconGetRect")
@@ -67,13 +59,8 @@ var (
 	procDwmSetWindowAttribute        = dwmapi.NewProc("DwmSetWindowAttribute")
 	procDwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 
-	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
-	procCreateBitmap       = gdi32.NewProc("CreateBitmap")
-	procDeleteObject       = gdi32.NewProc("DeleteObject")
-	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	procSelectObject       = gdi32.NewProc("SelectObject")
-	procDeleteDC           = gdi32.NewProc("DeleteDC")
-	procBitBlt             = gdi32.NewProc("BitBlt")
+	procCreateBitmap = gdi32.NewProc("CreateBitmap")
+	procDeleteObject = gdi32.NewProc("DeleteObject")
 
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
 )
@@ -223,20 +210,6 @@ type iconInfo struct {
 	YHotspot uint32
 	Mask     uintptr
 	Color    uintptr
-}
-
-type bitmapInfoHeader struct {
-	Size          uint32
-	Width         int32
-	Height        int32
-	Planes        uint16
-	BitCount      uint16
-	Compression   uint32
-	SizeImage     uint32
-	XPelsPerMeter int32
-	YPelsPerMeter int32
-	ClrUsed       uint32
-	ClrImportant  uint32
 }
 
 type margins struct{ Left, Right, Top, Bottom int32 }

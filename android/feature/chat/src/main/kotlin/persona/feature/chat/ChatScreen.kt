@@ -263,9 +263,6 @@ private fun ChatPage(
     val chatList = rememberChatListState(readingKey, anchorStore)
     val search = remember { ChatSearchState() }
     val openWork = chatList.position.expanded
-    // The running work lines the user folded where they open on their own (Persona's own chat, #1614); kept through a
-    // rotation or a theme change, like the chat's other open lines.
-    var liveFolded by rememberSaveable(stateSaver = LiveFoldedSaver) { mutableStateOf(emptySet<String>()) }
     var timelineVersion by remember { mutableIntStateOf(0) }
     val timeline = remember { ChatTimeline() }
     // Sent, the hub not saying working yet (#3909): the turn counts as started for a minute after the message.
@@ -287,16 +284,21 @@ private fun ChatPage(
     // Which items the lines were last built from: until the first build finishes, the page is still loading, not empty.
     var projectedFrom by remember { mutableStateOf<List<Item>?>(null) }
     val projection by produceState(persona.core.domain.lines.ChatSnapshot(emptyList(), emptyList(), persona.core.domain.lines.TaskIndex()),
-        snapshot.items, live, openWork, liveFolded, renderStyle, timelineVersion) {
+        snapshot.items, live, openWork, timelineVersion) {
         val items = snapshot.items
         value = withContext(Dispatchers.Default) {
-            timeline.lines(items, live, openWork.toSet(), renderStyle.openLiveWork, liveFolded)
+            timeline.lines(items, live, openWork.toSet())
         }
         projectedFrom = items
     }
     val liveWorkLines = remember(projection) { liveWorkIds(projection.lines) }
-    // A turn that ended drops what was folded during it: its line folds, the next turn's opens (#1614).
-    LaunchedEffect(liveWorkLines) { liveFolded = settleLiveFolds(liveFolded, liveWorkLines) }
+    var previousLiveWork by remember { mutableStateOf(emptySet<String>()) }
+    // Fold the completed run, but keep choices made on historical lines and transfer an opened placeholder.
+    LaunchedEffect(liveWorkLines) {
+        val settled = settleWorkOpen(openWork.toSet(), liveWorkLines, previousLiveWork)
+        previousLiveWork = liveWorkLines
+        if (settled != openWork.toSet()) chatList.setExpanded(settled)
+    }
     val feeds by (tasks?.feeds ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap<String, List<persona.core.contracts.FeedItem>>()) })
         .collectAsStateWithLifecycle()
     val feed = feeds[key.sessionId].orEmpty()
@@ -384,16 +386,14 @@ private fun ChatPage(
         }
     }
     fun toggle(id: String) {
-        val (next, opened) = toggleWork(WorkOpenState(openWork.toSet(), liveFolded), id, id in liveWorkLines, renderStyle.openLiveWork)
-        if (next.open != openWork.toSet()) chatList.setExpanded(next.open)
-        liveFolded = next.liveFolded
+        val (next, opened) = toggleWork(WorkOpenState(openWork.toSet()), id)
+        chatList.setExpanded(next.open)
         if (opened) (projection.lines.firstOrNull { it.id == id } as? ChatLine.Work)?.steps
             ?.filterIsInstance<persona.core.domain.lines.WorkItem.Folded>()?.forEach { expand(it.item.item) }
     }
-    // A running line open by default loads its hub folds as a tap would, those arriving while it is open too (#1614).
-    // Keyed on the lines only: a fold that loaded is gone from the next build, one in flight or failed is skipped.
+    // Restored open lines and folds arriving while expanded load just as a manual tap does.
     LaunchedEffect(projection) {
-        liveFoldsToFetch(projection.lines, renderStyle.openLiveWork, folding, foldErrors.keys).forEach(::expand)
+        openFoldsToFetch(projection.lines, folding, foldErrors.keys).forEach(::expand)
     }
     /** Whether the message was taken (false: nothing went, the box or another send stands); [onFailed] if it then fails. */
     fun send(command: String? = null, onFailed: () -> Unit = {}): Boolean {
@@ -595,10 +595,11 @@ private fun ChatPage(
             !snapshot.ended && !snapshot.replaced && (connection == null || connection == ConnectionState.Online))
     val unreadEntry = if (session?.agentState == AgentState.Unread) lines.firstOrNull { line ->
         line.holds(lastUserId)
-    }?.let { ChatListEntry(it.id, lastLineAtTop = true) } else null
-    ChatListEffects(chatList, messages.asReversed().map { "outbox-${it.clientMessageId}" } + lines.map { it.id },
+    }?.let { ChatListEntry(it.contentKey, lastLineAtTop = true) } else null
+    ChatListEffects(chatList, messages.asReversed().map { "outbox-${it.clientMessageId}" } + lines.map { it.contentKey },
         ready = !snapshot.loading && (snapshot.items.isEmpty() || lines.isNotEmpty()) &&
             (unreadEntry == null || markdownReadyFor == snapshot.items), entry = unreadEntry,
+        rowAliases = lines.associate { it.id to it.contentKey },
         hasOlder = snapshot.hasOlder, loadingOlder = snapshot.loadingOlder,
         onFreeze = { timeline.freeze(currentItems); timelineVersion++ },
         onFollow = { timeline.follow(); timelineVersion++ },
@@ -838,14 +839,14 @@ private fun ChatPage(
                                         }
                                     }
                                 }
-                                items(lines, key = { it.id }, contentType = { it.contentType() }) { line ->
-                                    ChatSearchHighlight(search, line.id) {
+                                items(lines, key = { it.contentKey }, contentType = { it.contentType() }) { line ->
+                                    ChatSearchHighlight(search, line.contentKey) {
                                         androidx.compose.runtime.CompositionLocalProvider(LocalAssistantTaskHost provides taskHost) {
                                         ChatLineContent(line, key, loader,
                                         line.recordedDuration(snapshot.recordedTurnDurations),
                                         ::toggle, ::expand, folding, foldErrors,
                                         lastUserId = lastUserId,
-                                        onLastLine = { extent -> chatList.reportLastLine(line.id, extent) }, onFullText = { item ->
+                                        onLastLine = { extent -> chatList.reportLastLine(line.contentKey, extent) }, onFullText = { item ->
                                         scope.launch {
                                             try { fullText = repository.fullText(key, item.id) }
                                             catch (e: CancellationException) { throw e }
@@ -878,7 +879,7 @@ private fun ChatPage(
                                     stringResource(if (readOnly) R.string.chat_screen_empty_read_only else R.string.chat_screen_empty_hint),
                                     Modifier.align(Alignment.Center).padding(padding).padding(horizontal = horizontalPadding))
                             // The newest plan card scrolled out of view: "Step N/M" above the composer brings it back (web PlanPill).
-                            val anchor = remember(lines, contentPlans, renderStyle) { latestPlanLine(lines, contentPlans, renderStyle.compactToolSummary) }
+                            val anchor = remember(lines, contentPlans, renderStyle) { latestPlanLine(lines, contentPlans) }
                             val planOut by remember(anchor) { derivedStateOf {
                                 anchor != null && list.layoutInfo.totalItemsCount > 0 &&
                                     list.layoutInfo.visibleItemsInfo.none { it.key == anchor.lineId }

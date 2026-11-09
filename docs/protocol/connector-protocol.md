@@ -102,7 +102,7 @@ Taking back a sent message (#5278): a connector that declares the capability `re
 
 Since 2026-11-04, assistant-manager process groups / sorts Inbox (`docs/assistant/inbox.md` “Who owns what”). Connectors still talk only to hub; hub forwards `inbox.collect` unchanged and proxies `inbox.reply`, `inbox.settle`, `group.*` for manager. **Protocol unchanged**.
 
-Each messages entry: id, position, `sender_id`, `sender_name`, mine, mentioned, `mentioned_all`, type, text, at, media, `sender_handles: [{kind, value}]` (raw identity clues; hub stores HMAC only, `docs/assistant/knowledge.md` “Identity clues”).
+Each messages entry: id, position, `sender_id`, `sender_name`, mine, mentioned, `mentioned_all`, type, text, at, media, `sender_handles: [{kind, value}]` (raw identity clues; hub stores HMAC only, `docs/assistant/knowledge.md` “Identity hints”).
 For `archive.changes`, nonempty `id` is stable within the batch source and chat: live ingestion keeps its first durable version and ignores replay, including edited
 bodies with that ID. Distinct IDs remain distinct even when their text is identical. `position` is pagination only. Missing IDs retain legacy append behavior
 without replay protection; existing Markdown cannot reconstruct old IDs (`docs/assistant/knowledge.md` "Connector replay and recovery").
@@ -224,7 +224,7 @@ Messages have the `archive.changes` shape (see `mentioned` below) and are filed 
 
 `posts.*` / `archive.chats` require archive capability; disabling Add to Knowledge returns error. Touch only connector-owned content.
 
-- **Post archive** (`docs/assistant/knowledge.md` “External posts”): post `{id, feed?, author?, author_id?, anonymous?, categories?, text, images?, reactions?, comment_count, at, mine?}`. Feed names archive heading, absent Posts. Comments `[{author?, reply_to?, text, at}]`; **present, including empty array, means comments read this time**, and hub records current count. Absent updates post only, retaining comments. Zero-comment posts automatically marked read. Connector formats “Me” / “Anonymous” in comments. Max 200 posts per call, 5000 comments each, post / each comment max 64 KB, truncated.
+- **Post archive** (`docs/assistant/knowledge.md` “Pipeline”, External posts): post `{id, feed?, author?, author_id?, anonymous?, categories?, text, images?, reactions?, comment_count, at, mine?}`. Feed names archive heading, absent Posts. Comments `[{author?, reply_to?, text, at}]`; **present, including empty array, means comments read this time**, and hub records current count. Absent updates post only, retaining comments. Zero-comment posts automatically marked read. Connector formats “Me” / “Anonymous” in comments. Max 200 posts per call, 5000 comments each, post / each comment max 64 KB, truncated.
 - User-related concerns determined by hub: corresponding post-ID chat under any connector source means related (user posts / replies / mentions, normally archived as chats).
 - Hub owns indexing, text-retention cleanup, project links `kb.LinkMoments` for all post sources. Connector owns how much / often to crawl, pagination, and its cursor state.
 

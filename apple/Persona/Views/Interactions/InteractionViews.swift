@@ -9,6 +9,7 @@ extension InteractionKind {
         case .plan: String(localized: "Plan Awaiting Approval")
         case .permission: String(localized: "Needs Your Permission")
         case .screen: String(localized: "Terminal Needs You")
+        case .elicitation: String(localized: "MCP Request")
         }
     }
 
@@ -18,6 +19,7 @@ extension InteractionKind {
         case .plan: Theme.Icon.planFilled
         case .permission: Theme.Icon.waitsForYou
         case .screen: Theme.Icon.terminalFilled
+        case .elicitation: Theme.Icon.mcpForm
         }
     }
 }
@@ -28,6 +30,9 @@ extension Interaction {
     var title: String {
         if toolName == "ask_user" { return String(localized: "Persona Has a Question") }
         if isSecretRun { return secretRunTitle }
+        if kind == .elicitation {
+            return elicitation?.isURL == true ? String(localized: "MCP Link Needs You") : String(localized: "MCP Form Needs You")
+        }
         if let name = agentName {
             switch kind {
             case .question: return String(localized: "\(name) Has a Question")
@@ -37,6 +42,9 @@ extension Interaction {
         }
         return kind.title
     }
+
+    /// The card's symbol: its kind's, a link for an MCP link.
+    var symbol: String { kind == .elicitation && elicitation?.isURL == true ? Theme.Icon.link : kind.symbol }
 
     /// Describe the actual remembered rule, not just the command or file in this request.
     var alwaysScopeDetail: String? {
@@ -85,7 +93,7 @@ struct InteractionPreviewCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             HStack(spacing: Theme.Space.s) {
-                ThemedIcon(interaction.kind.symbol)
+                ThemedIcon(interaction.symbol)
                     .foregroundStyle(StatusPalette.needsYou.dot)
                     .scaledFrame(width: Theme.Size.icon) // one column: the titles line up card to card
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
@@ -320,7 +328,7 @@ struct InteractionPanel: View {
     /// The title, ⋯ and fold; a tap anywhere on it folds the card.
     private var header: some View {
         HStack(spacing: Theme.Space.sm) {
-            ThemedIcon(interaction.kind.symbol)
+            ThemedIcon(interaction.symbol)
                 .font(Theme.Font.labelStrong)
                 .foregroundStyle(StatusPalette.needsYou.dot)
             Text(panelTitle).font(Theme.Font.labelStrong).foregroundStyle(StatusPalette.needsYou.text).lineLimit(1)
@@ -373,6 +381,8 @@ struct InteractionPanel: View {
         case .permission:
             if interaction.agentName != nil { AgentPermissionForm(interaction: interaction) } else { PermissionForm(interaction: interaction) }
         case .screen: ScreenForm(interaction: interaction)
+        // One view per card, as the password card: another card in its place starts empty.
+        case .elicitation: ElicitationForm(interaction: interaction).id(interaction.uid)
         }
     }
 
@@ -382,6 +392,7 @@ struct InteractionPanel: View {
         case .plan: PlanText.title(interaction.plan ?? "")
         case .permission: interaction.summary ?? ""
         case .screen: interaction.screenDialog?.question ?? ""
+        case .elicitation: interaction.elicitation?.message ?? ""
         }
     }
 

@@ -97,6 +97,8 @@ fun ChatListEffects(
     onFollow: () -> Unit,
     loadOlder: suspend () -> Unit,
     canFollowEnd: Boolean = true,
+    /** Previously persisted message keys mapped to stable presentation slots. */
+    rowAliases: Map<String, String> = emptyMap(),
 ) {
     val latestRows by rememberUpdatedState(rowIds)
     val freeze by rememberUpdatedState(onFreeze)
@@ -131,11 +133,12 @@ fun ChatListEffects(
             }
         }
     }
-    LaunchedEffect(state, ready, rowIds, foreground, state.epoch) {
+    LaunchedEffect(state, ready, rowIds, rowAliases, foreground, state.epoch) {
         if (!foreground || !ready || state.restored || state.dragged) return@LaunchedEffect
         if (rowIds.isEmpty()) { state.restored = true; return@LaunchedEffect }
         val saved = state.position
-        val target = entry ?: saved.rowId?.takeUnless { saved.followsEnd }?.let { ChatListEntry(it, offsetPx = saved.offsetPx) }
+        val target = (entry ?: saved.rowId?.takeUnless { saved.followsEnd }?.let { ChatListEntry(it, offsetPx = saved.offsetPx) })
+            ?.let { it.copy(rowId = rowAliases[it.rowId] ?: it.rowId) }
         val targetIndex = target?.let { rowIds.indexOf(it.rowId) } ?: -1
         state.programmaticScroll = true
         try {

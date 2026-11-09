@@ -704,7 +704,7 @@ struct InboxAgentRow: View {
         let asks = ix.askLine(includeToolName: false) ?? ix.summary ?? ix.questions?.first?.question
         HStack(alignment: .top, spacing: Theme.Space.m) {
             // The rounded square of the Agents rows (SessionAvatar), with what kind of request it is.
-            SessionAvatar(machine: machine, state: .needsYou, size: 40, symbol: ix.kind.symbol, dot: false)
+            SessionAvatar(machine: machine, state: .needsYou, size: 40, symbol: ix.symbol, dot: false)
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 HStack(spacing: Theme.Space.sm) {
                     Text(ix.sessionTitle?.isEmpty == false ? ix.sessionTitle! : (ix.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Agent"))

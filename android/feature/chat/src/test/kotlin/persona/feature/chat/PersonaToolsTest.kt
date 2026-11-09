@@ -70,11 +70,11 @@ class PersonaToolsTest {
         val newer = todos("p2")
         val plans = mapOf("w1" to latestPlan(listOf(older)), "w2" to latestPlan(listOf(newer)))
         val lines = listOf<ChatLine>(ChatLine.Step("w2", newer, true), ChatLine.Step("w1", older, true)) // newest first
-        assertEquals("w2/p2", latestPlanLine(lines, plans, compact = false)?.lineId)
+        assertEquals("w2/p2", latestPlanLine(lines, plans)?.lineId)
         val live = ChatLine.Work("w3", listOf(todos("p3")), live = true, start = null, end = null, open = false)
-        assertEquals("w3", latestPlanLine(listOf(live) + lines, plans, compact = false)?.lineId)
-        // Persona's own chat draws no peek: the pill goes to the plan it does draw.
-        assertEquals("w2/p2", latestPlanLine(listOf(live) + lines, plans, compact = true)?.lineId)
-        assertNull(latestPlanLine(emptyList(), emptyMap(), false))
+        // Neither conversation type previews a collapsed plan; only a drawn expanded step has an anchor.
+        assertEquals("w2/p2", latestPlanLine(listOf(live) + lines, plans)?.lineId)
+        assertNull(latestPlanLine(listOf(live), emptyMap()))
+        assertNull(latestPlanLine(emptyList(), emptyMap()))
     }
 }

@@ -114,7 +114,7 @@ the flow survives process death: the awaited `state` is stored in SharedPreferen
   If not, either add an Android / Web type client on the hub (Web needs a client secret and an https callback), or keep using app-specific passwords.
 - When the user returns from the browser directly (without authorizing), no callback within 1.5 s of returning to the page counts as cancelled.
 
-## Outlook: Sign In with Microsoft (OAuth2 + XOAUTH2, 2026-11-03)
+## Outlook: Sign In with Microsoft (OAuth2 + XOAUTH2)
 
 Personal Outlook.com / Hotmail and work or school Microsoft 365 mailboxes all use this: in the App, **Add Mail Account › Outlook**, tap "Sign In with Microsoft" →
 the system browser opens Microsoft sign-in and authorization → back to the App → the account is added, no password. It works like Gmail (previous section), with these differences:
@@ -170,7 +170,7 @@ the system browser opens Microsoft sign-in and authorization → back to the App
 | SMTP auth disabled (`5.7.139 SmtpClientAuthentication is disabled`) | Ask your admin to turn on "Authenticated SMTP" for your mailbox in the Microsoft 365 admin center; receiving is unaffected |
 | Authorization expired or revoked (`invalid_grant` on refresh: `AADSTS70008`, `50173`, MFA required again, etc.) | Tap "Sign In with Microsoft" again in the App and pick the same mailbox; the account is updated in place (ID unchanged) |
 
-## Letting Persona add it (2026-11-01)
+## Letting Persona add it
 
 The App's "Add Mail Account" page dropped "AI one-tap add" (paste some text for the model to recognize; `POST /api/v1/ai/mail-account` is gone too). Now you just tell Persona
 "add a mail account for me": the assistant adds it through `mail.accounts` of `persona_settings` (`hub/self_settings.go`, assistant only), a card on the phone asks the user for the password / authorization code,

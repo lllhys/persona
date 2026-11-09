@@ -3,7 +3,7 @@
   "already_answered": "This card was already answered",
   "prompt_changed": "The dialog on the computer changed, so the card was rebuilt from the new screen",
   "send_failed": "Not delivered: {error}",
-  "hand_back": "Hand back to the computer",
+  "hand_back": "Leave to computer",
   "question": "Question",
   "tool_loop_kicker": "Possible tool loop",
   "previous_question": "Previous question",

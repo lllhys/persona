@@ -60,12 +60,13 @@ func newWithdrawals() withdrawals {
 	return withdrawals{pushed: map[string]cardPush{}, queue: map[string]*withdrawQueue{}, gather: withdrawGather, every: withdrawEvery}
 }
 
-// sendCard pushes a card (sendLocalizedQuiet) and notes which devices that understand withdrawals it went to.
-func (p *Pusher) sendCard(manager string, build localized, id string, wants func(NotifyPrefs) bool, rule quietRule) {
+// sendCard pushes a card (sendLocalizedQuiet) and notes which devices that understand withdrawals it went to. only,
+// when not nil, is the devices that can take it at all (an MCP form or link: those that registered for one).
+func (p *Pusher) sendCard(manager string, build localized, id string, wants func(NotifyPrefs) bool, rule quietRule, only func(Device) bool) {
 	if p == nil {
 		return
 	}
-	p.sendFrom(manager, build, id, wants, rule, func(d Device) {
+	p.sendFromTo(manager, build, id, wants, rule, only, func(d Device) {
 		if hasFeature(d, featureWithdraw) {
 			p.cardPushedTo(id, d.DeviceID)
 		}
@@ -172,7 +173,7 @@ func withdrawBatch(ids []string) int {
 func hasFeature(d Device, feature string) bool { return slices.Contains(d.Features, feature) }
 
 // knownFeatures are the features a device may register with; anything else is dropped.
-var knownFeatures = map[string]bool{featureWithdraw: true, compat.Feature: true}
+var knownFeatures = map[string]bool{featureWithdraw: true, featureElicitation: true, compat.Feature: true}
 
 func cleanFeatures(in []string) []string {
 	var out []string

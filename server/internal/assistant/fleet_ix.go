@@ -84,11 +84,14 @@ func (s *Service) hasHooks(machine string, sess proto.Session) bool {
 	return s.fleet.hooked[[2]string{machine, sess.SessionID}] || sess.StartedByPersona
 }
 
-// hasElicitationClient: an app that takes MCP elicitations is connected (the hub says, fleet.clients).
-func (s *Service) hasElicitationClient() bool {
+// elicitationReachable: an MCP form or link ix can reach the user, as the hub says (fleet.clients): an app that takes
+// one is connected, or a phone that registered for them would be pushed one (#2433), and this card would be pushed (no
+// muted agent, no quiet task's). Otherwise nothing could show it and it goes back to the terminal at once.
+func (s *Service) elicitationReachable(ix proto.Interaction) bool {
 	s.fleet.mu.Lock()
-	defer s.fleet.mu.Unlock()
-	return s.fleet.clients.Elicitation
+	c := s.fleet.clients
+	s.fleet.mu.Unlock()
+	return c.Elicitation || c.ElicitationPush && !s.quietSession(ix.MachineID, ix.SessionID) && !s.muted(ix.MachineID, ix.SessionID)
 }
 
 // ---- telling ----
@@ -187,7 +190,7 @@ func (s *Service) waitInteraction(ctx context.Context, ix proto.Interaction) (pr
 				p.orphaned = nil
 			}
 			s.fleet.mu.Unlock()
-			if ix.Kind == proto.IxElicitation && !s.hasElicitationClient() {
+			if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 				_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
 			}
 			return s.await(ctx, p)
@@ -199,7 +202,7 @@ func (s *Service) waitInteraction(ctx context.Context, ix proto.Interaction) (pr
 		}
 		again = status == "pending"
 	}
-	if ix.Kind == proto.IxElicitation && !s.hasElicitationClient() {
+	if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 		return proto.Resolution{Dismiss: true}, nil
 	}
 	p := &pending{ix: ix, done: make(chan proto.Resolution, 1)}

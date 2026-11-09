@@ -66,15 +66,18 @@ internal class ChatTimeline {
         expanded[item.id]?.takeIf { it.first.fold == item.fold }?.second ?: listOf(item)
     }.distinctBy { it.id }
 
-    /**
-     * [live]: the agent is at work; the running turn is then the last one (`chatLines`). [openLive]: running work lines
-     * are open unless in [liveFolded] ([WorkOpenState]).
-     */
-    @Synchronized fun lines(items: List<Item>, live: Boolean, open: Set<String>, openLive: Boolean = false,
-        liveFolded: Set<String> = emptySet()): persona.core.domain.lines.ChatSnapshot {
-        val options = if (window.isFrozen) LineOptions(liveTurnId = frozenLiveId, openWork = open, openLive = openLive, liveFolded = liveFolded)
-            else LineOptions(openWork = open, live = live, openLive = openLive, liveFolded = liveFolded)
-        return chatLines(searchItems(items).filter { it.kind != "turn_duration" }.map(Item::asLineItem), options)
+    /** [live]: the agent is at work; [open] is the same persisted choice for live and historical lines. */
+    @Synchronized fun lines(items: List<Item>, live: Boolean, open: Set<String>): persona.core.domain.lines.ChatSnapshot {
+        val options = if (window.isFrozen) LineOptions(liveTurnId = frozenLiveId, openWork = open)
+            else LineOptions(openWork = open, live = live)
+        val foldAnchors = expanded.values.mapNotNull { (fold, page) ->
+            page.filter { it.kind != "tool_result" && !(it.kind == "image" && it.toolUseId != null) }
+                .minWithOrNull(chatItemOrder)?.let { it.id to "tools-${fold.id}" }
+        }.toMap()
+        val source = searchItems(items).filter { it.kind != "turn_duration" }.map { item ->
+            item.asLineItem().copy(exchangeId = foldAnchors[item.id])
+        }
+        return chatLines(source, options)
             .also { if (!window.isFrozen) shownLiveId = it.liveTurnId }
     }
 }

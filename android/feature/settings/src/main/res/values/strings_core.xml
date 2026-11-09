@@ -228,7 +228,7 @@
     <string name="settings_ready_autostart">Autostart</string>
     <string name="settings_ready_autostart_detail">Allow Persona to start on its own in the app launch settings. If you skip this, you may need to open Persona by hand after restarting the phone. The system can\'t verify this; confirm once it\'s set.</string>
     <string name="settings_ready_vendor">%1$s %2$s background settings</string>
-    <string name="settings_ready_vendor_detail">%1$s The system can\'t read these switches; tap “Done” once they\'re set. Skipping may mean missed notifications.</string>
+    <string name="settings_ready_vendor_detail">%1$s The system can\'t read these switches; tap “Mark done” once they\'re set. Skipping may mean missed notifications.</string>
     <string name="settings_ready_task_lock">Lock in recent apps</string>
     <string name="settings_ready_task_lock_detail">Open recent apps, long-press the Persona card or open its menu, and choose Lock. If you skip this, clearing all apps may close the connection.</string>
     <string name="settings_ready_local_network">Local network</string>
@@ -325,7 +325,7 @@
     <string name="settings_ready_open">Open settings</string>
     <string name="settings_ready_open_failed">Couldn\'t open system settings. Open Persona\'s app info from the phone\'s Settings.</string>
     <string name="settings_ready_undo_confirm">Undo</string>
-    <string name="settings_ready_mark_done">Done</string>
+    <string name="settings_ready_mark_done">Mark done</string>
     <string name="settings_ready_unskip">Unskip</string>
     <string name="settings_ready_skip">Skip</string>
     <string name="settings_ready_no_machines">No machine info yet</string>

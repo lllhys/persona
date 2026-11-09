@@ -3,10 +3,13 @@ package devices
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/db"
@@ -134,37 +137,123 @@ func (s *usageMemStore) UsageSeries(_ context.Context, machine string, from, to 
 	return out, nil
 }
 
+// usageBatchMemStore stores several writes at once (db.PutUsages); calls: how many each time.
+type usageBatchMemStore struct {
+	*usageMemStore
+	calls []int
+}
+
+func (s *usageBatchMemStore) PutUsages(ctx context.Context, writes []db.UsageWrite) ([]error, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, len(writes))
+	s.mu.Unlock()
+	for _, w := range writes {
+		_ = s.PutUsage(ctx, w.Machine, w.Buckets, w.ReplaceFrom)
+	}
+	return nil, nil
+}
+
 // A node's usage goes to Postgres in the order it came: its whole window first (replacing the window's minutes),
-// then what changed; the machine's page reads its range from there.
+// then what changed; the machine's page reads its range from there. While another machine writes too, writes that
+// come within usageGather of each other go in one transaction when the store can (PutUsages), else one PutUsage each.
 func TestUsageIsStoredInOrder(t *testing.T) {
-	st := &usageMemStore{memStore: newMemStore(), done: make(chan struct{}, 8)}
-	d := New(Options{Hub: &fakeHost{}, Store: st})
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go d.usageLoop(ctx)
-	now := time.Now()
-	minute := now.Unix() / 60 * 60
-	send := func(full bool, out int64) {
-		b, _ := json.Marshal(map[string]any{"full": full, "launchers": true,
-			"buckets": []proto.UsageBucket{{Minute: minute, Model: "m", Launcher: "claude", Output: out, Requests: 1}}})
-		d.onUsage("a", b, now)
+	for _, batched := range []bool{false, true} {
+		t.Run(fmt.Sprint("batched=", batched), func(t *testing.T) {
+			mem := &usageMemStore{memStore: newMemStore(), done: make(chan struct{}, 8)}
+			var st Store = mem
+			batch := &usageBatchMemStore{usageMemStore: mem}
+			if batched {
+				st = batch
+			}
+			d := New(Options{Hub: &fakeHost{}, Store: st})
+			d.usageWait = time.Second
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			go d.usageLoop(ctx)
+			now := time.Now()
+			minute := now.Unix() / 60 * 60
+			send := func(machine string, full bool, out int64) {
+				b, _ := json.Marshal(map[string]any{"full": full, "launchers": true,
+					"buckets": []proto.UsageBucket{{Minute: minute, Model: "m", Launcher: "claude", Output: out, Requests: 1}}})
+				d.onUsage(machine, b, now)
+			}
+			stored := func(n int) {
+				t.Helper()
+				for range n {
+					select {
+					case <-mem.done:
+					case <-time.After(5 * time.Second):
+						t.Fatal("usage not written")
+					}
+				}
+			}
+			send("b", false, 5) // another machine that writes
+			stored(1)
+			send("a", true, 10)
+			send("a", false, 30)
+			stored(2)
+			mem.mu.Lock()
+			defer mem.mu.Unlock()
+			if len(mem.writes) != 3 || mem.writes[0].machine != "b" {
+				t.Fatalf("writes = %+v", mem.writes)
+			}
+			if a := mem.writes[1:]; a[0].machine != "a" || a[1].machine != "a" || a[0].replaceFrom.IsZero() ||
+				!a[1].replaceFrom.IsZero() || a[1].buckets[0].Output != 30 {
+				t.Fatalf("writes = %+v", mem.writes)
+			}
+			if from := mem.writes[1].replaceFrom; now.Sub(from) > usageNodeWindow || now.Sub(from) < usageNodeWindow-2*time.Minute {
+				t.Fatalf("a full window replaces from %v (%v ago), want the node's window", from, now.Sub(from))
+			}
+			if batched && !slices.Equal(batch.calls, []int{1, 2}) {
+				t.Fatalf("PutUsages calls = %v, want b's write alone, then a's two in one", batch.calls)
+			}
+		})
 	}
-	send(true, 10)
-	send(false, 30)
-	for range 2 {
-		select {
-		case <-st.done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("usage not written")
+}
+
+// gatherUsage takes what is queued, and waits for more only while another machine wrote in the last usageActive: one
+// busy machine's writes are not held back.
+func TestUsageGatherWaitsOnlyForOthers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		d := New(Options{Hub: &fakeHost{}})
+		d.usageWait = time.Minute
+		w := func(machine string) usageWrite { return usageWrite{machine: machine} }
+		// gather starts gatherUsage with a's write queued already, and returns once it has ended or is blocked on its
+		// wait (synctest.Wait); done is when it ended (the bubble's clock moves only while everything waits) and what
+		// it took.
+		gather := func(active map[string]time.Time) (done func() (time.Duration, []string)) {
+			t.Helper()
+			d.usageWrites <- w("a")
+			start := time.Now()
+			got := make(chan []usageWrite, 1)
+			go func() { got <- d.gatherUsage(context.Background(), w("a"), active) }()
+			synctest.Wait()
+			return func() (time.Duration, []string) {
+				var machines []string
+				for _, w := range <-got {
+					machines = append(machines, w.machine)
+				}
+				return time.Since(start), machines
+			}
 		}
-	}
-	if len(st.writes) != 2 || st.writes[0].replaceFrom.IsZero() || !st.writes[1].replaceFrom.IsZero() ||
-		st.writes[1].buckets[0].Output != 30 {
-		t.Fatalf("writes = %+v", st.writes)
-	}
-	if from := st.writes[0].replaceFrom; now.Sub(from) > usageNodeWindow || now.Sub(from) < usageNodeWindow-2*time.Minute {
-		t.Fatalf("a full window replaces from %v (%v ago), want the node's window", from, now.Sub(from))
-	}
+
+		// Alone (b wrote long ago): it takes what is queued and does not wait.
+		active := map[string]time.Time{"a": time.Now(), "b": time.Now().Add(-usageActive - time.Second)}
+		if took, got := gather(active)(); took != 0 || !slices.Equal(got, []string{"a", "a"}) {
+			t.Fatalf("alone: %v after %v, want a's two at once", got, took)
+		}
+		if _, ok := active["b"]; ok {
+			t.Fatal("a machine quiet for longer than usageActive is still active")
+		}
+
+		// b wrote lately: it waits usageWait, and takes b's write that comes meanwhile.
+		active["b"] = time.Now()
+		done := gather(active)
+		d.usageWrites <- w("b")
+		if took, got := done(); took != d.usageWait || !slices.Equal(got, []string{"a", "a", "b"}) {
+			t.Fatalf("with b: %v after %v, want a's two and b's after %v", got, took, d.usageWait)
+		}
+	})
 }
 
 // GET /api/v1/machines/{id}/usage: the range, the filters, an unknown machine and range.

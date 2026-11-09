@@ -44,7 +44,12 @@ class LinesFixtureTest(private val name: String, private val fixture: FixtureRea
             }
             obj("checkpoints" to checkpoints)
         }
-        compareJson("${fixture.file}/$name", expected, actual)
+        try {
+            compareJson("${fixture.file}/$name", expected, actual)
+        } catch (failure: AssertionError) {
+            System.err.println("Actual line fixture $name: $actual")
+            throw failure
+        }
     }
 
     private fun snapshot(items: List<LineItem>, input: JsonObject): JsonObject {

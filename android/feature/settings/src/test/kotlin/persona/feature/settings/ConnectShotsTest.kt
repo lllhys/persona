@@ -20,11 +20,13 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +47,7 @@ import java.time.Instant
 
 /**
  * The connection pages of Settings in each of the app's languages (docs/protocol/i18n.md): pairing (welcome, connect, manual
- * input, confirm, a failed link), the hubs, the hub version, the candidate addresses and the engine step. Every style
+ * input, an address it can't use, confirm, a failed link), the hubs, the hub version, the candidate addresses and the engine step. Every style
  * in light, Glass in dark; written as PNGs to `build/i18n-shots/` (or `-Dpersona.shots=<dir>`) to look at.
  */
 @RunWith(AndroidJUnit4::class)
@@ -64,7 +66,7 @@ class ConnectShotsTest {
     @Config(sdk = [35], qualifiers = "ja-w400dp-h1600dp-xhdpi")
     @Test fun japanese() = shots("ja", R.string.settings_pairing_manual)
 
-    private enum class Shot { Welcome, Connect, Manual, Confirm, Failed, Hubs, HubUpdate, Endpoints, Engine }
+    private enum class Shot { Welcome, Connect, Manual, ManualInvalid, Confirm, Failed, Hubs, HubUpdate, Endpoints, Engine }
 
     private val pairing = object : PairingService {
         override val isPaired = MutableStateFlow(false)
@@ -139,7 +141,7 @@ class ConnectShotsTest {
                     key(shot, style, dark) {
                         when (shot) {
                             Shot.Welcome -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {})
-                            Shot.Connect, Shot.Manual -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {}, skipWelcome = true)
+                            Shot.Connect, Shot.Manual, Shot.ManualInvalid -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {}, skipWelcome = true)
                             Shot.Confirm -> PairingScreen(pairing, sessions, initialLink = link, onReady = {}, onDiagnostics = {})
                             Shot.Failed -> PairingScreen(pairing, sessions, initialLink = "persona://pair?token=x", onReady = {}, onDiagnostics = {})
                             Shot.Hubs -> HubsScreen(hubs, onAdd = {}, onBack = {})
@@ -163,10 +165,17 @@ class ConnectShotsTest {
         for ((s, d) in variants) for (next in Shot.entries) {
             style = s; dark = d; shot = next
             rule.waitForIdle()
-            if (next == Shot.Manual) {
+            if (next == Shot.Manual || next == Shot.ManualInvalid) {
                 rule.onNode(hasText(rule.activity.getString(manualLabel)) and hasClickAction()).performClick()
                 rule.waitForIdle()
                 rule.onNodeWithText(rule.activity.getString(R.string.settings_pairing_code_label)).assertExists()
+            }
+            if (next == Shot.ManualInvalid) {
+                rule.onAllNodes(hasSetTextAction())[0].performTextInput("a b:99999")
+                rule.onAllNodes(hasSetTextAction())[1].performTextInput("example")
+                rule.onNode(hasText(rule.activity.getString(R.string.settings_pairing_next)) and hasClickAction()).performClick()
+                rule.waitForIdle()
+                rule.onNodeWithText(rule.activity.getString(R.string.settings_pairing_manual_invalid)).assertExists()
             }
             val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
             var other = 0

@@ -16,7 +16,7 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
-// Retention by rule (#1523, docs/assistant/knowledge.md "Retention"): a day file holds lines different rules decided
+// Retention by rule (#1523, docs/assistant/knowledge.md "Selection", Retention ledger): a day file holds lines different rules decided
 // (a mention kept ten years in a group kept a month), so each chat keeps a small ledger next to its day files,
 // chats/<id>/retention.json, naming the rule of every line another rule decided than the ledger's own (the chat's usual
 // rule when the ledger began). It records the rule, not the number of days, so a rule's days changed later apply to
@@ -123,7 +123,7 @@ func unionRules(a, b string) string {
 	return strings.Join(names, "+")
 }
 
-// ledgerNotes are the lines of one write with their deciding rules, for the ledger.
+// ledgerNote holds the lines of one write with their deciding rules, for the ledger.
 type ledgerNote struct {
 	day, key, rule string
 	existed        bool

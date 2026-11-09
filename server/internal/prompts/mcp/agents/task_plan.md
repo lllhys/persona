@@ -46,7 +46,7 @@ Hand the user a plan of one or more tasks for agents on their computers, instead
           },
           "launcher": {
             "type": "string",
-            "description": "launcher name; empty: the default"
+            "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has); empty: the default, or one the machine has when it lacks the default (claude first; the why says so)"
           },
           "model": {
             "type": "string",
@@ -98,6 +98,10 @@ Hand the user a plan of one or more tasks for agents on their computers, instead
             "type": "integer",
             "minimum": 0,
             "description": "about how long the task should take, in minutes; a task with no progress for 1.5× that (at least 20 minutes) counts as stuck"
+          },
+          "project": {
+            "type": "string",
+            "description": "optional: the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project"
           },
           "todo_id": {
             "type": "string",

@@ -145,7 +145,7 @@ def compact_rows(t):
     to_agents(t)
     t.reach("still compact after a relaunch", id="agents.compactRow")
     list_menu(t)
-    menu_item(t, "卡片")
+    menu_item(t, "头像")  # back to the default style (#2530)
     t.reach("card rows again", id="agents.row")
     t.gone("no compact rows", timeout=3, id="agents.compactRow")
 

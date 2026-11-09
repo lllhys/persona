@@ -69,8 +69,9 @@ describe("quiet supervision rendering", () => {
     act(() => toggle().click());
     expect(host.querySelector("[data-supervision-input] pre")?.textContent).toBe(input);
     expect(host.querySelector("[data-answer]")?.textContent).toBe(answer.text);
-    expect(host.querySelector('[data-action-row="supervision_finish"]')).not.toBeNull();
+    expect(host.querySelector('[data-action-row="supervision_finish"]')).toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>("[data-work-group] > button")!.click());
+    expect(host.querySelector('[data-action-row="supervision_finish"]')).not.toBeNull();
     expect(host.querySelector('[data-action-row="Read"]')).not.toBeNull();
     act(() => host.querySelector<HTMLButtonElement>('[data-thinking="words"] > button')!.click());
     expect(host.textContent).toContain(thought.text);
@@ -114,15 +115,17 @@ describe("quiet supervision rendering", () => {
     expect(host.querySelector("[data-supervision-input] pre")?.textContent).toBe(input);
   });
 
-  it("unfolds the whole round when a user visibility receipt arrives, keeping the visibility tool out of work groups", () => {
+  it("promotes a user-visible round while its tool trace remains manually expandable", () => {
     draw(initial);
     const changed = { ...receipt, text: '{"visibility":"user","summary":"A decision is needed","level":"user"}' };
     draw(initial.map((i) => i.id === receipt.id ? changed : i));
     expect(host.querySelector("[data-supervision]")).toBeNull();
     expect(host.querySelector("[data-answer]")?.textContent).toBe(answer.text);
+    expect(host.querySelector('[data-action-row="supervision_finish"]')).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>("[data-work-group] > button")!.click());
     const tool = host.querySelector('[data-action-row="supervision_finish"]');
     expect(tool).not.toBeNull();
-    expect(tool?.closest("[data-work-group]")).toBeNull();
+    expect(tool?.closest("[data-work-group]")).not.toBeNull();
   });
 
   it.each([

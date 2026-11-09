@@ -11,7 +11,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// An agent's question comes here before the user (fleet_delegate.go, docs/assistant/assistant.md "The assistant answers questions first"): a model
+// An agent's question comes here before the user (fleet_delegate.go, docs/assistant/assistant.md "Assistant answers questions first"): a model
 // (purpose agent.delegate, "Model Settings › Answering questions") reads the question with what is known around it — the agent's
 // recent turns, its task and the calls the user made on it, the project — and answers it for the user when it is the
 // agent's own call, or leaves it to the user with the context filled in. What it may answer is checked here as well:

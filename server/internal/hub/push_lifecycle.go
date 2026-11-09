@@ -115,5 +115,6 @@ func (p *Pusher) reconcileDevices(parent context.Context) error {
 	for _, r := range retired {
 		p.logf("push registration retired registration=%s canonical=%s reason=%s", trafficIdentity(r.DeviceID), trafficIdentity(r.CanonicalID), r.Reason)
 	}
+	p.changed()
 	return nil
 }

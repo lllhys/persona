@@ -176,7 +176,7 @@ func TestProviderEnvClear(t *testing.T) {
 		"CLAUDE_CODE_EFFORT_LEVEL=max", "CLAUDE_CODE_MAX_CONTEXT_TOKENS=1", "CLAUDE_CODE_AUTO_COMPACT_WINDOW=1",
 		"API_TIMEOUT_MS=1", "HTTP_PROXY=p", "HTTPS_PROXY=p", "NO_PROXY=n", "PATH=/bin", "HOME=/h",
 		"CLAUDE_CODE_DISABLE_ARTIFACT=1", "API_TIMEOUT_MS_EXTRA=1"}
-	got := withoutProviderEnv(in)
+	got := withoutEnv(in, providerEnvClear)
 	if want := []string{"HTTP_PROXY=p", "HTTPS_PROXY=p", "NO_PROXY=n", "PATH=/bin", "HOME=/h", "CLAUDE_CODE_DISABLE_ARTIFACT=1",
 		"API_TIMEOUT_MS_EXTRA=1"}; !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)

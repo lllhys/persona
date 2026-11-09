@@ -259,6 +259,12 @@ func (s *Service) launcherLimitTurnEnded(ctx context.Context, machine, sid strin
 	// Once the turn stayed still, as a task's end is judged (settleDelay): right after a write the node's list may not
 	// have read the transcript yet (its meta is read again at most every few seconds), and says no error meanwhile.
 	time.Sleep(s.settleDelay(ctx))
+	s.launcherLimitTurnSettled(ctx, machine, sid)
+}
+
+// launcherLimitTurnSettled is launcherLimitTurnEnded once the turn stayed still: after its sleep, or afterSettle's
+// timer.
+func (s *Service) launcherLimitTurnSettled(ctx context.Context, machine, sid string) {
 	// As the node lists it, when the fleet is here: the fields below are the node's, and the decorated copy
 	// session.get answers with costs a pass over the machine's whole list.
 	sess, ok := s.nodeSession(machine, sid)

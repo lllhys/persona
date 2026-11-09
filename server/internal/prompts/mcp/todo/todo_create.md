@@ -1,4 +1,4 @@
-Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day.
+Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day. When it clearly belongs to one of the user's areas of work, give project: the To-dos page groups to-dos by it.
 
 ```json
 {
@@ -25,6 +25,10 @@ Add a to-do to the user's Persona to-dos, when the user asks you to note somethi
       "type": "string",
       "enum": ["high", "normal", "low"],
       "description": "normal when left out"
+    },
+    "project": {
+      "type": "string",
+      "description": "the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project"
     }
   }
 }

@@ -143,13 +143,11 @@ class MessageContentTest {
         assertFalse(workSummary(res, line.copy(live = false), 30, start.plusSeconds(80)).contains("正在"))
     }
 
-    @Test fun aRunningLineWithItsStepsShowingOnlySaysItIsWorking() {
+    @Test fun anExpandedRunningLineKeepsItsSingleSummaryAndTimer() {
         val start = Instant.parse("2026-11-02T10:00:00Z")
-        val line = ChatLine.Work("w-1", emptyList(), live = true, start = start, end = null, open = false)
-        // The clock is a leaf of its own beside these words (WorkClock).
-        assertEquals("正在工作…", workSummary(res, line, null, start.plusSeconds(80), peek = true))
-        // Done, it folds to the summary as before.
-        assertEquals("做了 0 步，用时 30 秒", workSummary(res, line.copy(live = false), 30, start.plusSeconds(80), peek = true))
+        val line = ChatLine.Work("w-1", emptyList(), live = true, start = start, end = null, open = true)
+        assertEquals("正在工作，1 分 20 秒", workSummary(res, line, null, start.plusSeconds(80)))
+        assertEquals("做了 0 步，用时 30 秒", workSummary(res, line.copy(live = false), 30, start.plusSeconds(80)))
     }
 
     private fun step(id: String, name: String, vararg fields: Pair<String, String>) =
@@ -161,7 +159,7 @@ class MessageContentTest {
             put("todos", buildJsonArray { todos.forEach { (c, s) -> add(buildJsonObject { if (c.isNotEmpty()) put("content", c); put("activeForm", "正在$c"); put("status", s) }) } })
         }).asLineItem(), null, emptyList()))
 
-    @Test fun theRunningLinePeeksAtItsNewestFiveStepsAndPinsThePlan() {
+    @Test fun theManualTraceRetainsEveryToolIncludingRepeatedReadsAndPlanUpdates() {
         val todo = plan("p1", "读代码" to "completed", "改代码" to "in_progress", "跑测试" to "pending")
         val steps = listOf(
             step("a", "Bash", "command" to "ls"), todo,
@@ -172,13 +170,22 @@ class MessageContentTest {
             step("f", "Edit", "file_path" to "/w/b.kt", "old_string" to "a", "new_string" to "b"),
             step("g", "Task", "description" to "子任务"),
         )
-        val peek = workPeek(steps)
-        assertEquals("p1", peek.plan?.id)
-        // The repeated read of a.kt (b, c) shows once; the blank thought, the words, the subagent and the plan are not steps.
-        assertEquals(listOf("c", "t", "d", "e", "f"), peek.steps.map { it.id })
-        assertEquals(listOf("a", "c", "t", "d", "e", "f"), workPeek(steps, limit = 6).steps.map { it.id })
-        // A one-item TodoWrite is not a plan.
-        assertNull(workPeek(listOf(plan("p2", "只有一项" to "pending"))).plan)
+        val source = listOf(Item("u", kind = "text", role = "user", text = "go")) + steps.map { step -> when (step) {
+            is WorkItem.Tool -> step.call.use.item
+            is WorkItem.Thought -> step.item.item
+            is WorkItem.Narration -> step.item.item
+            else -> error("Unexpected fixture step")
+        } } + listOf(plan("p2", "只有一项" to "pending").call.use.item, plan("p3").call.use.item,
+            Item("final", 1, kind = "text", role = "assistant", text = "Final result"))
+        val timeline = ChatTimeline()
+        val folded = timeline.lines(source, true, emptySet()).lines
+        assertTrue(folded.none { it is ChatLine.Step })
+        val id = folded.filterIsInstance<ChatLine.Work>().single().id
+        val trace = timeline.lines(source, true, setOf(id)).lines.filterIsInstance<ChatLine.Step>()
+        // No preview filter: repeated reads, subagents, one-item and clearing TodoWrite updates remain inspectable.
+        assertEquals(listOf("a", "p1", "b", "c", "d", "e", "f", "g", "p2", "p3"),
+            trace.mapNotNull { (it.step as? WorkItem.Tool)?.id })
+        assertEquals("p1", latestPlan(trace.map { it.step })?.id)
     }
 
     @Test fun aLineDrawsOnlyItsLatestPlanOfTwoOrMoreItems() {

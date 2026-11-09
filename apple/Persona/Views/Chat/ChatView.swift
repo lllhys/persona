@@ -4631,10 +4631,7 @@ struct Composer: View, Equatable {
         .fullScreenCover(item: Binding(get: { editingIndex.map(EditIndex.init) }, set: { if $0 == nil { editingIndex = nil } })) { e in
             if images.indices.contains(e.id) {
                 ImageEditor(image: images[e.id].0) { edited in
-                    let scaled = edited.scaledDown(maxSide: 1600)
-                    if let jpeg = scaled.jpegData(compressionQuality: 0.75), images.indices.contains(e.id) {
-                        images[e.id] = (scaled, ImagePayload(mime: "image/jpeg", data: jpeg.base64EncodedString()))
-                    }
+                    if let p = MessagePhotos.payload(edited), images.indices.contains(e.id) { images[e.id] = p }
                 }
             }
         }
@@ -4692,32 +4689,11 @@ struct Composer: View, Equatable {
     private func load(_ items: [PhotosPickerItem]) async {
         let movies = items.filter(PickedMovie.isVideo) // sent as files (VideoAttach.swift)
         if !movies.isEmpty { videos.start(movies, machine: key.machineRef, model: model) }
-        var failed = 0
-        for item in items where !PickedMovie.isVideo(item) {
-            // iCloud-only photos are downloaded here; HEIC and others are re-encoded to JPEG below.
-            guard let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) else {
-                failed += 1
-                continue
-            }
-            add(img)
-        }
+        await MessagePhotos.load(items.filter { !PickedMovie.isVideo($0) }, model: model) { add($0) }
         picks = []
-        if failed > 0 {
-            model.toast = Toast(String(localized: "Couldn't read \(failed) photos (they may still be downloading from iCloud) [Chat View 5712c0]"), style: .error)
-        }
     }
 
-    private func add(_ img: UIImage) {
-        guard images.count < 4 else {
-            model.toast = Toast(String(localized: "Up to 4 at a time"), style: .error)
-            return
-        }
-        let scaled = img.scaledDown(maxSide: 1600)
-        if let jpeg = scaled.jpegData(compressionQuality: 0.75) {
-            images.append((scaled, ImagePayload(mime: "image/jpeg", data: jpeg.base64EncodedString())))
-            Haptics.tap()
-        }
-    }
+    private func add(_ img: UIImage) { MessagePhotos.add(img, to: &images, model: model) }
 }
 
 /// The composer's "/" menu: Claude Code's own commands, and Persona' quick messages under a short word. Picking one

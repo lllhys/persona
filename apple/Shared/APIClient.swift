@@ -1394,7 +1394,9 @@ nonisolated struct APIClient: Sendable {
     }
 
     func interactions() async throws -> [Interaction] {
-        stamp(try await get("/api/v1/interactions", as: InteractionsResponse.self).interactions)
+        let data = try await request("GET", "/api/v1/interactions")
+        // An MCP form's fields in their server's order, which the decoded dictionaries don't keep.
+        return stamp(Elicitation.withFieldOrders(try JSON.decoder.decode(InteractionsResponse.self, from: data).interactions, from: data))
     }
     @discardableResult
     /// opID: one per answer (the same on every retry of it), so a retry through a hub restart presses nothing twice.

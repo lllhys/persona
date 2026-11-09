@@ -242,7 +242,7 @@ func (p *historyPlan) reading(sel *kb.Selection, ret kb.Retention) []historyRead
 	return out
 }
 
-// wantsUnlisted: a chat the source's search finds that the plan does not list would be read (as a group), so the
+// historyWantsUnlisted: a chat the source's search finds that the plan does not list would be read (as a group), so the
 // anchors are worth gathering even without a personal chat in the plan.
 func historyWantsUnlisted(sel *kb.Selection, ret kb.Retention, connector string) bool {
 	return historyNeed(sel, ret, connector, historyPlanChat{Kind: historyUnlisted}).Read

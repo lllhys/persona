@@ -7,8 +7,8 @@ struct NotificationActionsTests {
     /// The hub names categories "INTERACTION_" + upper-cased kind (push.go); every kind must have one registered.
     @Test func categoriesMatchWhatTheHubSends() {
         let ids = Set(NotificationActions.categories.map(\.identifier))
-        #expect(ids == ["INTERACTION_PERMISSION", "INTERACTION_PLAN", "INTERACTION_QUESTION", "INTERACTION_SCREEN", "SESSION_DONE",
-                        "pair_receipt", "computer_joining"])
+        #expect(ids == ["INTERACTION_PERMISSION", "INTERACTION_PLAN", "INTERACTION_QUESTION", "INTERACTION_SCREEN",
+                        "INTERACTION_ELICITATION", "SESSION_DONE", "pair_receipt", "computer_joining"])
     }
 
     /// A finished turn's push takes a typed reply, unlocked first: it is an instruction to the agent (#3449).
@@ -36,6 +36,16 @@ struct NotificationActionsTests {
         #expect(plan.actions.contains { $0 is UNTextInputNotificationAction })
         #expect(cats["INTERACTION_QUESTION"]?.actions.isEmpty == true)
         #expect(cats["INTERACTION_SCREEN"]?.actions.isEmpty == true)
+        #expect(cats["INTERACTION_ELICITATION"]?.actions.isEmpty == true) // a form or a link needs the app (#2433)
+    }
+
+    /// The hub pushes MCP forms and links (#2433) only to an app that registers `elicitation`, and waits for it: the iOS
+    /// app, which declares the cards in its hello too, never the visionOS app or an extension; every one takes withdrawals.
+    @Test func onlyTheIPhoneAppRegistersForMCPForms() {
+        #expect(PushRegistrar.features(RequestClientMetadata(platform: .iOS, surface: .app)) == ["withdraw", "elicitation"])
+        #expect(PushRegistrar.features(RequestClientMetadata(platform: .visionOS, surface: .app)) == ["withdraw"])
+        #expect(PushRegistrar.features(RequestClientMetadata(platform: .iOS, surface: .systemExtension)) == ["withdraw"])
+        #expect(PushRegistrar.features(RequestClientMetadata(platform: .macOS, surface: .app)) == ["withdraw"])
     }
 
     @Test func buttonsMapToResolutions() {

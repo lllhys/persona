@@ -79,7 +79,34 @@ describe("项目 › 待办 › Agent 三层树 (#2526)", () => {
   it("待办页按项目分段，没 Agent 的放最后", () => {
     const all = [s("a", "working", "/code/persona")];
     const groups = groupTodosByProject([todo("t1", [link("a")]), todo("t2", [])], makeSessionLookup(all), NOW);
-    expect(groups.map((g) => [g.name, g.state, g.todos.map((t) => t.id)])).toEqual([["persona", "working", ["t1"]], ["还没有 Agent", "done", ["t2"]]]);
+    expect(groups.map((g) => [g.name, g.state, g.todos.map((t) => t.id)])).toEqual([["persona", "working", ["t1"]], ["未归类", "done", ["t2"]]]);
+  });
+
+  it("待办页先按待办所属的知识库项目分段，再按仓库，都没有的最后 (#2581)", () => {
+    const all = [s("a", "working", "/code/persona"), s("b", "needs_you", "/code/persona")];
+    const inArea = (id: string, project: string, links: ReturnType<typeof link>[] = []) => ({ ...todo(id, links), project });
+    const names = (slug: string) => (slug === "community" ? "社群运营" : slug);
+    const groups = groupTodosByProject(
+      [todo("t1", [link("a")]), inArea("t2", "community"), todo("t3", []), inArea("t4", "community", [link("b")]), inArea("t5", "gone")],
+      makeSessionLookup(all),
+      NOW,
+      names,
+    );
+    // an area's to-dos stay together whatever their agents' repository; its order kept; a project not in the list shows its slug
+    expect(groups.map((g) => [g.key, g.name, g.todos.map((t) => t.id)])).toEqual([
+      ["todos-kb:community", "社群运营", ["t2", "t4"]],
+      ["todos-kb:gone", "gone", ["t5"]],
+      ["todos-project:persona", "persona", ["t1"]],
+      ["todos-project:\u0000", "未归类", ["t3"]],
+    ]);
+    expect(groups[0].state).toBe("needs_you");
+    // an area with nothing at work stays open however long it was quiet; a repository's folds as before
+    const old = { updated_at: new Date(NOW - 3 * STALE_MS).toISOString() };
+    const quiet = groupTodosByProject([todo("q1", [], { ...old, project: "community" }), todo("q2", [link("gone")], old)], makeSessionLookup([]), NOW, names);
+    expect(quiet.map((g) => [g.name, g.state, g.folded, g.area ?? false])).toEqual([
+      ["社群运营", "done", false, true],
+      ["未归类", "done", true, false],
+    ]);
   });
 });
 

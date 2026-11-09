@@ -63,14 +63,14 @@ type fleetBook struct {
 	stopSig, pushedSig map[[2]string]string
 	turns              *turnTracker // "machine/session" -> the turn in progress, for the finished push
 	clients            assistantwire.Clients
-	prev               map[string][]proto.Session // each machine's list setSessions saw last
+	prev               map[string]map[string]turnPrev // each machine's list setSessions saw last, by session id
 
 	// sent: each machine's last session list told the hub (fleet.sessions), as JSON. sentMu is held while a list is
 	// decorated and told (publishList), so the lists reach the hub in the order they were made.
 	sentMu sync.Mutex
 	sent   map[string][]byte
-	// shown: the list last told the hub for each machine, decorated (the reminders of agents awaiting a reply read it
-	// instead of decorating every list each minute, agents_reply.go).
+	// shown: the rows awaiting a reply of the list last told the hub for each machine, decorated (the reminders of
+	// agents awaiting a reply read them instead of decorating every list each minute, agents_reply.go).
 	shownMu sync.Mutex
 	shown   map[string][]proto.Session
 	// asks: what each session's last words ask, while they stay the same (fleet_asks.go).

@@ -37,6 +37,13 @@ describe("answerCard", () => {
     expect(ended).toEqual([["p1", { ix, resolution: { allow: false, message: "用户拒绝了" }, already: false, handedBack: false }]]);
   });
 
+  it("leaves a handed-back receipt for a fresh hand back, as for an answer", async () => {
+    apiOp.mockResolvedValue({ ok: true });
+    expect(await answerCard(ix, { dismiss: true })).toEqual({ ok: true, already: false });
+    expect(apiOp).toHaveBeenCalledWith("/interactions/p1/resolve", { method: "POST", json: { dismiss: true } });
+    expect(ended).toEqual([["p1", { ix, resolution: { dismiss: true }, already: false, handedBack: true }]]);
+  });
+
   it("别处已经答过：按 hub 说的答案记下，already", async () => {
     apiOp.mockResolvedValue({ already: true, resolution: { allow: true } });
     expect(await answerCard(ix, denyBody())).toEqual({ ok: true, already: true });

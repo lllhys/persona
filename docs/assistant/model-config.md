@@ -104,6 +104,7 @@ Quota returns `503 assistant_offline`; plugins needing “Information screening�
 Choosing the launcher and model for a new Agent is part of Agents and belongs to the **manager** (assistant process, `docs/assistant/agent-work.md`, “Responsibilities”). Before `POST /api/v1/sessions`, hub asks it for
 `agents.start_params`; before sending to a stopped session whose launcher is unknown, hub asks for `agents.resume_params`. Agents dispatched by the assistant itself (`agents_start`, tasks) already live there.
 It resolves from its own model configuration (`applyModel agent.new`: category choices, overlaid by the launcher / model / thinking effort selected for this run, and the execution fingerprint). The app's effective result, saving, and inheritance remain unchanged.
+Agents is the one launcher purpose with no computer, so the result is then held to what the target computer has (#2640, `docs/server/launcher-health.md`, "A launcher the computer doesn't have"): a default it lacks gives way to `claude` (or its first launcher), a launcher picked for this run that it lacks is refused (400) with the ones it has.
 Label names (purpose `agent.title`) and session triage (`agent.triage`) also call models there.
 
 When the manager is disconnected, hub waits only if it has just started and the manager has never connected (at most until 60 seconds after startup). Once it has connected and is now absent, hub does not wait: the manager connects computers (`docs/server/machines.md`, “Who connects computers”),

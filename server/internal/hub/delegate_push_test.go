@@ -8,7 +8,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// A question the assistant left to the user (docs/assistant/assistant.md "The assistant answers questions first") says what it recommends in the push.
+// A question the assistant left to the user (docs/assistant/assistant.md "Assistant answers questions first") says what it recommends in the push.
 func TestDelegatedQuestionPushSaysTheRecommendation(t *testing.T) {
 	ix := proto.Interaction{ID: "ix_1", Kind: proto.IxQuestion, SessionTitle: "修登录",
 		Questions: []proto.Question{{Question: "用哪个分支？"}}}

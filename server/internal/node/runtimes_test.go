@@ -55,6 +55,13 @@ func runtimeNode(t *testing.T) (*Node, *runtimeHub) {
 // runtimeNodeOn is runtimeNode serving a hub connection on a resident node's shared runtime host (nil: its own socket).
 func runtimeNodeOn(t *testing.T, shared *RuntimeHost) (*Node, *runtimeHub) {
 	t.Helper()
+	return runtimeNodeTapped(t, shared, nil)
+}
+
+// runtimeNodeTapped is runtimeNodeOn writing whatever the node writes to the hub to tap first (nil: no tap). A write
+// that fails on tap fails, and the hub does not get it.
+func runtimeNodeTapped(t *testing.T, shared *RuntimeHost, tap io.Writer) (*Node, *runtimeHub) {
+	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "jb")
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +81,13 @@ func runtimeNodeOn(t *testing.T, shared *RuntimeHost) (*Node, *runtimeHub) {
 	ctx, cancel := context.WithCancel(context.Background())
 	n2hR, n2hW := io.Pipe()
 	h2nR, h2nW := io.Pipe()
-	n.peer = rpc.New("n", n2hW)
+	var toHub io.Writer = n2hW
+	if tap != nil {
+		toHub = io.MultiWriter(tap, n2hW)
+	}
+	n.peer = rpc.New("n", toHub)
 	n.peer.OnRequest = n.handle
+	peer := n.peer // served below: a test may give the node another connection later
 	hub := rpc.New("h", h2nW)
 	end := &runtimeHub{nodePeer: hub, resolve: func(proto.Interaction) proto.Resolution { return proto.Resolution{Dismiss: true} }}
 	hub.OnEvent = func(event string, params json.RawMessage) {
@@ -125,7 +137,7 @@ func runtimeNodeOn(t *testing.T, shared *RuntimeHost) (*Node, *runtimeHub) {
 		return nil, errors.New("unexpected hub call " + method)
 	}
 	go func() { _ = hub.Serve(ctx, n2hR) }()
-	go func() { _ = n.peer.Serve(ctx, h2nR) }()
+	go func() { _ = peer.Serve(ctx, h2nR) }()
 	if shared != nil {
 		n.runtimeSock = shared.path
 		shared.attach(n)

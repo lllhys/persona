@@ -562,6 +562,7 @@ extension InteractionKind {
         case .plan: String(localized: "Plan Approval")
         case .permission: String(localized: "Permission")
         case .screen: String(localized: "Terminal")
+        case .elicitation: String(localized: "MCP Request")
         }
     }
 
@@ -571,6 +572,7 @@ extension InteractionKind {
         case .plan: Theme.Icon.plan
         case .permission: Theme.Icon.askFirst
         case .screen: Theme.Icon.terminal
+        case .elicitation: Theme.Icon.mcpForm
         }
     }
 }
@@ -585,6 +587,7 @@ extension Interaction {
             (isSecretRun ? [summary] : [toolName, summary]).compactMap { $0 }
                 .joined(separator: String(localized: ": ", comment: "Separator between a label and its value"))
         case .screen: String(localized: "A dialog is open in the terminal")
+        case .elicitation: askLine(includeToolName: false) ?? ""
         }
     }
 }
@@ -711,6 +714,8 @@ struct WatchInteractionView: View {
                         Button("Esc") { act(Resolution(keys: ["esc"])) }
                         Button("⏎") { act(Resolution(keys: ["enter"])) }
                     }
+                case .elicitation: // an MCP form or link is answered on the phone, which keeps it off the watch: its message only
+                    Text(interaction.watchSummary).font(.footnote)
                 }
                 Button("Handle on Computer") { act(.dismissed) }
                     .lineLimit(1).minimumScaleFactor(0.8).font(.caption2).foregroundStyle(.secondary)

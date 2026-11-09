@@ -52,7 +52,7 @@ final class PushRegistrar {
         let features: [String]? = nil
         #else
         let kind = "iphone"
-        let features: [String]? = ["withdraw"] // AppDelegate takes a withdrawal push (#4349)
+        let features: [String]? = Self.features(RequestClientMetadata.current)
         #endif
         let base = APIClient.DeviceBody(deviceID: Self.deviceID, name: UIDevice.current.name, kind: kind, apnsToken: hex,
                                         apnsEnv: env, topic: Bundle.main.bundleIdentifier, features: features)
@@ -93,6 +93,14 @@ final class PushRegistrar {
     func didFail(_ error: any Error) {
         let text = error.localizedDescription
         Task { @MainActor in PushHealthStore.shared.update { $0.apnsError = text } }
+    }
+
+    /// What this app takes in pushes beyond the first ones (`features`, docs/protocol/protocol.md devices): withdrawals
+    /// (AppDelegate removes the notifications they name, #4349), and MCP forms and links (`INTERACTION_ELICITATION`,
+    /// #2433) where `client_hello` declares them, the iOS app alone (`LiveConnection.helloFeatures`): the hub pushes
+    /// those cards only to such a phone, and waits for it while no app that shows them is open. An older hub drops the name.
+    nonisolated static func features(_ client: RequestClientMetadata) -> [String] {
+        ["withdraw"] + LiveConnection.helloFeatures(client).filter { $0 == "elicitation" }
     }
 
     /// This device's id at the hub: its push token and its notification settings hang off it.

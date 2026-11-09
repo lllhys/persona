@@ -262,7 +262,7 @@ private fun SettingsContent(
             onDiagnostics = { open(SettingsPage.Diagnostics) }, diagnostics = services.diagnostics, onBack = back,
             footer = { onDemo?.let { Action(stringResource(R.string.settings_try_demo), onClick = it) }; deviceFeedback() },
             machines = services.machines.takeUnless { services.demo }, attempts = services.pairingAttempts,
-            mainReadiness = services.readiness.takeUnless { services.demo })
+            mainReadiness = services.readiness.takeUnless { services.demo }, skipWelcome = true)
         "capsule" -> CapsuleSettingsPage(services.capsule, back)
         "claude" -> ClaudeSettingsPage(services.sessions, services.machines.takeUnless { services.demo }, back)
         "codex" -> ClaudeSettingsPage(services.sessions, services.machines.takeUnless { services.demo }, back, AgentSettingsKind.Codex)
@@ -485,8 +485,9 @@ private fun SettingsContent(
             item { deviceFeedback() }
         }
     }
-    // Register after child pages so routed back also takes precedence over the pairing wizard's local steps.
-    if (onBack != null) BackHandler(page != "settings", onBack = onBack)
+    // Registered after the child pages, so routed back leaves a page in one step. Not on the pairing page: it steps back
+    // through its own pages first and calls onBack itself when none is left (PairingScreen's `back`).
+    if (onBack != null) BackHandler(page != "settings" && page != "pair", onBack = onBack)
     // An AI use opened inside "Model configuration" (no navigation host) closes before the page does.
     BackHandler(page == "models" && purpose != null) { purpose = null }
     BackHandler(page == "plugins" && extension != null) { extension = null }

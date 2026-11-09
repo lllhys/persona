@@ -251,6 +251,9 @@ func TestReviewerHiddenFromTheSessionList(t *testing.T) {
 	if got := ids(s.decoratedUnarchived("box")); len(got) != 2 {
 		t.Fatalf("the node's list: %v", got)
 	}
+	if got, ok := s.decoratedSession("box", "reviewer"); !ok || got.SessionID != "reviewer" {
+		t.Fatalf("the manager's own lookup lost the reviewer: %+v", got)
+	}
 }
 
 // No blocking findings: the task waits for review, the result on its ledger, and the supervisor's one message about

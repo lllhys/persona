@@ -48,6 +48,8 @@ export interface Todo {
   reminded_at?: string | null;
   /** "high" or "low"; unset or "" is normal. */
   priority?: string;
+  /** The slug of the knowledge-base project it belongs to (#2581, docs/assistant/todos.md "Project"); unset for none. */
+  project?: string;
   done_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -563,10 +565,11 @@ export async function setDecisionSupersedes(todoId: string, id: string, supersed
 
 // ── API helpers ──────────────────────────────────────────────
 
-export async function createTodo(title: string, notes?: string): Promise<Todo> {
+/** A new to-do; `due` makes it due at a moment or on a day (one made on the calendar, #2029). */
+export async function createTodo(title: string, notes?: string, due?: { due_at?: string; due_date?: string }): Promise<Todo> {
   const r = await api<{ todo: Todo }>("/todos", {
     method: "POST",
-    json: { title: title.trim(), notes: notes?.trim() || undefined },
+    json: { title: title.trim(), notes: notes?.trim() || undefined, ...due },
   });
   return r.todo;
 }
@@ -580,6 +583,8 @@ export interface TodoPatch {
   due_date?: string | null;
   remind_at?: string | null;
   priority?: string;
+  /** A knowledge-base project's slug; "" takes it out of its project. */
+  project?: string;
 }
 
 export async function updateTodo(id: string, patch: TodoPatch): Promise<Todo> {

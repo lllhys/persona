@@ -1,6 +1,8 @@
 {
   "name_anthropic": "Anthropic",
   "desc_anthropic": "The official Claude API",
+  "name_openai": "OpenAI (official)",
+  "desc_openai": "The official OpenAI Responses API for direct API tasks, such as translation and triage",
   "name_deepseek": "DeepSeek",
   "desc_deepseek": "Pay as you go",
   "name_kimi": "Kimi (China)",

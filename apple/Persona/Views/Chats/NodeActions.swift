@@ -822,7 +822,7 @@ struct NewWorktreeSheet: View {
                     HStack {
                         Text("Advanced")
                         Spacer()
-                        Image(systemName: advanced ? Theme.Icon.expand : Theme.Icon.disclosure).foregroundStyle(.secondary)
+                        ThemedIcon(advanced ? Theme.Icon.expand : Theme.Icon.disclosure).foregroundStyle(.secondary)
                     }.contentShape(.rect)
                 }
                 .buttonStyle(.plain)

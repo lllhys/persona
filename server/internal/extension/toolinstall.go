@@ -34,11 +34,13 @@ import (
 // ErrTools: a command-line program could not be installed.
 var ErrTools = errors.New("tools failed")
 
-// Tool limits: an unpacked tool (Node.js is about 200 MB in 6000 files) and how long a check may take.
+// Tool limits: an unpacked tool (Node.js is about 200 MB in 6000 files), how long a check may take and how much of
+// what it prints is read for the version.
 const (
-	toolMostBytes = 1 << 30
-	toolMostFiles = 100000
-	toolCheckWait = 10 * time.Second
+	toolMostBytes   = 1 << 30
+	toolMostFiles   = 100000
+	toolCheckWait   = 10 * time.Second
+	toolCheckOutput = 64 << 10
 )
 
 // ResolvedTool is how a version of an extension runs one of its tools.
@@ -250,14 +252,15 @@ func runCheck(ctx context.Context, bin string, c *ToolCheck, env []string) (stri
 	if len(args) == 0 {
 		args = []string{"--version"}
 	}
-	var out bytes.Buffer
+	out := &headBuffer{max: toolCheckOutput}
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &out
+	cmd.Env, cmd.Stdout, cmd.Stderr = env, out, out
 	cmd.Dir = os.TempDir()
-	if err := cmd.Run(); err != nil {
+	inOwnGroup(cmd)
+	if err := endGroup(cmd, cmd.Run()); err != nil {
 		return "", fmt.Errorf("%s %s：%v", filepath.Base(bin), strings.Join(args, " "), err)
 	}
-	m := semverInText.FindString(out.String())
+	m := semverInText.FindString(string(out.buf))
 	if m == "" {
 		return "", fmt.Errorf("%s %s 没有写版本号", filepath.Base(bin), strings.Join(args, " "))
 	}

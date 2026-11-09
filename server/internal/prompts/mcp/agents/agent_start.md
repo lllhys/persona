@@ -31,7 +31,7 @@ Give `ultracode: true` for a large task: one that spans many files or needs chec
     },
     "launcher": {
       "type": "string",
-      "description": "shell command that starts claude (default: the machine's default)"
+      "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has); empty: the default, or one the machine has when it lacks the default (claude first; the answer says so)"
     },
     "ultracode": {
       "type": "boolean",

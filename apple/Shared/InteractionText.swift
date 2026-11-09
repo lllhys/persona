@@ -27,7 +27,7 @@ nonisolated extension Interaction {
 nonisolated extension Interaction {
     /// One line on what a needs-you card asks, chosen by its kind — the same wording on the chat card, the inbox's
     /// Needs You row and the Mac menu bar: a plan's first heading, a terminal dialog's question, a question card's
-    /// first question, and a permission card's tool with what it runs.
+    /// first question, a permission card's tool with what it runs, and an MCP form's or link's message.
     /// - Parameter includeToolName: a permission card shows `toolName: summary`; pass false to show the summary
     ///   only and fall back to the tool name, as the inbox row does (its next line already names the card kind).
     ///   The password card (`isSecretRun`) shows its summary alone either way.
@@ -49,6 +49,10 @@ nonisolated extension Interaction {
             return nil
         case .screen:
             return screenDialog?.question
+        case .elicitation:
+            // An MCP form's or link's message ("Please choose"); its title says which it is.
+            guard let m = elicitation?.message?.trimmingCharacters(in: .whitespacesAndNewlines), !m.isEmpty else { return nil }
+            return m
         }
     }
 
