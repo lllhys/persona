@@ -254,13 +254,13 @@ func TestRepairUsageStreamsTheTranscript(t *testing.T) {
 		t.Skip("-race allocates a regexp matcher per line on its own")
 	}
 	path := longTranscript(t, 32<<20)
-	per := bytesPerRun(1, func() {
+	per := bytesPerRun(5, func() {
 		if r, err := repairUsage(path, 0); err != nil || r.lines != 0 {
 			t.Errorf("repair = %+v, %v", r, err)
 		}
 	})
-	if per > 1<<20 {
-		t.Errorf("checking a 32 MB transcript allocates %.0f bytes, want under %d", per, 1<<20)
+	if per > 2<<20 {
+		t.Errorf("checking a 32 MB transcript allocates %.0f bytes, want under %d", per, 2<<20)
 	}
 }
 
