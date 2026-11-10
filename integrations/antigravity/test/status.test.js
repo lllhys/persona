@@ -75,6 +75,7 @@ async function fixture(t, steps, summary, options = {}) {
   if (summary) state(summary)
   const binary = join(home, 'fake-agy.mjs')
   writeFileSync(binary, `#!/usr/bin/env node
+if (process.argv.includes('models')) { console.log('test-model\\tTest Model'); process.exit(0) }
 import { createInterface } from 'node:readline'
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line)

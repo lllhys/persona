@@ -110,6 +110,8 @@ export interface SessionCapabilities {
   approve?: boolean;
   terminal?: boolean;
   attach?: boolean;
+  /** Whether the runtime explicitly supports session model changes. */
+  model?: boolean;
   /** Closing the agent independently of terminal access. Older nodes retain terminal-only closing. */
   close?: boolean;
   /** The permission mode and effort chips can change it (session.modes, #1843): the node's word, absent from older nodes. */

@@ -9,6 +9,7 @@
   "package": "The package reference or declared size is invalid. OCI packages require a digest reference and a size.",
   "checksum": "The package sha256 or size does not match the catalog.",
   "stalled": "The package download stalled. Retry.",
+  "too_slow": "The package download didn't finish within {minutes} minutes ({got} arrived): the connection to the market is too slow. Retry later.",
   "request": "The marketplace or registry request failed. Retry.",
   "redirect": "An unsafe marketplace or registry redirect was refused.",
   "challenge": "The registry authentication challenge is not bound to this origin and pull namespace.",

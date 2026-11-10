@@ -2436,7 +2436,7 @@ side conversation in `assistant.leaders`; one leader is one direction. Schema: `
 - **`leader.changed {id, title, name, project?, ended?}`**: `id` is the leader conversation's session id, the key to keep a
   record by; `title` its title as the apps show it; `name` what the direction is called, **the one to show** (#3679): the
   name the owner (`PUT /api/v1/assistant/directions/{id}/name`) or the secretary (`direction_name`) gave it, else its
-  knowledge-base project's name, else `title` without its `MMDD | kind | ` prefix; a new name is a change, told once; `project` the knowledge-base project's slug it is filed under (left
+  knowledge-base project's name, else `title` without its `MMDD | kind | ` prefix (and when that starts `你是「X」`, a role given in the first message, just `X`, #3744); a new name is a change, told once; `project` the knowledge-base project's slug it is filed under (left
   out while none; the hub files a new direction under the project most of its tasks are filed under); `ended: true`
   once it left `assistant.leaders` (nothing is deleted; made a leader again, it is sent without `ended`). Sent once per
   change: what was last told is kept in the hub's store, so a restart or a replay of the same state sends nothing.

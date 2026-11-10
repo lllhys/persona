@@ -138,7 +138,7 @@ func (h *Manager) operationRoutes(api *http.ServeMux) {
 		ps.ops.mu.Unlock()
 		switch {
 		case state == opRunning && previewing && cancel != nil:
-			cancel() // the preview fails with it, and the operation is canceled
+			cancel(extension.ErrUserCanceled) // the preview fails with it, and the operation is canceled
 		case state == opRunning:
 			writeExtensionResponseError(w, r, http.StatusConflict, "cannot_cancel", i18n.Err("hub-extension_operations.cannot_cancel"))
 			return

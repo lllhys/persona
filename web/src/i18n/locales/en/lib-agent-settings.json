@@ -66,7 +66,7 @@
   "channel_latest": "Latest",
   "channel_stable": "Stable",
   "setting_model": "Model",
-  "setting_model_detail": "The model Codex uses when none is picked, such as gpt-5.5",
+  "setting_model_detail": "The model this agent uses when none is picked.",
   "setting_model_reasoning_effort": "Thinking effort",
   "setting_model_reasoning_effort_detail": "Higher thinks more carefully, and takes longer",
   "setting_model_reasoning_summary": "Thinking summary",
@@ -94,5 +94,7 @@
   "approval_never": "Never ask",
   "sandbox_read_only": "Read only",
   "sandbox_workspace_write": "Can change the working folder",
-  "sandbox_danger_full_access": "No limits (risky)"
+  "sandbox_danger_full_access": "No limits (risky)",
+  "setting_agentMode": "Execution mode",
+  "setting_agentMode_detail": "Auto approves safe operations and asks when needed. Full bypass is controlled by tool permission."
 }

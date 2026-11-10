@@ -6,5 +6,6 @@
   "cannot_cancel": "已经在安装了，现在停不下来",
   "not_retryable": "这个没法在这里重试：重新开始一次",
   "not_failed": "只有失败的才能重试",
-  "installing_already": "已经在安装了：等这次安装结束"
+  "installing_already": "已经在安装了：等这次安装结束",
+  "client_left": "包还没下载完，App 就不等了。hub 会接着下载：稍后再试一次。"
 }

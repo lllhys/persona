@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -11,8 +12,8 @@ import (
 // ~/.omp/agent/config.yml. Both follow ClaudeSetting's shape so AgentSettings in the web / app renders them.
 
 var agySettings = []ClaudeSetting{
-	{Key: "model", Title: "默认模型", Detail: "没指定模型时 Antigravity 用哪个，比如 Gemini 4 Argon (High)", Type: "string", Default: "Gemini 4 Argon (High)"},
-	{Key: "agentMode", Title: "执行模式", Detail: "改文件、跑命令时的默认模式；选 auto 会自动放行所有权限检查", Type: "enum", Options: []string{"default", "accept-edits", "auto", "plan"}, Default: "default"},
+	{Key: "model", Title: "默认模型", Detail: "没有指定模型时使用 Antigravity 自己的默认模型", Type: "string", Default: ""},
+	{Key: "agentMode", Title: "执行模式", Detail: "改文件、跑命令时的默认模式；auto 自动放行安全操作，需要时仍会询问", Type: "enum", Options: []string{"default", "accept-edits", "auto", "plan"}, Default: "default"},
 	{Key: "toolPermission", Title: "工具权限", Detail: "调用工具或跑命令前要不要问你；选 always-proceed 会自动放行所有权限检查（全部放行）", Type: "enum", Options: []string{"ask", "always-proceed"}, Default: "ask"},
 	{Key: "modelProvider", Title: "模型接入方式", Detail: "oauth 走 Google / Antigravity 登录；填了 GOOGLE_GEMINI_BASE_URL + GEMINI_API_KEY 时选 gemini", Type: "enum", Options: []string{"oauth", "gemini"}, Default: "oauth"},
 	{Key: "showFeedbackSurvey", Title: "显示反馈问卷", Detail: "在终端里偶尔弹出反馈调查", Type: "bool", Default: true},
@@ -38,6 +39,17 @@ func (n *Node) getAgySettings() ([]ClaudeSetting, error) {
 	out := make([]ClaudeSetting, len(agySettings))
 	for i, s := range agySettings {
 		s.Value = raw[s.Key]
+		if s.Key == "model" {
+			if catalog, ok := n.runtimeLauncherModels("agy"); ok && len(catalog.Models) > 0 {
+				s.Type = "enum"
+				for _, model := range catalog.Models {
+					s.Options = append(s.Options, model.Name)
+				}
+				if value, ok := s.Value.(string); ok && !slices.Contains(s.Options, value) {
+					s.Options = append(s.Options, value)
+				}
+			}
+		}
 		out[i] = s
 	}
 	return out, nil

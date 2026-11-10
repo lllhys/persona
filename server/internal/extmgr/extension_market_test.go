@@ -243,6 +243,11 @@ type fakeGitHub struct {
 	release string
 	storage string // where release assets redirect to: another host
 	stall   bool   // assets send half and then nothing (a download that stalls)
+	// hold: assets send half, then the rest once it is closed (a slow download); assetGets counts their requests and
+	// assetStops those of them whose client went away while held.
+	hold       chan struct{}
+	assetGets  int
+	assetStops int
 }
 
 func (g *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +260,22 @@ func (g *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/s3/") {
 		g.leaked = g.leaked || auth != ""
 		b := g.assets[strings.TrimPrefix(r.URL.Path, "/s3/")]
+		g.assetGets++
+		if hold := g.hold; hold != nil {
+			g.mu.Unlock()
+			defer g.mu.Lock()
+			_, _ = w.Write(b[:len(b)/2])
+			w.(http.Flusher).Flush()
+			select {
+			case <-hold:
+				_, _ = w.Write(b[len(b)/2:])
+			case <-r.Context().Done():
+				g.mu.Lock()
+				g.assetStops++
+				g.mu.Unlock()
+			}
+			return
+		}
 		if g.stall {
 			g.mu.Unlock()
 			_, _ = w.Write(b[:len(b)/2])

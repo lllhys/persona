@@ -29,6 +29,15 @@ describe("which sessions can switch model", () => {
     expect(canSwitchModel(session({ status: "offline" }))).toBe(false);
   });
 
+  it("honors explicit runtime model capability and its launcher", () => {
+    const agy = session({ agent: "agy", source_kind: "runtime", launcher: "agy", capabilities: { send: true, model: true } as Session["capabilities"] });
+    expect(canSwitchModel(agy)).toBe(true);
+    expect(sessionLauncher(agy)).toBe("agy");
+    expect(canSwitchModel({ ...agy, capabilities: { ...agy.capabilities!, model: false } })).toBe(false);
+    expect(canSwitchModel({ ...agy, status: "offline" })).toBe(false);
+    expect(canSwitchModel({ ...agy, assistant: true })).toBe(false);
+  });
+
   it("is busy while the agent works or waits on you", () => {
     expect(modelBusy(session())).toBe("");
     expect(modelBusy(session({ status: "working" }))).toContain("正在工作");

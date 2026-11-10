@@ -57,12 +57,12 @@ func (n *Node) launcherModels(ctx context.Context, name, agentType string, refre
 	if name != "claude" && !nameRe.MatchString(name) {
 		return proto.LauncherModels{}, fmt.Errorf("invalid launcher %q", name)
 	}
-	if res, ok := n.runtimeLauncherModels(name); ok { // a runtime's launcher: the models it said (runtimecontrol.go)
-		return res, nil
+	if res, ok := n.runtimeLauncherModels(name); ok { // a runtime's launcher: static advertisement or native discovery
+		return n.liveRuntimeModels(ctx, name, refresh, res)
 	}
 	if m, ok := n.managedLauncher(name); ok && m.AgentType() == "agy" {
 		if res, ok := n.runtimeLauncherModels("agy"); ok {
-			return res, nil
+			return n.liveRuntimeModels(ctx, "agy", refresh, res)
 		}
 		return proto.LauncherModels{Agent: "agy", Models: []proto.AgentModel{}}, nil
 	}

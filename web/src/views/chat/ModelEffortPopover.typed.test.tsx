@@ -170,3 +170,23 @@ describe("the session's model popover: a typed model ID (#1644)", () => {
     expect(document.body.textContent).not.toContain("vendor/model-x");
   });
 });
+
+
+describe("Antigravity model variants", () => {
+  it("selects the thinking level of a native variant", async () => {
+    listAnswer = () => json({ agent: "agy", models: [
+      { id: "future-medium", name: "Future Medium", efforts: ["low", "medium", "high"], default_effort: "medium" },
+      { id: "future-high", name: "Future High", efforts: ["low", "medium", "high"], default_effort: "high" },
+    ] });
+    const anchor = document.createElement("button");
+    document.body.append(anchor);
+    const apply = vi.fn(async () => true);
+    const agy = { ...session("agy-variants"), agent: "agy", launcher: "agy", model: "future-medium", effort: "medium" };
+    act(() => root.render(<ModelEffortPopover session={agy} anchor={anchor} onClose={() => {}} apply={apply} />));
+    await flush();
+    expect(document.body.textContent).not.toContain("Claude Code");
+    act(() => button("Future High")!.click());
+    await act(async () => button("应用")!.click());
+    expect(apply.mock.calls).toEqual([[{ model: "future-high" }], [{ effort: "high" }]]);
+  });
+});

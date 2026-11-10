@@ -65,9 +65,13 @@ type leaderTold struct {
 // titlePrefix is an assistant conversation title's "MMDD | kind | " (titles.go), which a direction's name leaves out.
 var titlePrefix = lazyre.New(`^\s*\d{4}\s*\|[^|]*\|\s*`)
 
+// titleRole is the wrapping a leader's title often has when its first message set its role ("你是「基建」这条线的主管…",
+// i18n-ignore: matches the owner's own words): the name is what the brackets hold (#3744).
+var titleRole = lazyre.New(`^你是「([^」]+)」`) // i18n-ignore
+
 // directionName is what a direction is called (#3679): the name the owner or the secretary gave it, else its
-// knowledge-base project's name, else its conversation's title without the "MMDD | kind | " prefix (the title as it is
-// when nothing is left).
+// knowledge-base project's name, else its conversation's title without the "MMDD | kind | " prefix and, when what is
+// left starts 你是「X」 (a role given in the first message), just X (the title as it is when nothing is left).
 func directionName(d *direction, title, projectName string) string {
 	if d != nil && d.Name != "" {
 		return d.Name
@@ -76,6 +80,9 @@ func directionName(d *direction, title, projectName string) string {
 		return projectName
 	}
 	if t := strings.TrimSpace(titlePrefix.ReplaceAllString(title, "")); t != "" {
+		if m := titleRole.FindStringSubmatch(t); m != nil && strings.TrimSpace(m[1]) != "" {
+			return strings.TrimSpace(m[1])
+		}
 		return t
 	}
 	return title

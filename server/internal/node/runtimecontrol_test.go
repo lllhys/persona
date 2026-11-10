@@ -236,3 +236,61 @@ func TestEngineRuntimeSessionOpenElsewhere(t *testing.T) {
 		t.Fatalf("started with %v, sends %d", start, len(host.got("session.send")))
 	}
 }
+
+func TestRuntimeNativeModelsAndModelControl(t *testing.T) {
+	n, _ := runtimeNode(t)
+	hello := paseoEngineHello()
+	hello["caps"].(map[string]any)["model"] = true
+	hello["caps"].(map[string]any)["models"] = true
+	host := dialRuntime(t, n, hello)
+	host.mu.Lock()
+	host.answer = func(method string, params json.RawMessage) (any, error) {
+		if method == "launchers.models" {
+			return proto.LauncherModels{Models: []proto.AgentModel{{ID: "future-model", Name: "Future Model"}}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	host.mu.Unlock()
+	got, err := n.launcherModels(context.Background(), "paseo-claude", "", true)
+	if err != nil || len(got.Models) != 1 || got.Models[0].ID != "future-model" {
+		t.Fatalf("native models: %+v %v", got, err)
+	}
+	var discovery map[string]any
+	_ = json.Unmarshal(host.got("launchers.models")[0], &discovery)
+	if discovery["refresh"] != true {
+		t.Fatalf("refresh lost: %v", discovery)
+	}
+	_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "paseo-model", "agent": "claude", "status": "idle"}}})
+	waitFor(t, "listed", func() bool { _, ok := listed(t, n)["paseo-model"]; return ok })
+	row := listed(t, n)["paseo-model"]
+	if row.Capabilities.Model == nil || !*row.Capabilities.Model {
+		t.Fatal("model capability missing")
+	}
+	if _, err := nodeCall(t, n, "session.modes", map[string]any{"session_id": row.SessionID, "model": "future-model"}); err != nil {
+		t.Fatal(err)
+	}
+	var change map[string]any
+	_ = json.Unmarshal(host.got("session.modes")[0], &change)
+	if change["model"] != "future-model" {
+		t.Fatalf("model lost: %v", change)
+	}
+	host.mu.Lock()
+	host.answer = func(string, json.RawMessage) (any, error) { return nil, errors.New("native catalog unavailable") }
+	host.mu.Unlock()
+	if _, err := n.launcherModels(context.Background(), "paseo-claude", "", true); err == nil {
+		t.Fatal("native failure was hidden")
+	}
+}
+
+func TestRuntimeWithoutModelCapabilityRejectsModel(t *testing.T) {
+	n, _ := runtimeNode(t)
+	host := dialRuntime(t, n, paseoEngineHello())
+	_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "paseo-model", "agent": "claude", "status": "idle"}}})
+	waitFor(t, "listed", func() bool { _, ok := listed(t, n)["paseo-model"]; return ok })
+	if _, err := nodeCall(t, n, "session.modes", map[string]any{"session_id": "paseo-model", "model": "future"}); err == nil {
+		t.Fatal("unadvertised model switch passed")
+	}
+	if len(host.got("session.modes")) != 0 {
+		t.Fatal("unsupported model reached runtime")
+	}
+}

@@ -345,3 +345,15 @@ func BenchmarkListKey(b *testing.B) {
 		_ = listKeySized(list, size)
 	}
 }
+
+func TestListKeyModelCapability(t *testing.T) {
+	key := func(value *bool) string {
+		return listKey([]proto.Session{{SessionID: "s1", Capabilities: &proto.SessionCapabilities{Model: value}}})
+	}
+	if key(proto.CanModes(true)) != key(proto.CanModes(true)) {
+		t.Fatal("equal model capabilities differ")
+	}
+	if key(nil) == key(proto.CanModes(false)) || key(proto.CanModes(false)) == key(proto.CanModes(true)) {
+		t.Fatal("model capability change was lost")
+	}
+}

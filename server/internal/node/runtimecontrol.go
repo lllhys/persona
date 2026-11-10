@@ -264,3 +264,30 @@ func (n *Node) continueInRuntime(ctx context.Context, id, text string, images []
 	}
 	return err
 }
+
+// liveRuntimeModels asks opt-in runtimes for their current native catalog. Older runtimes keep their advertised list.
+func (n *Node) liveRuntimeModels(ctx context.Context, name string, refresh bool, fallback proto.LauncherModels) (proto.LauncherModels, error) {
+	h := n.runtimes.launcherRuntime(name)
+	if h == nil {
+		return fallback, nil
+	}
+	h.mu.Lock()
+	supported := h.hello.Caps.Models
+	h.mu.Unlock()
+	if !supported {
+		return fallback, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, runtimeCallTimeout)
+	defer cancel()
+	var out proto.LauncherModels
+	if err := h.peer.Call(ctx, "launchers.models", map[string]any{"launcher": name, "refresh": refresh}, &out); err != nil {
+		return proto.LauncherModels{}, err
+	}
+	// Apply the same bounds as runtime.launchers before exposing a native response.
+	clean := cleanLaunchers([]runtimeLauncher{{Name: name, Agent: fallback.Agent, Models: out.Models}})
+	out.Agent, out.Models = fallback.Agent, clean[0].Models
+	if out.Models == nil {
+		out.Models = []proto.AgentModel{}
+	}
+	return out, nil
+}

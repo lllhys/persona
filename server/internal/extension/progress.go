@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // Installing in steps (docs/protocol/protocol.md "Extension install, upgrade and uninstall progress"): a preview says which step it is at through the
@@ -93,6 +95,19 @@ func (e kindErr) Unwrap() error { return e.kind }
 
 func errOfKind(kind error, format string, args ...any) error {
 	return kindErr{fmt.Sprintf(format, args...), kind}
+}
+
+// kindMessage is a translated message that is also kind (errors.Is): an operation shows it in its own language
+// (i18n.Localize uses its Text), where errOfKind would keep the default language's text.
+type kindMessage struct {
+	*i18n.Message
+	kind error
+}
+
+func (e kindMessage) Unwrap() error { return e.kind }
+
+func messageOfKind(kind error, key string, args ...i18n.Args) error {
+	return kindMessage{i18n.Err(key, args...).(*i18n.Message), kind}
 }
 
 // StallAfter is how long a download may get no data before it gives up (rather than wait out its whole timeout: a

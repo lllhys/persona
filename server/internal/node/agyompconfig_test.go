@@ -184,3 +184,23 @@ func stringContains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestAgyModelSettingsUseNativeCatalog(t *testing.T) {
+	n, _ := runtimeNode(t)
+	hello := paseoEngineHello()
+	hello["runtime"], hello["agent"], hello["launcher"] = "agy", "agy", "agy"
+	hello["launchers"] = []map[string]any{{"name": "agy", "agent": "agy", "models": []map[string]any{{"id": "future-model", "name": "Future Model"}}}}
+	_ = dialRuntime(t, n, hello)
+	if err := n.setAgySetting("model", "existing-model"); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := n.getAgySettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, setting := range settings {
+		if setting.Key == "model" && (setting.Type != "enum" || len(setting.Options) != 2 || setting.Options[0] != "Future Model" || setting.Options[1] != "existing-model" || setting.Default != "") {
+			t.Fatalf("native model options: %+v", setting)
+		}
+	}
+}

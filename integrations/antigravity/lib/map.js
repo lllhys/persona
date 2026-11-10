@@ -289,31 +289,14 @@ export function workspacePathOf(summary, fallbackCwd = '') {
   return fallbackCwd
 }
 
-export function defaultModelsList() {
-  const efforts = ['low', 'medium', 'high']
-  return [
-    { id: 'gemini-4-argon-high', name: 'Gemini 4 Argon (High)', default: true, efforts, default_effort: 'high' },
-    { id: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)', efforts, default_effort: 'medium' },
-    { id: 'gemini-4-argon-low', name: 'Gemini 4 Argon (Low)', efforts, default_effort: 'low' },
-    { id: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash (High)', efforts, default_effort: 'high' },
-    { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Medium)', efforts, default_effort: 'medium' },
-    { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)', efforts, default_effort: 'low' },
-    { id: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 (High)', efforts, default_effort: 'high' },
-    { id: 'claude-opus-5-5-medium', name: 'Claude Opus 5.5 (Medium)', efforts, default_effort: 'medium' },
-    { id: 'claude-opus-5-5-low', name: 'Claude Opus 5.5 (Low)', efforts, default_effort: 'low' },
-    { id: 'claude-sonnet-5-5-high', name: 'Claude Sonnet 5.5 (High)', efforts, default_effort: 'high' },
-    { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)', efforts, default_effort: 'medium' },
-    { id: 'claude-sonnet-5-5-low', name: 'Claude Sonnet 5.5 (Low)', efforts, default_effort: 'low' },
-    { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)', efforts: ['medium'], default_effort: 'medium' },
-  ]
-}
-
 export function personaModeToAgy(mode) {
   switch (mode) {
     case 'plan':
       return 'plan'
     case 'acceptEdits':
+      return 'accept-edits'
     case 'auto':
+      return 'auto'
     case 'bypassPermissions':
       return 'accept-edits'
     case 'default':
@@ -324,6 +307,8 @@ export function personaModeToAgy(mode) {
 
 export function agyModeToPersona(mode) {
   switch (mode) {
+    case 'auto':
+      return 'auto'
     case 'plan':
       return 'plan'
     case 'accept-edits':

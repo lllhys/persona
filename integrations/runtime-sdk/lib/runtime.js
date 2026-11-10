@@ -59,9 +59,11 @@ export function defaultSocketPath() {
  *   archives in Persona is archived here as well; already archived answers as done.
  * @property {(params: {session_id: string}) => Promise<void>} [unarchive] - restores what archive archived (already
  *   restored answers as done).
- * @property {(params: {session_id: string, permission_mode?: string, effort?: string}) => Promise<void>} [modes] - the
- *   phone's permission mode / effort for a session (caps.modes; values are Persona's: default / acceptEdits / plan /
- *   auto / bypassPermissions, low … max).
+ * @property {(params: {launcher?: string, refresh?: boolean}) => Promise<{agent: string, models: object[]}>} [models] -
+ *   live native model discovery (caps.models), without inference. Rejections reach the picker.
+ * @property {(params: {session_id: string, permission_mode?: string, effort?: string, model?: string}) => Promise<void>} [modes] - the
+ *   phone's permission mode / effort for a session (caps.modes; model requires options.modelSwitch); values are Persona's: default / acceptEdits / plan /
+ *   auto / bypassPermissions, low … max.
  * @property {() => boolean} [hasLocalClient] - the runtime's own UI is open (the policy gives it first turn).
  * @property {(sessionId: string, watching: boolean, o?: { transcript: boolean }) => void} [watchChanged] - the phone
  *   started (or stopped) watching a session: a runtime that follows a session only while it is watched (Paseo's
@@ -78,7 +80,7 @@ export function defaultSocketPath() {
  *   token?: string | (() => string), package?: { name: string, hash: string }, instance?: string,
  *   onUpdate?: (offer: { name: string, hash: string, version?: string }) => void,
  *   launchers?: { name: string, model?: string, agent?: string, models?: object[] }[], resume?: boolean,
- *   keepAlways?: boolean, readonly?: boolean }} options -
+ *   keepAlways?: boolean, readonly?: boolean, modelSwitch?: boolean }} options -
  *   launchers: more entries for the new-session form than options.launcher (a runtime running several agents: one
  *   per provider, each with the agent it starts and its models); rt.launchersChanged replaces them. resume: start
  *   takes {resume: <Claude session id>} — taking a session it does not have over, under that id (caps.resume; the
@@ -222,6 +224,8 @@ export function createRuntime(driver, options) {
     }
     // Said only when on: a runtime without them says what it always did.
     if (typeof driver.modes === 'function') caps.modes = true
+    if (typeof driver.modes === 'function' && options.modelSwitch === true) caps.model = true
+    if (typeof driver.models === 'function') caps.models = true
     // Its own archive, both ways: an archive Persona could not undo is not offered.
     if (typeof driver.archive === 'function' && typeof driver.unarchive === 'function') caps.archive = true
     if (options.resume === true && caps.start) caps.resume = true
@@ -740,6 +744,8 @@ export function createRuntime(driver, options) {
         await (method === 'session.archive' ? driver.archive : driver.unarchive)(params)
         schedulePush()
         return { ok: true }
+      case 'launchers.models':
+        return need(driver.models, 'models')(params)
       case 'session.modes':
         await need(driver.modes, 'modes')(params)
         schedulePush()

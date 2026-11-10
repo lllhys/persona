@@ -110,6 +110,8 @@ export function ModelEffortPopover({
     setTyped("");
     setEntering(false);
     setPickId(id);
+    // AGY publishes distinct native model variants for each thinking level. Picking one selects that level too.
+    if (session.agent === "agy") setEffort(models.find((model) => model.id === id)?.default_effort ?? session.effort ?? "");
   };
   // Forget an ID typed before: off the list at once, back where it was when the hub says no.
   const forget = (id: string) => {
@@ -333,7 +335,7 @@ export function ModelEffortPopover({
         </button>
       ))}
       {forgetError && <div role="alert" className="px-2 py-1.5 text-[12px] break-words whitespace-pre-wrap text-red">{forgetError}</div>}
-      {(switchable || typable) && <div className="px-2 pt-1 pb-0.5 text-[11px] break-words text-ink-3">{tr("composer.default_note")}</div>}
+      {(switchable || typable) && (!session.agent || session.agent === "claude") && <div className="px-2 pt-1 pb-0.5 text-[11px] break-words text-ink-3">{tr("composer.default_note")}</div>}
       {(busyNote || locked) && (
         <div role="status" className="px-2 py-1.5 text-[11.5px] break-words text-ink-3">
           {busyNote || tr("composer.locked")}

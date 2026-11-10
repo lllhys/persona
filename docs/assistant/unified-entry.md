@@ -413,7 +413,7 @@ themselves every 10 minutes and right after a leader's plan is made, not on ever
 
 **Names and progress (#3679).** A direction is shown by its `name` (`direction_progress.go`): the one the owner gave
 it (`PUT /api/v1/assistant/directions/{id}/name`, or Start direction's offered name) or the secretary gave it
-(`direction_name`, main chat only), else its kb project's name, else its title without the `MMDD | kind | ` prefix.
+(`direction_name`, main chat only), else its kb project's name, else its title without the `MMDD | kind | ` prefix (and without a `你是「X」…` role wrapping: just `X`, #3744).
 `leader.changed` and `GET /api/v1/assistant/leaders` carry it. Besides the hub's own reached / decision / stuck
 reports, a leader writes its direction's progress itself with `leader_progress` (leaders only): what was reached, what
 is being done and where it is stuck, what the owner has to do, and evidence links; it goes to the extensions as

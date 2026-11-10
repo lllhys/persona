@@ -323,7 +323,12 @@ class OutboxMessageSender(
                 catch (_: Exception) { null }
                 when (evidence) {
                     MessageEvidence.Shown -> store.transition(entry.clientMessageId, reconcilable, OutboxState.Shown)
-                    is MessageEvidence.Receipt -> settle(entry.clientMessageId, uncertain, evidence.result)
+                    is MessageEvidence.Receipt -> {
+                        // A late success can settle manual review; an unknown receipt must keep that choice visible.
+                        val from = if (evidence.result == MessageTransportResult.Accepted)
+                            uncertain + OutboxState.NeedsConfirmation else uncertain
+                        settle(entry.clientMessageId, from, evidence.result)
+                    }
                     null -> store.transition(entry.clientMessageId, setOf(OutboxState.Verifying), OutboxState.Unknown)
                 }
             }

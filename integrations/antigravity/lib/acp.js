@@ -103,6 +103,8 @@ export class AgyAcpClient extends EventEmitter {
     this.proc = null
     this.readyPromise = null
     this.loadedSessions.clear()
+    this.availableModels = null
+    this.agentVersion = ''
     const pending = [...this.pending.values()]
     this.pending.clear()
     for (const p of pending) p.reject(err)
@@ -282,17 +284,17 @@ export class AgyAcpClient extends EventEmitter {
 
   async setModel(sessionId, modelId) {
     if (!modelId) return
-    await this.call('session/set_model', { sessionId, modelId }, 15_000)
+    return this.call('session/set_model', { sessionId, modelId }, 15_000)
   }
 
   async setMode(sessionId, modeId) {
     if (!modeId) return
-    await this.call('session/set_mode', { sessionId, modeId }, 15_000)
+    return this.call('session/set_mode', { sessionId, modeId }, 15_000)
   }
 
   async setConfigOption(sessionId, configId, value) {
     if (!configId || value === undefined || value === '') return
-    await this.call('session/set_config_option', { sessionId, configId, value }, 15_000)
+    return this.call('session/set_config_option', { sessionId, configId, value }, 15_000)
   }
 
   async prompt(sessionId, promptBlocks) {

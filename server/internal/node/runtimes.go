@@ -73,6 +73,9 @@ type runtimeHello struct {
 		Assistant bool `json:"assistant"`
 		// Modes: the phone's permission mode and effort for its sessions go to it (session.modes).
 		Modes bool `json:"modes"`
+		// Model permits session.modes model changes. Models provides live launchers.models discovery.
+		Model  bool `json:"model"`
+		Models bool `json:"models"`
 		// Resume: session.start with resume takes a Claude session it does not have over, under that id (the machine's
 		// engine continuing a session not running anywhere, runtimecontrol.go).
 		Resume bool `json:"resume"`

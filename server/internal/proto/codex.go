@@ -31,6 +31,8 @@ type SessionCapabilities struct {
 	// (a Claude outside Persona's terminals, a runtime that did not declare caps.modes). A pointer so a hub that decodes
 	// an older node's row and encodes it again keeps it absent.
 	Modes *bool `json:"modes,omitempty"`
+	// Model explicitly permits changing the model through session.modes. Absent preserves older clients' heuristics.
+	Model *bool `json:"model,omitempty"`
 }
 
 // CanModes is a Modes value.

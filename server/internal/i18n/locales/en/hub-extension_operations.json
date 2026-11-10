@@ -6,5 +6,6 @@
   "cannot_cancel": "It is being installed already and cannot be stopped now",
   "not_retryable": "This one cannot be tried again from here: start it again",
   "not_failed": "Only a failed one can be tried again",
-  "installing_already": "It is being installed already: wait for that install to finish"
+  "installing_already": "It is being installed already: wait for that install to finish",
+  "client_left": "The app stopped waiting before the package arrived. The hub keeps downloading it: try again in a moment."
 }

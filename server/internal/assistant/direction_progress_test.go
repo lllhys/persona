@@ -23,8 +23,12 @@ func TestDirectionNameOrder(t *testing.T) {
 	}{
 		{"given name wins", &direction{Name: "Infra", Project: "infra"}, "1110 | 探索 | x", "Infrastructure", "Infra"},
 		{"then the project's name", &direction{Project: "infra"}, "1110 | 探索 | x", "Infrastructure", "Infrastructure"},
-		{"then the title without its prefix", &direction{}, "1110 | 探索 | 你是「基建」这条线的主管", "", "你是「基建」这条线的主管"},
+		{"then the title without its prefix", &direction{}, "1110 | 探索 | Android parity", "", "Android parity"},
 		{"a title without a prefix", &direction{}, "Android parity", "", "Android parity"},
+		{"the role's wrapping, cut off", &direction{}, "1110 | 探索 | 你是「基建」这条线的主管（l", "", "基建"},
+		{"the role's wrapping, no prefix", &direction{}, "你是「Skill 群」的主管", "", "Skill 群"},
+		{"brackets elsewhere stay", &direction{}, "1110 | 功能 | 修「设置」页", "", "修「设置」页"},
+		{"an empty role stays as it is", &direction{}, "1110 | 探索 | 你是「」的主管", "", "你是「」的主管"},
 		{"only a prefix: the title", &direction{}, "1110 | 探索 | ", "", "1110 | 探索 | "},
 	} {
 		if got := directionName(c.d, c.title, c.pname); got != c.want {
@@ -42,7 +46,7 @@ func TestDirectionNameIsToldOnce(t *testing.T) {
 	setSettings(t, e.s, func(v *Settings) { v.Main = "conv_main" })
 	e.title("conv_lead_a", "1110 | 探索 | 你是「基建」这条线的主管（l")
 	e.leaders("conv_lead_a")
-	if got := e.changedNames(); len(got) != 1 || got[0].Name != "你是「基建」这条线的主管（l" {
+	if got := e.changedNames(); len(got) != 1 || got[0].Name != "基建" {
 		t.Fatalf("made: %+v", got)
 	}
 
@@ -52,7 +56,16 @@ func TestDirectionNameIsToldOnce(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("PUT name: %d %s", rec.Code, rec.Body)
 	}
-	if got := e.changedNames(); len(got) != 1 || got[0].Name != "基建" || got[0].Title != "1110 | 探索 | 你是「基建」这条线的主管（l" {
+	if err := e.s.setDirectionName(context.Background(), "conv_lead_a", "", directionByUser); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.changedNames(); len(got) != 0 {
+		t.Fatalf("the same name as the fallback was told again: %+v", got)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/assistant/directions/conv_lead_a/name", strings.NewReader(`{"name":"基建平台组"}`))
+	e.s.ServeHTTP(rec, req)
+	if got := e.changedNames(); len(got) != 1 || got[0].Name != "基建平台组" || got[0].Title != "1110 | 探索 | 你是「基建」这条线的主管（l" {
 		t.Fatalf("named: %+v", got)
 	}
 	if got := e.changedNames(); len(got) != 0 {
@@ -86,7 +99,7 @@ func TestDirectionNameIsToldOnce(t *testing.T) {
 	if _, err := runJSON(t, e.s, "conv_main", "direction_name", map[string]any{"id": "conv_lead_a", "name": ""}); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.changedNames(); len(got) != 1 || got[0].Name != "你是「基建」这条线的主管（l" {
+	if got := e.changedNames(); len(got) != 1 || got[0].Name != "基建" {
 		t.Fatalf("cleared: %+v", got)
 	}
 
@@ -95,7 +108,7 @@ func TestDirectionNameIsToldOnce(t *testing.T) {
 	var out struct {
 		Leaders []leaderView `json:"leaders"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Leaders) != 1 || out.Leaders[0].Name != "你是「基建」这条线的主管（l" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Leaders) != 1 || out.Leaders[0].Name != "基建" {
 		t.Fatalf("listed: %s", rec.Body)
 	}
 }

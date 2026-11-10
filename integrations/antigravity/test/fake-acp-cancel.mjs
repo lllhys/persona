@@ -10,6 +10,8 @@
 import { appendFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 
+if (process.argv.includes('models')) { console.log('test-model\tTest Model'); process.exit(0) }
+
 const SESSION = '0c7d2c4e-5b1a-4f3e-9a6d-2f8b1c3d4e5f'
 const recordFile = process.argv[process.argv.indexOf('--record') + 1]
 const record = (o) => appendFileSync(recordFile, `${JSON.stringify(o)}\n`)

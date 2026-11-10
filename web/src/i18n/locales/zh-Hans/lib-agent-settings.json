@@ -61,7 +61,7 @@
   "channel_latest": "最新版",
   "channel_stable": "稳定版",
   "setting_model": "模型",
-  "setting_model_detail": "没指定模型时 Codex 用哪个，比如 gpt-5.5",
+  "setting_model_detail": "没有指定模型时，此 Agent 默认使用的模型。",
   "setting_model_reasoning_effort": "思考强度",
   "setting_model_reasoning_effort_detail": "越高越慢、越仔细",
   "setting_model_reasoning_summary": "思考摘要",
@@ -89,5 +89,7 @@
   "approval_never": "一律不问",
   "sandbox_read_only": "只能读",
   "sandbox_workspace_write": "能改工作目录",
-  "sandbox_danger_full_access": "不设限（危险）"
+  "sandbox_danger_full_access": "不设限（危险）",
+  "setting_agentMode": "执行模式",
+  "setting_agentMode_detail": "auto 自动放行安全操作，需要时仍会询问。全部放行由工具权限控制。"
 }

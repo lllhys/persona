@@ -51,7 +51,7 @@ Optional (for each one present, the SDK declares the capability in `runtime.hell
 | `send({session_id, text, images, client_msg_id})` | Sending a message from the phone. **Dedup by `client_msg_id`**: the App resends on reconnect |
 | `interrupt` / `rename` / `close` / `start({cwd, prompt})` | Interrupt, rename, close, create from the phone (with `start` and a configured `launcher`, the new-session form gains a launcher field) |
 | `hasLocalClient()` | Whether this runtime's own UI is open (decides who gets permission requests first, see below) |
-| `modes({session_id, permission_mode, effort})` | Switching permission mode / reasoning effort from the phone (`caps.modes`; values are Persona's: `default` / `acceptEdits` / `plan` / `auto` / `bypassPermissions`, `low` … `max`). The apps show the mode chips on its rows whose agent is `claude` or the runtime's own, never Paseo's catch-all `paseo` (`capabilities.modes`, `docs/protocol/protocol.md` "Codex sources and capabilities") |
+| `modes({session_id, permission_mode, effort, model})` | Switching permission mode / reasoning effort from the phone (`caps.modes`; optional model changes require `createRuntime` option `modelSwitch: true`, advertised as `caps.model`; values are Persona's: `default` / `acceptEdits` / `plan` / `auto` / `bypassPermissions`, `low` … `max`). The apps show the mode chips on its rows whose agent is `claude` or the runtime's own, never Paseo's catch-all `paseo` (`capabilities.modes`, `docs/protocol/protocol.md` "Codex sources and capabilities") |
 | `archive({session_id})` / `unarchive({session_id})` | The runtime's own reversible archive (`caps.archive`, declared only when both exist): when the user archives a session in Persona, it is archived in the runtime too, and restored with it. Archive an idle session without stopping or closing anything (Persona refuses busy sessions first) and keep it restorable; both must be idempotent (already archived / restored is success). A runtime whose archive also stops the session, or that has no way back, leaves them out: the archive is then Persona's alone (`docs/protocol/protocol.md`, "Agent session archives") |
 | `watchChanged(id, watching, {transcript})` | The phone starts / stops watching a session (when a new node connects or the runtime stops, all stop): for runtimes that only follow a session while someone is watching (Paseo subscribes to the timeline per session) |
 
@@ -281,6 +281,16 @@ start `node integrations/antigravity/companion.mjs` from the repository root. Th
 socket, lists CLI transcripts, and uses `agy acp` for terminal-less session creation, sending and interruption. It can also
 serve as an assistant backend through the optional assistant contract above. It requires an installed, authenticated `agy`
 with ACP support; `--agy-bin`, `--agy-dir` and `--socket` override the executable, CLI data directory and node socket.
+Models come from authenticated `agy models` discovery and ACP session metadata. The companion refreshes the catalog every
+five minutes, and the picker's refresh requests a fresh catalog through optional `models({launcher, refresh})`
+(`caps.models`, `launchers.models`). Discovery never sends a prompt. The native settings file determines the advertised
+default. An unavailable catalog returns the native error instead of advertising a built-in model list.
+
+Idle sessions can switch model, thinking level and permission mode through ACP. Native configuration updates determine
+the displayed model and effort. Each accepted field is published even if another field fails, and failures reach the caller.
+`auto` keeps native safe-operation approval, while Persona's explicit full bypass answers permission requests automatically.
+External session models stay unspecified until native metadata is available. Session discovery does not resume them.
+
 Implementation: `integrations/antigravity/lib/runtime.js` and `integrations/antigravity/lib/acp.js`.
 
 ### Shared runtime behavior

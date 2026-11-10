@@ -92,7 +92,8 @@ describe('antigravity transcript and tool mapping', () => {
   it('maps modes between Persona and Antigravity ACP', () => {
     assert.equal(personaModeToAgy('plan'), 'plan')
     assert.equal(personaModeToAgy('acceptEdits'), 'accept-edits')
-    assert.equal(personaModeToAgy('auto'), 'accept-edits')
+    assert.equal(personaModeToAgy('auto'), 'auto')
+    assert.equal(agyModeToPersona('auto'), 'auto')
     assert.equal(personaModeToAgy('default'), 'default')
     assert.equal(agyModeToPersona('accept-edits'), 'acceptEdits')
     assert.equal(cleanGenericOutput('Created At: 2026\nOutput:\nhello'), 'hello')

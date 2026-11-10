@@ -9,10 +9,12 @@ import { composing, type KeyLike } from "./send-history";
 import { effortChoices, type AgentModel, type LauncherModels } from "./launcher-models";
 import type { Session } from "./types";
 
-/** Whether the session has a model to switch from the phone: a Claude Code terminal session that takes messages.
- *  Codex keeps its effort-only chip, a Persona conversation switches in its own chip, other agents have no command. */
+/** Explicit runtime capability takes precedence. Older sources retain the Claude Code terminal heuristic.
+ * Persona conversations use their own model controls. */
 export function canSwitchModel(s: Session | undefined): boolean {
-  if (!s || s.assistant || s.source_kind) return false;
+  if (!s || s.assistant) return false;
+  if (s.capabilities?.model !== undefined) return s.capabilities.model && sessionCan(s, "send") && stateOf(s) !== "offline";
+  if (s.source_kind) return false;
   if (s.agent && s.agent !== "claude") return false;
   return sessionCan(s, "send") && stateOf(s) !== "offline";
 }

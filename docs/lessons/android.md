@@ -1,5 +1,12 @@
 # Lessons: Android
 
+## Late receipts must settle manual review (#3748)
+
+The review timeout does not invalidate the hub's later operation receipt. Include the manual-review state in the
+compare-and-set sources for a confirmed successful receipt, without resending the message or accepting an unknown
+outcome. Keep discarded messages outside that source set so a lookup that finishes later cannot undo the user's choice.
+
+
 ## Large-font screenshots need Compose density, not just configuration (#3588)
 
 Setting `LocalConfiguration.fontScale` alone can leave the rendered Compose text at the original size. Override

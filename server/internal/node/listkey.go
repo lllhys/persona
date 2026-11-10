@@ -205,6 +205,9 @@ func (w *keyWriter) caps(c *proto.SessionCapabilities) {
 	} else {
 		w.b.WriteString(strconv.FormatBool(*c.Modes))
 	}
+	if c.Model != nil {
+		w.b.WriteString(" model=" + strconv.FormatBool(*c.Model))
+	}
 	w.b.WriteByte('}')
 }
 

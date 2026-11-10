@@ -61,7 +61,7 @@
   "channel_latest": "最新版",
   "channel_stable": "安定版",
   "setting_model": "モデル",
-  "setting_model_detail": "モデルを指定しないときに Codex が使うモデル。例：gpt-5.5",
+  "setting_model_detail": "モデルを指定しないときに、このエージェントが使用するモデルです。",
   "setting_model_reasoning_effort": "思考の深さ",
   "setting_model_reasoning_effort_detail": "高いほど丁寧に考え、時間がかかります",
   "setting_model_reasoning_summary": "思考の要約",
@@ -89,5 +89,7 @@
   "approval_never": "確認しない",
   "sandbox_read_only": "読み取りのみ",
   "sandbox_workspace_write": "作業フォルダーを変更できる",
-  "sandbox_danger_full_access": "制限なし（危険）"
+  "sandbox_danger_full_access": "制限なし（危険）",
+  "setting_agentMode": "実行モード",
+  "setting_agentMode_detail": "auto は安全な操作を自動承認し、必要な場合に確認します。すべての許可はツール権限で設定します。"
 }

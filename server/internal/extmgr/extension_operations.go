@@ -122,8 +122,9 @@ type extOp struct {
 	consentedBundle map[string]string
 	// claimed is the preview one install took this operation over with (claimOpOfPreview).
 	claimed string
-	// cancel stops its preview while it downloads and checks (DELETE); canceling says it was asked to.
-	cancel    context.CancelFunc
+	// cancel stops its preview while it downloads and checks (DELETE, with extension.ErrUserCanceled: its download
+	// stops too when nothing else waits for it); canceling says it was asked to.
+	cancel    context.CancelCauseFunc
 	canceling bool
 }
 
