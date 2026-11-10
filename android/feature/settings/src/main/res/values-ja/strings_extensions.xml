@@ -131,6 +131,7 @@
     <string name="settings_ext_card_value">値</string>
     <string name="settings_ext_card_total">合計</string>
     <string name="settings_ext_card_other">その他</string>
+    <string name="settings_ext_card_remaining">残り</string>
     <string name="settings_ext_card_current">現在</string>
     <string name="settings_ext_not_chosen">未選択</string>
     <string name="settings_ext_search">検索</string>

@@ -138,6 +138,7 @@
     <string name="settings_ext_card_value">Value</string>
     <string name="settings_ext_card_total">Total</string>
     <string name="settings_ext_card_other">Other</string>
+    <string name="settings_ext_card_remaining">Remaining</string>
     <string name="settings_ext_card_current">Now</string>
     <string name="settings_ext_not_chosen">None</string>
     <string name="settings_ext_search">Search</string>

@@ -131,6 +131,7 @@
     <string name="settings_ext_card_value">数值</string>
     <string name="settings_ext_card_total">合计</string>
     <string name="settings_ext_card_other">其他</string>
+    <string name="settings_ext_card_remaining">剩余</string>
     <string name="settings_ext_card_current">当前</string>
     <string name="settings_ext_not_chosen">未选</string>
     <string name="settings_ext_search">搜索</string>

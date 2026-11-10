@@ -17,6 +17,7 @@ import (
 //     points on one line (the last 31, … marking the cut) with the unit once; "Now" and the note under them
 //   - stacked_bar: a two-column table, the total first, then each part with its note (past 31 rows the rest are
 //     summed into one "Other" row); the card's note after it
+//   - ring: the same table, with a "remaining" row last when the total is more than the parts' sum (as the apps draw it)
 //   - a card the apps cannot draw either (View is nil): its title alone, or nothing
 //
 // The model's words are escaped (EscapeMarkdown), numbers are written as the apps write them (wire.Number). Only
@@ -76,7 +77,7 @@ func personaCardText(raw json.RawMessage) string {
 			b.WriteString(" · " + note)
 		}
 		b.WriteString("\n")
-	case wire.PersonaCardKindStackedBar:
+	case wire.PersonaCardKindStackedBar, wire.PersonaCardKindRing:
 		parts := append([]wire.CardPart{}, c.Segments...)
 		if c.Rest != nil {
 			parts = append(parts, *c.Rest)
@@ -86,6 +87,9 @@ func personaCardText(raw json.RawMessage) string {
 			total += p.Value
 		}
 		if c.Total != nil {
+			if c.Type == wire.PersonaCardKindRing && c.Total.Value > total {
+				parts = append(parts, wire.CardPart{Label: "剩余", Value: c.Total.Value - total})
+			}
 			u, total = firstOf(words(c.Total.Unit), unit), c.Total.Value
 		}
 		if len(parts) > mostPoints {

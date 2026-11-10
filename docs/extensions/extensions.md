@@ -1934,11 +1934,14 @@ Cards in assistant replies use the same components and renderer as extension Vie
   (`prompts/assistant/claude_md.md`); off by default, to be enabled once every client can draw UI version 3.
 - **```` ```persona-card ````** (#886, old format) still renders: clients **convert it to components** before drawing. The rules are documented in `sdk/go/wire/personacard.go` (the Go reference implementation), consistently across all four clients;
   `schema/extension/examples/persona-card/` contains cases (card → expected View; `null` means it cannot be drawn and stays a code block), used by each client's tests:
-  - Cannot draw: `stat` without `value`; `stacked_bar` with no parts, negative values or a sum of 0; `line` with fewer than two points; `bar` with no points.
+  - Cannot draw: `stat` without `value`; `stacked_bar` with no parts, negative values or a sum of 0; `line` with fewer than two points; `bar` with no points; `ring` with fewer than two parts (after the remainder), negative values or a sum of 0.
   - One section; the card's `title` is the section title (a `stat`'s `title` is its `metric`'s `label`); `subtitle` is a leading paragraph of secondary text. Numbers use thousands separators and at most one decimal place (`2,250`, `7.5`), followed by a space and the unit.
   - `stat` → `metric {label: title or "Value", value, detail: note}`.
   - `stacked_bar` → `metric {label: Total, value: total (the sum of parts if absent), detail: note}`; one stacked bar chart, one series per part (beyond 4 parts, the first three plus "Other"; `rest` and "Other" are `neutral`),
     one point per series with `title` or "Total" as its label; then one `row {title: label, subtitle: note, value}` per part. Use `total`'s unit, or the card's if absent.
+  - `ring` (#3061, one day's total and its parts; `stacked_bar` is for comparing days or people) → one `donut` chart, one series with a point per part (beyond 8 parts, the first seven plus "Other"),
+    `center` the total with its unit (left out past 20 characters), `detail: note`; then one `row` per part. When `total` is more than the parts' sum, a "Remaining" part (total minus the sum) comes last.
+    Use `total`'s unit, or the card's if absent. iOS draws `donut` / `pie` with `RingChart` (ring, total in the hole, legend with shares); an app that does not know `ring` keeps the code block.
   - `line` / `bar` → when there is a `value`, start with `metric {label: Current, value}`; one chart of this kind, one series (the last 120 points), with `note` as `detail`.
 
 ### Compatibility

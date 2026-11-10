@@ -92172,6 +92172,30 @@
       },
       "extractionState" : "manual"
     },
+    "Remaining" : {
+      "comment" : "Chart card: what the total leaves over the parts",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "残り"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剩余"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Remember on This Mac" : {
       "localizations" : {
         "en" : {

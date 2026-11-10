@@ -2247,16 +2247,18 @@ type Review struct {
 	Discard     *Action          `json:"discard,omitempty"`
 }
 
-// Values of PersonaCardKind.
+// PersonaCardKind: ring: one day's total and its parts (a donut); stacked_bar: parts side by side to compare (days,
+// people).
 const (
 	PersonaCardKindStat       = "stat"
 	PersonaCardKindStackedBar = "stacked_bar"
 	PersonaCardKindLine       = "line"
 	PersonaCardKindBar        = "bar"
+	PersonaCardKindRing       = "ring"
 )
 
 // PersonaCardKinds are the values of PersonaCardKind, in order.
-var PersonaCardKinds = []string{"stat", "stacked_bar", "line", "bar"}
+var PersonaCardKinds = []string{"stat", "stacked_bar", "line", "bar", "ring"}
 
 // PersonaCard: the assistant's ```persona-card block (#886): one JSON object. Joins the components in #1850; this
 // form keeps drawing.
