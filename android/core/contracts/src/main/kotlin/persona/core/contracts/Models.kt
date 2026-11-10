@@ -416,6 +416,15 @@ data class Session(
      * app-server, where only the effort changes (node/codex_effort.go). Empty for every other session.
      */
     val efforts: List<String> = emptyList(),
+    /**
+     * Claude Code's ultracode as the node last saw it (docs/protocol/protocol.md "Claude Code ultracode"): null is unknown
+     * (no evidence yet, an older node or hub, another agent), not off.
+     */
+    val ultracode: Boolean? = null,
+    /** The node's reason the switch can't be used, was refused or still waits; null when there is none. */
+    @SerialName("ultracode_note") val ultracodeNote: String? = null,
+    /** A change of it waits for the agent's turn to end (or a draft / dialog in the terminal): a queue flag, not the value. */
+    @SerialName("ultracode_pending") val ultracodePending: Boolean = false,
     /** Present on bounded summary rows; absent on legacy complete rows. */
     val waiting: Boolean? = null,
     @SerialName("background_count") val backgroundCountHint: Int? = null,
