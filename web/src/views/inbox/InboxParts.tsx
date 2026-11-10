@@ -157,7 +157,9 @@ export function MessageBar({ className, children }: { className: string; childre
   );
 }
 
-/** A filter or choice that turns on and off: the inbox's sources and kinds, the "Messages" page's Feishu accounts. */
+/** A filter or choice that turns on and off: the inbox's sources and kinds, the "Messages" page's Feishu accounts.
+ *  One line: a source's name is the connector's own and may be long, so it truncates inside the column rather than
+ *  widening the list's scroller (#3262). */
 export function Chip({ on, onClick, children, title }: { on: boolean; onClick: () => void; children: ReactNode; title?: string }) {
   return (
     <button
@@ -165,7 +167,7 @@ export function Chip({ on, onClick, children, title }: { on: boolean; onClick: (
       title={title}
       aria-pressed={on}
       onClick={onClick}
-      className={cx("h-7 rounded-control px-2.5 text-[12px] whitespace-nowrap transition-colors duration-150", on ? "bg-ink font-medium text-surface" : "bg-surface text-ink-2 shadow-btn hover:bg-hover hover:text-ink")}
+      className={cx("h-7 min-w-0 max-w-full overflow-hidden text-ellipsis rounded-control px-2.5 text-[12px] whitespace-nowrap transition-colors duration-150", on ? "bg-ink font-medium text-surface" : "bg-surface text-ink-2 shadow-btn hover:bg-hover hover:text-ink")}
     >
       {children}
     </button>

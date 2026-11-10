@@ -247,7 +247,9 @@ export function Kbd({ children }: { children: React.ReactNode }) {
  *  a fade. `lazy`: the children mount when it opens and stay while it closes, so they go down with the height instead of
  *  vanishing, then unmount (a long trace costs nothing while folded). Once closed, the content is inert. A chat list holds
  *  the clicked row still while the height runs (`anchoredScroll`, #1124). `clipClassName` goes on the box that clips the
- *  children: padding there is room for what they draw outside themselves (a ring, a shadow) and stays while closed. */
+ *  children: padding there is room for what they draw outside themselves (a ring, a shadow) and stays while closed.
+ *  `min-w-0`: the grid's implicit column's `auto` minimum is the item's content-based minimum, so one child that cannot
+ *  break (a long URL) would widen the whole grid past its column — the Inbox list then scrolls sideways (#3262). */
 export function Collapse({ open, children, className = "", clipClassName = "", lazy = false, unclipped = false }: { open: boolean; children: React.ReactNode; className?: string; clipClassName?: string; lazy?: boolean; /** Once open and still, the content isn't clipped: sticky headers inside it stick to the scroller, not to this box. */ unclipped?: boolean }) {
   const [closing, setClosing] = useState(false);
   const [moving, setMoving] = useState(false);
@@ -285,7 +287,7 @@ export function Collapse({ open, children, className = "", clipClassName = "", l
       // inert once closed, not while it closes: switching a long trace inert is a full style pass (34 ms for 650 steps)
       inert={(!open && !moving) || undefined}
     >
-      <div className={`min-h-0 ${unclipped && shown && !moving ? "" : "overflow-hidden [contain:layout_paint]"} ${clipClassName}`}>{collapseMounted(lazy, open, closing) && children}</div>
+      <div className={`min-h-0 min-w-0 ${unclipped && shown && !moving ? "" : "overflow-hidden [contain:layout_paint]"} ${clipClassName}`}>{collapseMounted(lazy, open, closing) && children}</div>
     </div>
   );
 }

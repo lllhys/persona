@@ -55,6 +55,24 @@ afterEach(() => {
   host.remove();
 });
 
+describe("收件箱：列表不会横向滚动", () => {
+  // overflow-y alone made the list scroll sideways whenever something inside was wider than the 380px column, cutting
+  // off every card (#3262): the scroller clips x, and a source's long name truncates in its chip instead of widening it.
+  it("clips the x axis on its scroller, and a chip's long name truncates", async () => {
+    fail = false;
+    mailAccounts = [{ id: "a1", email: "a-very-long-mailbox-name-for-the-office@example.com" }];
+    act(() => root.render(<InboxList />));
+    await flush();
+    const scroller = host.querySelector(".overflow-x-clip");
+    expect(scroller).not.toBeNull();
+    expect(scroller?.className).toContain("overflow-y-auto");
+    const chip = host.querySelector("button[aria-pressed]");
+    expect(chip?.className).toContain("text-ellipsis");
+    expect(chip?.className).toContain("min-w-0");
+    expect(chip?.className).toContain("max-w-full");
+  });
+});
+
 describe("收件箱：还没接入消息来源", () => {
   it("an empty inbox with nothing connected says so and offers 邮箱, not 都处理完了", async () => {
     fail = false;

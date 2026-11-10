@@ -286,7 +286,10 @@ export function InboxList({ selected, picked = null, onPicked }: { selected?: { 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-    <div className="min-h-0 flex-1 overflow-y-auto" data-picking={picking || undefined}>
+    {/* `overflow-y-auto` alone makes this a scroll container on both axes, so a row or a long chip (a connector's name)
+        wider than the 380px column let the whole list scroll sideways and cut off every card (#3262); `overflow-x-clip`
+        clips that overflow instead, and is not a scroll container, so `scrollIntoView` above cannot shift it either. */}
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip" data-picking={picking || undefined}>
       <div className="mx-auto max-w-[760px] px-3 pt-3 pb-16 sm:px-4">
         <label className="flex h-8 items-center gap-2 rounded-control bg-surface px-2.5 shadow-btn focus-within:shadow-[inset_0_0_0_1px_var(--accent)]">
           <Icon name="search" size={13} stroke={2} className="shrink-0 text-ink-3" />

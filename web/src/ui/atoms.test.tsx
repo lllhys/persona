@@ -3,7 +3,7 @@ import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { stateColor } from "../lib/format";
 import type { AgentState } from "../lib/types";
-import { Button, copyText, Dialog, IconButton, Loading, Menu, StatePill, useMenu } from "./atoms";
+import { Button, Collapse, copyText, Dialog, IconButton, Loading, Menu, StatePill, useMenu } from "./atoms";
 import { markOf } from "./StatusMark";
 import { STATE_LABEL } from "../lib/state-labels";
 
@@ -236,6 +236,25 @@ describe("menu with the new row kinds", () => {
 
   it("opens at a pointer with no anchor", () => {
     expect(render([{ key: "a", label: "复制", onSelect: () => {} }], { point: { x: 10, y: 20 } })).toContain("复制");
+  });
+});
+
+describe("Collapse", () => {
+  // A grid item's automatic minimum size is its content's min-content: without min-w-0 one child that cannot break
+  // (a long URL) widens the grid's whole column past its container (#3262, the Inbox list scrolling sideways).
+  it("its content can never widen the grid: the item carries min-w-0 whether open, unclipped or closed", () => {
+    for (const html of [
+      renderToStaticMarkup(<Collapse open><div>内容</div></Collapse>),
+      renderToStaticMarkup(<Collapse open unclipped><div>内容</div></Collapse>),
+      renderToStaticMarkup(<Collapse open={false}><div>内容</div></Collapse>),
+    ]) {
+      expect(html).toContain("min-w-0");
+    }
+  });
+
+  it("an open unclipped one drops its clip, a closed one keeps it", () => {
+    expect(renderToStaticMarkup(<Collapse open unclipped><div>x</div></Collapse>)).not.toContain("overflow-hidden");
+    expect(renderToStaticMarkup(<Collapse open={false}><div>x</div></Collapse>)).toContain("overflow-hidden");
   });
 });
 
