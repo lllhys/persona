@@ -29,12 +29,9 @@ func benchInbox(n int, now time.Time) *inboxBook {
 	return b
 }
 
-// BenchmarkInboxApply is one collection of 300 chats (Feishu's unread and @me pages) and 300 connector threads that
-// moved nowhere, against an inbox of 2000 items of each.
-func BenchmarkInboxApply(b *testing.B) {
-	now := time.Now()
-	ib := benchInbox(2000, now)
-	var chats, threads []connector.InboxThing
+// benchCollection is one collection of 300 chats (Feishu's unread and @me pages) and 300 connector threads that
+// moved nowhere: the open items of benchInbox(2000) say the same again.
+func benchCollection(now time.Time) (chats, threads []connector.InboxThing) {
 	for i := range 300 {
 		account := 1 + i%2
 		thread := fmt.Sprintf("chat:%d:feed%d", account, i)
@@ -45,6 +42,14 @@ func BenchmarkInboxApply(b *testing.B) {
 		chats = append(chats, connector.InboxThing{Thread: thread, Last: "m1", At: now, Extra: &connector.ThingExtra{Lark: block}})
 		threads = append(threads, connector.InboxThing{Thread: fmt.Sprintf("thread%d", i), Last: "m1", At: now})
 	}
+	return chats, threads
+}
+
+// BenchmarkInboxApply is benchCollection against an inbox of 2000 items of each.
+func BenchmarkInboxApply(b *testing.B) {
+	now := time.Now()
+	ib := benchInbox(2000, now)
+	chats, threads := benchCollection(now)
 	b.Run("feishu", func(b *testing.B) {
 		for b.Loop() {
 			ib.applyMigrated("lark", chats, now)

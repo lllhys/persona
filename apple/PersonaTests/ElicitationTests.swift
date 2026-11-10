@@ -262,6 +262,17 @@ struct ElicitationTests {
         }
     }
 
+    /// The apps that draw a chat declare rings (#3068); the watch and the extensions don't, and get stacked bars.
+    @Test func theChatAppsDeclareRings() {
+        for app in [RequestClientMetadata(platform: .iOS, surface: .app, version: "1"), RequestClientMetadata(platform: .macOS, surface: .app, version: "1"),
+                    RequestClientMetadata(platform: .visionOS, surface: .app, version: "1")] {
+            #expect(LiveConnection.helloFeatures(app).contains("persona_card_ring"), "\(app.value)")
+        }
+        for other in [RequestClientMetadata(platform: .watchOS, surface: .app, version: "1"), RequestClientMetadata(platform: .iOS, surface: .systemExtension, version: "1")] {
+            #expect(!LiveConnection.helloFeatures(other).contains("persona_card_ring"), "\(other.value)")
+        }
+    }
+
     /// The watch can't fill them in, and a watch build without the kind would lose the whole summary over one.
     @Test func theWatchSummaryLeavesThemOut() throws {
         let model = AppModel()

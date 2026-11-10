@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -160,5 +161,20 @@ func TestTitle(t *testing.T) {
 		if got := Title(c.in); got != c.want {
 			t.Errorf("Title(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// BenchmarkLegacyLarkAgentOrdinary: what every user message pays for the old shape it is not in (#2473).
+func BenchmarkLegacyLarkAgentOrdinary(b *testing.B) {
+	for _, n := range []int{40, 1000, 4000} {
+		s := strings.Repeat("please run the tests and tell me what fails. ", n/45+1)[:n]
+		b.Run(fmt.Sprintf("%dB", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if legacyLarkAgent(s) != s {
+					b.Fatal("rewritten")
+				}
+			}
+		})
 	}
 }

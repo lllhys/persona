@@ -1,6 +1,6 @@
 import XCTest
 
-/// MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASK_DECISION=1: a task-review decision on the pending tray.
+/// MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASK_DECISION=1: a task-review decision in the Needs You tray.
 final class DirectCompletionUITests: XCTestCase {
     @MainActor func testCompletingTheDecisionRemovesItWithoutAnotherAgentTurn() async throws {
         guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("the iPhone pending tray") }
@@ -15,10 +15,10 @@ final class DirectCompletionUITests: XCTestCase {
                                "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001",
                                "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launchPinned()
-        let pending = app.buttons["action-bar.pending"]
+        let pending = app.buttons["action-bar.needs-you"]
         XCTAssertTrue(pending.waitForExistence(timeout: 30), app.debugDescription)
         pending.tap()
-        let tray = app.otherElements["action-tray.pending"].firstMatch
+        let tray = app.otherElements["action-tray.needs-you"].firstMatch
         let complete = tray.buttons["brief.complete.todo_task_tests"]
         let recommendation = tray.buttons["brief.accept.todo_task_tests"]
         XCTAssertTrue(complete.waitForExistence(timeout: 15), app.debugDescription)
@@ -33,10 +33,10 @@ final class DirectCompletionUITests: XCTestCase {
         before.lifetime = .keepAlways
         add(before)
         complete.tap()
-        XCTAssertTrue(complete.waitForNonExistence(timeout: 15), "the completed decision stayed in Pending")
+        XCTAssertTrue(complete.waitForNonExistence(timeout: 15), "the completed decision stayed in Needs You")
         XCTAssertFalse(recommendation.exists, "the completed decision can still resume its Agent")
         XCTAssertFalse(tray.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "补齐网络层的单元测试")).firstMatch.exists,
-                       "the finished task remains in Pending as a task or an idle Agent")
+                       "the finished task remains in Needs You as a task or an idle Agent")
         let (data, _) = try await URLSession.shared.data(from: URL(string: hub + "/api/v1/todos")!)
         let response = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let todos = try XCTUnwrap(response["todos"] as? [[String: Any]])

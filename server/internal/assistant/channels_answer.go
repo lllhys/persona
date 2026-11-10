@@ -380,6 +380,9 @@ func (s *Service) channelAnswered(ctx context.Context, machine, session string) 
 // the next tick; a turn nobody asked for in a channel is mirrored to those that sync — not a quiet task's normal finish
 // (quietTaskTurn, #2396), whose news, if any, went out with notify_user.
 func (s *Service) channelTurnEnded(ctx context.Context, machine, session string) {
+	if s.meetingTurnNow(machine, session) {
+		return // a meeting's batch: neither a channel's answer nor mirrored (meeting_turns.go)
+	}
 	c := &s.chans
 	c.mu.Lock()
 	s.loadChannelStateLocked(ctx)

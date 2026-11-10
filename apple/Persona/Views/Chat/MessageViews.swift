@@ -47,6 +47,10 @@ extension MarkdownUI.Theme {
                 // components (docs/extensions/extensions.md「Assistant cards: `persona-view` and `persona-card`」); one the app cannot read stays a code block.
                 if AssistantCardBlock.handles(config.language), let view = AssistantCardBlock.parse(language: config.language, config.content) {
                     AssistantViewCard(view: view).markdownMargin(top: ReplyMetrics.codeTop, bottom: ReplyMetrics.codeBottom)
+                } else if let words = AssistantCardBlock.words(language: config.language, config.content) {
+                    // A persona-card of a type this app does not know yet, or one missing what its type needs: its numbers in words, not its JSON.
+                    AssistantCardWords(title: words.title, lines: words.lines)
+                        .markdownMargin(top: ReplyMetrics.codeTop, bottom: ReplyMetrics.codeBottom)
                 } else if let kind = RenderedFence.kind(config.language) {
                     // A formula or a diagram (docs/apple/ios.md「Math and diagrams」); the code block when it cannot be drawn.
                     RenderedBlock(kind: kind, source: config.content.trimmingCharacters(in: .whitespacesAndNewlines)) { plainCodeBlock(config) }

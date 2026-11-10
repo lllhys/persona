@@ -27,8 +27,10 @@ data class TaskIndex(
             "agent" -> Key.TaskSubagent
             else -> Key.TaskBackground
         }.let(CoreText::of)
-        val subject = (if (note.kind == "monitor" && note.status == "event")
-            note.detail?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() } else null)
+        val subject = (if (note.kind == "agent" && item.kind == "tool_result")
+            item.text?.lineSequence()?.map(String::trim)?.firstOrNull(String::isNotEmpty) else null)
+            ?: (if (note.kind == "monitor" && note.status == "event")
+                note.detail?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() } else null)
             ?: descriptions[call]?.takeIf { it.isNotEmpty() } ?: note.title
         val outcome = buildList {
             when (note.status) {
@@ -53,12 +55,17 @@ data class TaskIndex(
         return TaskNoteText(label, subject, outcome, note.failed, call)
     }
 
-    fun badge(callId: String?): TaskBadge? {
+    fun badge(callId: String?, concise: Boolean = false): TaskBadge? {
         if (callId == null || (callId !in started && callId !in notes)) return null
         val notes = notes[callId].orEmpty()
         val events = notes.count { it.status == "event" }
         val last = notes.lastOrNull { it.status != "event" }
-            ?: return TaskBadge(if (events > 0) CoreText.of(Key.BadgeEvents, events) else CoreText.of(Key.BadgeRunning), false)
+            ?: return TaskBadge(if (concise) CoreText.of(Key.TaskWorking)
+                else if (events > 0) CoreText.of(Key.BadgeEvents, events) else CoreText.of(Key.BadgeRunning), false)
+        if (!last.terminal && last.status != "waiting") {
+            return TaskBadge(if (concise) CoreText.of(Key.TaskWorking)
+                else if (events > 0) CoreText.of(Key.BadgeEvents, events) else CoreText.of(Key.BadgeRunning), last.failed)
+        }
         val state = when (last.status) {
             "failed" -> Key.TaskFailedState
             "killed", "stopped" -> Key.TaskStoppedState
@@ -66,7 +73,7 @@ data class TaskIndex(
             "ended" -> Key.TaskEndedState
             else -> Key.TaskCompletedState
         }.let(CoreText::of)
-        return TaskBadge(if (events > 0) CoreText.of(Key.BadgeStateEvents, events, state) else CoreText.of(Key.BadgeState, state), last.failed)
+        return TaskBadge(if (concise) state else if (events > 0) CoreText.of(Key.BadgeStateEvents, events, state) else CoreText.of(Key.BadgeState, state), last.failed)
     }
 
     companion object {
@@ -77,6 +84,15 @@ data class TaskIndex(
          *  none, and looking for these is much cheaper than running the pattern over them. */
         private val launchMarks = listOf("running in background with ID", "Monitor started (task", "moved to the background (ID", "agentId:")
 
+        fun isLaunchReceipt(text: String): Boolean {
+            val start = text.trimStart()
+            // Synchronous Agent results can end in agentId too. Only the receipt's explicit opening hides it.
+            return start.startsWith("Async agent launched successfully.") ||
+                start.startsWith("Command running in background with ID:") ||
+                start.startsWith("Monitor started (task ") ||
+                (start.startsWith("Command ") && start.substringBefore('\n').contains("moved to the background (ID:"))
+        }
+
         fun build(items: List<LineItem>): TaskIndex {
             val notes = mutableMapOf<String, MutableList<TaskNote>>()
             val calls = mutableMapOf<String, String>()
@@ -84,7 +100,9 @@ data class TaskIndex(
             val descriptions = mutableMapOf<String, String>()
             val startedAt = mutableMapOf<String, Instant>()
             val byTask = mutableMapOf<String, String>()
-            val uses = mutableMapOf<String, LineItem>()
+            val uses = items.filter { it.kind == "tool_use" }.mapNotNull { use ->
+                use.item.toolUseId?.let { it to use }
+            }.toMap()
             fun describe(call: String) {
                 val use = uses[call] ?: return
                 val description = (use.item.toolInput as? JsonObject)?.get("description") as? JsonPrimitive
@@ -92,26 +110,26 @@ data class TaskIndex(
                 else descriptions.remove(call)
                 use.time?.let { startedAt[call] = it } ?: startedAt.remove(call)
             }
-            for (it in items) {
-                when (it.kind) {
-                    "tool_use" -> it.item.toolUseId?.let { id -> uses[id] = it }
-                    "tool_result" -> {
-                        val call = it.item.toolUseId ?: continue
-                        val text = it.text ?: continue
-                        if (launchMarks.none { it in text }) continue
-                        val match = launched.find(text) ?: continue
+            for (it in items.sortedWith(itemOrder)) {
+                if (it.kind == "tool_result") {
+                    val call = it.item.toolUseId ?: it.task?.toolUseId
+                    val text = it.text.orEmpty()
+                    val match = if (launchMarks.any { mark -> mark in text }) launched.find(text) else null
+                    if (call != null && match != null) {
                         byTask[match.groupValues[1]] = call
                         started += call
                         describe(call)
                     }
-                    "notice" -> {
-                        val note = it.task ?: continue
-                        val call = note.toolUseId ?: byTask[note.taskId] ?: continue
-                        notes.getOrPut(call) { mutableListOf() } += note
-                        calls[it.id] = call
-                        if (call !in descriptions) describe(call)
-                    }
                 }
+                // Metadata belongs to the task, not to one particular transcript kind. In particular, a launch
+                // receipt and SendMessage handbacks are tool_results, while older hubs send terminal notices.
+                val note = it.task ?: continue
+                val call = it.item.toolUseId ?: note.toolUseId ?: byTask[note.taskId] ?: continue
+                note.taskId?.let { taskId -> byTask[taskId] = call }
+                notes.getOrPut(call) { mutableListOf() } += note
+                calls[it.id] = call
+                if (note.kind == "agent" && !note.terminal) started += call
+                if (call !in descriptions) describe(call)
             }
             return TaskIndex(notes.mapValues { it.value.toList() }, calls.toMap(), started.toSet(), descriptions.toMap(), startedAt.toMap(),
                 rebuildTaskProgress(items))

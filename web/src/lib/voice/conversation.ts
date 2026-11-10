@@ -4,8 +4,9 @@
 // fake audio and a clock they move by hand.
 import { mergeCaption, historyOf, type VoiceCaption } from "./captions";
 import { Uplink } from "./uplink";
+import { INTERRUPT_FRAME, parseFrame, resendFrame, startFrame, textFrame } from "./frames";
 import {
-  DEFAULT_INPUT_RATE, DEFAULT_OUTPUT_RATE, INTERRUPT_FRAME, parseFrame, resendFrame, runOpen, startFrame, textFrame,
+  DEFAULT_INPUT_RATE, DEFAULT_OUTPUT_RATE, runOpen,
   type VoiceFailure, type VoiceFrame, type VoiceLine, type VoiceLink, type VoiceReady, type VoiceRun, type VoiceStart, type VoiceTargetInfo,
 } from "./wire";
 import type { Session } from "../types";

@@ -174,7 +174,9 @@ func (s *Service) machineLaunchers(ctx context.Context, machine string) ([]proto
 		return nil, err
 	}
 	hidden := s.hiddenLaunchers(ctx)
-	managed := s.storedLaunchers(ctx)
+	// Only the providers in this computer's scope: one out of it is not named to the node, whose own launcher by
+	// that name (if any) is what runs there.
+	managed := slices.DeleteFunc(slices.Clone(s.storedLaunchers(ctx)), func(m storedLauncher) bool { return !s.usableOn(ctx, m, machine) })
 	out := make([]proto.Launcher, 0, len(res.Launchers)+len(managed))
 	for _, envelope := range res.Launchers {
 		l := proto.Launcher(envelope)
@@ -192,6 +194,46 @@ func (s *Service) machineLaunchers(ctx context.Context, machine string) ([]proto
 			continue
 		}
 		out = append(out, proto.Launcher{Name: m.Name, BaseURL: m.BaseURL, Model: m.Model, Source: "persona", Agent: m.Agent, Assistant: m.Agent == "agy"})
+	}
+	return out, nil
+}
+
+// assistantLaunchers are the machine's launchers backed by a provider the main conversation supports.
+func (s *Service) assistantLaunchers(ctx context.Context, machine string) ([]ConfiguredLauncher, error) {
+	ctx = withSettingsMemo(ctx)
+	ls, err := s.machineLaunchers(ctx, machine)
+	if err != nil {
+		return nil, err
+	}
+	p, err := s.modelPurposeDef(ctx, "assistant")
+	if err != nil {
+		return nil, err
+	}
+	p.MachineID = machine
+	stored := s.storedLaunchers(ctx)
+	allowed := map[string]bool{}
+	for _, v := range s.modelProviders(ctx) {
+		if name, ok := strings.CutPrefix(v.ID, "launcher."); ok && !v.Hidden && s.modelProviderCompatible(p, v, stored) {
+			allowed[name] = true
+		}
+	}
+	discovered := make([]ConfiguredLauncher, 0, len(ls))
+	for _, l := range ls {
+		discovered = append(discovered, ConfiguredLauncher{Launcher: l})
+	}
+	out := []ConfiguredLauncher{}
+	seen := map[string]bool{}
+	for _, l := range sessionLaunchers(discovered, s.hello(ctx).Models.Launchers[machine]) {
+		if allowed[l.Name] {
+			out = append(out, l)
+			seen[l.Name] = true
+		}
+	}
+	// Ordinary Agent lists omit direct API providers; Messages providers are already sent to nodes as launchers.
+	for _, l := range stored {
+		if l.Kind == "api" && allowed[l.Name] && !seen[l.Name] && s.usableOn(ctx, l, machine) {
+			out = append(out, ConfiguredLauncher{Launcher: proto.Launcher{Name: l.Name, BaseURL: l.BaseURL, Model: l.Model, Source: "persona"}, AgentType: "claude"})
+		}
 	}
 	return out, nil
 }

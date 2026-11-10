@@ -307,7 +307,9 @@ struct LarkPlayerView: View {
         .task {
             guard let cfg = AppModel.shared.config else { return }
             let full = LarkMedia.streamURL(url, hub: cfg.url, manager: manager)
-            let asset = AVURLAsset(url: full, options: ["AVURLAssetHTTPHeaderFieldsKey": ["Authorization": "Bearer \(cfg.token)"]])
+            var auth = URLRequest(url: full)
+            cfg.authorize(&auth) // the Access token only when `full` is on the hub's own address
+            let asset = AVURLAsset(url: full, options: ["AVURLAssetHTTPHeaderFieldsKey": auth.allHTTPHeaderFields ?? [:]])
             let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = p
             p.play()

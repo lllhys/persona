@@ -1,0 +1,1 @@
+{{if eq .Platform "ios"}}iPhone{{else if eq .Platform "ipados"}}iPad{{else if eq .Platform "watchos"}}Apple Watch{{else if eq .Platform "macos"}}Mac{{else if eq .Platform "visionos"}}Vision Pro{{else if eq .Platform "android"}}Android{{else}}{{.Platform}}{{end}} App {{.Version}}{{with .Build}} (build {{.}}){{end}}{{if .Simulator}}〔模拟器〕{{end}}{{with .OS}}（{{.}}）{{end}}

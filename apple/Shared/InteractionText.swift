@@ -28,8 +28,8 @@ nonisolated extension Interaction {
     /// One line on what a needs-you card asks, chosen by its kind — the same wording on the chat card, the inbox's
     /// Needs You row and the Mac menu bar: a plan's first heading, a terminal dialog's question, a question card's
     /// first question, a permission card's tool with what it runs, and an MCP form's or link's message.
-    /// - Parameter includeToolName: a permission card shows `toolName: summary`; pass false to show the summary
-    ///   only and fall back to the tool name, as the inbox row does (its next line already names the card kind).
+    /// - Parameter includeToolName: a permission card shows `toolName: permissionTarget`; pass false to show the
+    ///   target only and fall back to the tool name, as the inbox row does (its next line already names the card kind).
     ///   The password card (`isSecretRun`) shows its summary alone either way.
     /// - Returns: nil when the card carries no such text; the caller falls back to its generic title.
     func askLine(includeToolName: Bool) -> String? {
@@ -40,11 +40,11 @@ nonisolated extension Interaction {
             return PlanText.title(plan ?? "")
         case .permission:
             if includeToolName, !isSecretRun {
-                let line = [toolName, summary].compactMap { $0 }.joined(separator: permissionSeparator)
+                let line = [toolName, permissionTarget].compactMap { $0 }.joined(separator: permissionSeparator)
                 return line.isEmpty ? nil : line
             }
             // The inbox row: trim whitespace-only summaries so it never draws a blank asks line.
-            if let s = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty { return s }
+            if let s = permissionTarget?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty { return s }
             if let t = toolName?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, !isSecretRun { return t }
             return nil
         case .screen:
@@ -59,6 +59,46 @@ nonisolated extension Interaction {
     private var permissionSeparator: String {
         // Same separator on the chat card, the inbox row and the Mac menu bar.
         String(localized: ": ", comment: "Separator between a tool name and what it runs, e.g. Bash：npm test")
+    }
+}
+
+nonisolated extension Interaction {
+    /// What a permission call acts on, picked the way the node's `toolSummary` and Android's `permissionSummary()` pick
+    /// it: the hub's summary; else the tool's own field (a Bash command, a file's path, a URL, a query); else the first
+    /// of a few common fields. What the list's row, the Inbox, the Mac menu bar (`askLine`) and a folded card show.
+    /// Nil when the card carries none of these.
+    var permissionTarget: String? {
+        if let s = summary, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
+        guard let input = toolInput?.object, !input.isEmpty else { return nil }
+        func pick(_ keys: String...) -> String? {
+            keys.lazy.compactMap { input[$0]?.string }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+        let picked: String? = switch toolName ?? "" {
+        case "Bash": pick("command")
+        case "Edit", "Write", "Read", "MultiEdit", "NotebookEdit": pick("file_path", "notebook_path")
+        case "WebFetch": pick("url")
+        case "WebSearch": pick("query")
+        default: nil
+        }
+        return picked ?? pick("description", "command", "path", "url", "query", "prompt")
+    }
+
+    /// What a permission card shows for its call, in code type (docs/design/PRINCIPLES.md, "Progressive disclosure": a
+    /// command reads as a command, never as raw JSON): `permissionTarget`, else the input as `key: value` lines.
+    /// Nil when the card carries none of these.
+    var permissionSubject: String? {
+        if let target = permissionTarget { return target }
+        guard let input = toolInput?.object, !input.isEmpty else { return nil }
+        return input.keys.sorted().map { "\($0): \(Self.inlineText(input[$0] ?? .null))" }.joined(separator: "\n")
+    }
+
+    /// One input value on one line: strings, numbers and booleans as they read, anything nested as compact JSON.
+    private static func inlineText(_ value: JSONValue) -> String {
+        if let s = value.string { return s }
+        if case .null = value { return "null" }
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? enc.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? ""
     }
 }
 

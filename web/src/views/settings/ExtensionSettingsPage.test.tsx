@@ -120,7 +120,7 @@ describe("host-owned extension settings", () => {
     render(BASE, { manager: "example-manager" }); await flush();
     expect(requests.find((r) => r.url.endsWith("/-/upgrades"))?.manager).toBe("example-manager");
     expect(button("自动升级").getAttribute("aria-checked")).toBe("true");
-    expect(host.textContent).toContain("管理者已关闭自动升级");
+    expect(host.textContent).toContain("助手已关闭自动升级");
   });
 
   it("checks the selected manager's market without installing and refreshes the detail", async () => {
@@ -199,7 +199,7 @@ describe("host-owned extension settings", () => {
   it("disables lifecycle actions while offline without hiding the configuration", async () => {
     const callbacks = render(BASE, { offline: true }); await flush();
     for (const label of ["启用", "自动升级", "检查更新", "卸载"]) expect(button(label).disabled).toBe(true);
-    expect(host.textContent).toContain("管理者离线"); expect(host.textContent).toContain("Example configuration");
+    expect(host.textContent).toContain("助手离线"); expect(host.textContent).toContain("Example configuration");
     act(() => button("卸载").click()); expect(callbacks.onUninstall).not.toHaveBeenCalled();
   });
 });

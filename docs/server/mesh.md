@@ -204,6 +204,8 @@ which other hubs are reachable and how far away, and computers in member records
 - TLS-enabled hubs advertise `_persona-hub._tcp` over mDNS (instance name hub_id); TXT contains only `hub_id`, `name`, `tls` (TLS port), `fp`, `v` (version), never credentials.
   They also browse that type; the admin UI's "Discovered hubs" lists unpaired hubs heard within 10 minutes. Discovery only lists them, never links automatically.
 - `internal/mdns`: only the standard library and `golang.org/x/net`, sharing 5353 with system mDNSResponder / avahi; implements only a subset of RFC 6762 / 6763. No sending or receiving on point-to-point interfaces.
+  A legacy unicast query (source port not 5353) is answered only when its sender is on the receiving interface's link (inside one of its prefixes, or IPv6 link-local),
+  and at most once a second per sender and answer set, so a hub on a public address cannot be used to reflect spoofed queries at someone else.
 - Docker bridge networks cannot send multicast out, so use "Add hub" and enter an address (`network_mode: host` works). Disable with hub.json `mesh.discovery: false`.
 - Hubs whose TLS listener is loopback-only (`127.0.0.1` / `::1` / `localhost`) listen but do not advertise: nobody on the LAN can reach them, so advertised addresses would be unusable.
 - Probe before manual addition: `POST /api/v1/admin/peers/probe {"address"}` only requests the peer's `GET /api/v1/health` (no redirects, 5 seconds, response at most 64 KB).

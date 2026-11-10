@@ -44,11 +44,25 @@ const done = item("lark:f6:1", { done_at: at(30), done_by: "user" });
 const doneLater = item("lark:f7:1", { done_at: at(2), done_by: "replied", tier: "noise" });
 
 describe("一件事", () => {
-  it("还没分拣的算需要你，角标只数未处理的需要你", () => {
+  it("还没分拣的算需要你，角标只数未读未处理", () => {
     expect(triage(item("x", { tier: "" }))).toBe("action");
     expect(triage(item("x", { tier: undefined }))).toBe("action");
     expect(triage(group)).toBe("fyi");
-    expect(badgeCount([dm, mention, doc, mail, group, done, doneLater, bot])).toBe(4);
+    expect(badgeCount([dm, mention, doc, mail, group, done, doneLater, bot])).toBe(6);
+  });
+
+  it("counts unread across pending sections without filing read items", () => {
+    let items = [item("unread"), item("read-pending", { read: true }),
+      item("read-done", { read: true, done_at: at(1) }), item("unread-done", { done_at: at(1) }),
+      item("fyi", { tier: "fyi" }), item("working", { status: "working" }), item("noise", { tier: "noise" })];
+    expect(badgeCount(items)).toBe(4);
+    expect(ids(sections(items, all).tiers.action).sort()).toEqual(["read-pending", "unread"]);
+    items = items.map((it) => ({ ...it, read: true }));
+    expect(badgeCount(items)).toBe(0);
+    const restored = JSON.parse(JSON.stringify(items)) as InboxItem[];
+    expect(badgeCount(restored)).toBe(0);
+    expect(sections(restored, all).tiers.action).toHaveLength(2);
+    expect(restored.find((it) => it.id === "read-pending")?.done_at).toBeUndefined();
   });
 
   it("类型标签：@我 红色，@所有人、评论、公司圈、机器人", () => {

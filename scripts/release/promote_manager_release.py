@@ -90,8 +90,59 @@ def inspect_target(argv, target, target_source):
 
 
 def snapshot(root, target, require_idle=True):
-    return collect(root, target, snapshot_api, require_idle=require_idle)
+    return collect(root, target, snapshot_api, require_idle=False, identity_only=True)
 
+
+
+
+def observation_time(value):
+    # Go emits up to nine fractional digits; bundled Python 3.9 accepts six.
+    value = re.sub(r'\.(\d{1,9})(?=Z|[+-]\d{2}:\d{2}$)',
+                   lambda match: '.' + match[1].ljust(6, '0')[:6], value)
+    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+def idle_evidence(argv, target, identity, reader):
+    """Read the node's full runtime inventory through the pinned local CLI."""
+    owned = identity['machines']
+    if len(owned) != 1 or owned[0][0] != target['machine_id']:
+        raise ValueError('Local manager inventory requires one exact owned machine')
+    fields = ('manager_id', 'dir', 'binary', 'unit', 'plist_path', 'uid',
+              'previous_sha256', 'config_sha256', 'plist_sha256')
+    identity_plan = dict(schema=1, **{key: target[key] for key in fields})
+    expected = dict(manager=target['manager_id'], main=target['main'],
+                    machine_id=target['machine_id'], machine_uid=owned[0][1])
+    started = time.monotonic()
+    evidence = remote(argv, [reader, 'manager', 'update', 'inventory', '--plan', '-',
+                            '--main', expected['main'], '--machine', expected['machine_id'],
+                            '--machine-uid', expected['machine_uid']],
+                      canonical_json(identity_plan), timeout=45)
+    if not 0 <= time.monotonic() - started < 30:
+        raise TimeoutError('Authoritative manager inventory acquisition budget expired')
+    if (not isinstance(evidence, dict) or evidence.get('schema') != 1 or
+            evidence.get('complete') is not True or evidence.get('idle') is not True or
+            type(evidence.get('complete_reads')) is not int or evidence['complete_reads'] != 2 or
+            not re.fullmatch(r'[0-9a-f]{64}', str(evidence.get('sha256', '')))):
+        raise ValueError('Complete authoritative manager idle evidence is unavailable')
+    authority, inventory = evidence.get('authority', {}), evidence.get('inventory', {})
+    if (not isinstance(authority, dict) or not isinstance(inventory, dict) or
+            any(authority.get(key) != expected[value] for key, value in
+                (('manager', 'manager'), ('main', 'main'), ('machine_id', 'machine_id')))):
+        raise ValueError('Authoritative manager identity differs')
+    runtime_target = inventory.get('target')
+    if (not isinstance(runtime_target, dict) or
+            any(runtime_target.get(key) != value for key, value in expected.items()) or
+            runtime_target.get('authority_revision') != authority.get('revision')):
+        raise ValueError('Authoritative runtime target differs')
+    try:
+        began = observation_time(evidence['started_at'])
+        completed = observation_time(evidence['completed_at'])
+        age = (dt.datetime.now(dt.timezone.utc) - completed).total_seconds()
+        elapsed = (completed - began).total_seconds()
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('Authoritative manager observation time is unavailable') from error
+    if not -5 <= age < 30 or not 0 <= elapsed < 30:
+        raise ValueError('Authoritative manager evidence is stale or its clock conflicts')
+    return evidence['sha256'], completed
 
 def make_plan(target, manifest, run_id, idle_sha, now):
     artifact = manifest['files']['darwin-arm64']
@@ -102,8 +153,13 @@ def make_plan(target, manifest, run_id, idle_sha, now):
                 activation_enabled=target.get('activation_enabled', False),
                 bootstrap_authorized=target.get('bootstrap_authorized', False),
                 bootstrap_window_until=target.get('bootstrap_window_until'),
-                freeze=target.get('freeze', True), idle_snapshot_sha256=idle_sha,
-                idle_verified_at=now.isoformat(), idle_valid_until=(now + dt.timedelta(seconds=60)).isoformat())
+                freeze=target.get('freeze', True))
+    if idle_sha:
+        digest, observed = idle_sha
+        if not 0 <= (now - observed).total_seconds() < 60:
+            raise ValueError('Authoritative manager idle evidence expired before activation')
+        plan.update(idle_snapshot_sha256=digest, idle_verified_at=observed.isoformat(),
+                    idle_valid_until=(observed + dt.timedelta(seconds=60)).isoformat())
     return plan
 
 
@@ -146,6 +202,9 @@ def promote(payload):
         _, before_identity, idle_sha = snapshot(root, target)
         receipt = dict(inspected, schema=1, run_id=run_id, source=payload['source'])
         if not payload.get('apply'):
+            idle_evidence(argv, target, before_identity, target['binary'])
+            if snapshot(root, target)[1] != before_identity:
+                raise ValueError('Manager identity changed during read-only inventory')
             print(json.dumps(receipt), flush=True)
             return receipt
         staged = Path(payload['staged'])
@@ -167,15 +226,24 @@ def promote(payload):
             raise ValueError('Manager identity changed before staging')
         now = dt.datetime.now(dt.timezone.utc)
         validate_activation(target, now)
-        plan = make_plan(target, manifest, run_id, idle_sha, now)
+        plan = make_plan(target, manifest, run_id, None, now)
         script = payload['target_source'] + '\nprint(json.dumps(stage(' + repr(target) + ', ' + repr(plan) + ', __import__("sys").stdin.buffer)))\n'
         staged_target = remote(argv, ['python3', '-c', script], (staged / artifact['name']).read_bytes(), timeout=180)
         command = [staged_target['candidate'], 'manager', 'update']
-        remote(argv, [*command, 'check', '--plan', staged_target['plan']])
-        _, identity, idle_sha = snapshot(root, target)
+        idle_sha = idle_evidence(argv, target, before_identity, staged_target['candidate'])
+        _, identity, _ = snapshot(root, target)
         if identity != before_identity:
             raise ValueError('Manager identity changed before activation')
         # A large transfer must not consume the initial idle proof's lifetime.
+        now = dt.datetime.now(dt.timezone.utc)
+        validate_activation(target, now)
+        plan = make_plan(target, manifest, run_id, idle_sha, now)
+        refresh = payload['target_source'] + '\nprint(json.dumps(refresh_plan(' + repr(target) + ', ' + repr(plan) + ')))\n'
+        remote(argv, ['python3', '-c', refresh])
+        remote(argv, [*command, 'check', '--plan', staged_target['plan']])
+        idle_sha = idle_evidence(argv, target, before_identity, staged_target['candidate'])
+        if snapshot(root, target)[1] != before_identity:
+            raise ValueError('Manager identity changed after candidate check')
         now = dt.datetime.now(dt.timezone.utc)
         validate_activation(target, now)
         plan = make_plan(target, manifest, run_id, idle_sha, now)

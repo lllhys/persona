@@ -281,7 +281,7 @@ internal fun ManagerDeleteDialog(name: String, installing: Boolean, machines: In
 
 /** New manager / Rename: a name, 1 to 40 characters; the hub's refusal shows under the field. */
 @Composable
-private fun NameDialog(
+internal fun NameDialog(
     title: String, confirm: String, initial: String, busy: Boolean, failure: ResText?, onDismiss: () -> Unit, onConfirm: (String) -> Unit,
 ) {
     var name by remember { mutableStateOf(initial) }
@@ -295,7 +295,7 @@ private fun NameDialog(
 
 /** The code sheet over either page while a code is on screen. */
 @Composable
-private fun ManagerCodeSheetHost(state: ManagersState, now: Instant, model: ManagersModel) {
+internal fun ManagerCodeSheetHost(state: ManagersState, now: Instant, model: ManagersModel) {
     val sheet = state.code ?: return
     val scope = rememberCoroutineScope()
     JSheet(onDismiss = model::closeCode, title = sheet.name.ifBlank { null }, scrollable = true) {

@@ -108,12 +108,13 @@ nonisolated enum InAppTunnel {
         #endif
     }
 
-    /// A loopback forward to `route`'s target through the tunnel, on `port` when that is free (0: any); its address as
-    /// the hub is reached through it.
-    @concurrent static func forward(_ route: InAppTunnelRoute, port: Int) async throws -> URL {
-        _ = try await start(probe: route)
+    /// A loopback forward to `target` (`host:port`) through the tunnel, on `port` when that is free (0: any); its
+    /// address. `probe` starts the core when it is not running: always a hub's own in-app route, never the target of a
+    /// forward that is not a hub (an SSH server's), since the core keeps the first probe it is given.
+    @concurrent static func forward(_ target: String, port: Int, probe: InAppTunnelRoute) async throws -> URL {
+        _ = try await start(probe: probe)
         #if canImport(PersonaTunnelCore)
-        let addr = try check(take(withC(route.target) { PersonaTunnelForward($0, Int32(port)) }))
+        let addr = try check(take(withC(target) { PersonaTunnelForward($0, Int32(port)) }))
         guard let url = URL(string: "http://\(addr)") else { throw Failure(message: String(localized: "The tunnel core returned an invalid address")) }
         return url
         #else

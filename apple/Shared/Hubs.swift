@@ -145,7 +145,11 @@ nonisolated struct HubRegistry: Codable, Hashable, Sendable {
     func watchCredentials() -> (configs: [String: ServerConfig], missing: [String]) {
         var configs: [String: ServerConfig] = [:], missing: [String] = []
         for g in groups {
-            if let w = primary(g)?.watch { configs[g] = w } else { missing.append(g) }
+            guard let hub = primary(g), var w = hub.watch else { missing.append(g); continue }
+            // The hub's Cloudflare Access token as it is now (set or cleared since the watch's token was issued), for the
+            // same hub's address only.
+            w.access = CloudflareAccess.sameOrigin(w.url, hub.config.url) ? hub.config.access : nil
+            configs[g] = w
         }
         return (configs, missing)
     }
@@ -338,7 +342,8 @@ nonisolated enum HubRoute {
         var req = URLRequest(url: APIClient(config: config).url("/api/v1/health", direct: true), timeoutInterval: 3)
         req.httpMethod = "GET"
         RequestClientMetadata.current.apply(to: &req)
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        CloudflareAccess.apply(config.access, to: &req, hub: config.url) // Access in front would answer with its login
+        guard let (data, resp) = try? await URLSession.shared.data(for: req, delegate: HubRedirects.shared),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         return obj["ok"] as? Bool == true

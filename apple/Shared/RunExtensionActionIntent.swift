@@ -75,7 +75,7 @@ struct RunExtensionActionIntent: AppIntent {
               ExtensionSystemLink(owner: key.owner, ui: key.contribution, group: key.group).url != nil,
               let group = ExtensionSurfaceStore.shared.read().groups[key.group] else { throw ExtensionActionUnavailable() }
         // No IntentSupport.client fallback: another hub with the same ids must never receive this action.
-        let api = APIClient(config: ServerConfig(url: group.credential.url, token: group.credential.token), group: key.group)
+        let api = APIClient(config: ServerConfig(url: group.credential.url, token: group.credential.token, access: group.credential.access), group: key.group)
         do {
             let features = try await ExtensionSurfaceClient(credential: group.credential)
                 .refreshCatalog(group: key.group, expected: group)

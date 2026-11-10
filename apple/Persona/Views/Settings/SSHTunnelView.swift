@@ -8,7 +8,7 @@ struct HubSSHTunnelPage: View {
 
     var body: some View {
         if let hub = model.registry.hubs.first(where: { $0.id == hubID }) {
-            SSHTunnelForm(saved: hub.ssh, onSave: { model.setSSH($0, hub: hubID) }) {
+            SSHTunnelForm(saved: hub.ssh, onSave: { model.setSSH($0, hub: hubID) }, carrier: model.inAppCarrier(for: hub)) {
                 if hub.ssh?.isUsable == true { status(hub) }
             }
             .detailTitle(String(localized: "SSH Tunnel"))
@@ -48,6 +48,8 @@ struct SSHTunnelForm<Status: View>: View {
     var onSave: (SSHRoute?) -> Void
     /// The pairing page goes back to pairing once it is saved.
     var dismissOnSave = false
+    /// The in-app route that can dial the SSH server (`SSHRoute.viaInAppTunnel`); nil: the switch is not shown.
+    var carrier: InAppTunnelRoute?
     @ViewBuilder var status: () -> Status
 
     // Empty port and target fields mean their defaults (shown as the prompt).
@@ -57,6 +59,7 @@ struct SSHTunnelForm<Status: View>: View {
     @State private var targetHost = ""
     @State private var targetPort = ""
     @State private var always = false
+    @State private var viaInApp = false
     /// The server's key as confirmed (from what is saved, or just now).
     @State private var pinned: (fingerprint: String, algorithm: String)?
     @State private var loaded = false
@@ -68,7 +71,7 @@ struct SSHTunnelForm<Status: View>: View {
     @State private var keyProblem: String?
     /// The fields as the form opened: in its Mac sheet Cancel asks first once they differ.
     @State private var opened: [String]?
-    private var fields: [String] { [host, port, user, targetHost, targetPort, always ? "1" : "0"] }
+    private var fields: [String] { [host, port, user, targetHost, targetPort, always ? "1" : "0", viaInApp ? "1" : "0"] }
 
     private enum Confirm: Identifiable {
         case unknown(fingerprint: String, algorithm: String)
@@ -93,6 +96,16 @@ struct SSHTunnelForm<Status: View>: View {
                 SettingsHeading(String(localized: "SSH Server"))
             } footer: {
                 Text("An SSH server this device can reach and that can reach the hub. For bastion hosts like Warpgate, write the username as user:target.")
+            }
+            if let carrier {
+                Section {
+                    Toggle(isOn: $viaInApp) {
+                        Text("Connect Through \(carrier.title)").lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    .accessibilityIdentifier("ssh.viaInAppTunnel")
+                } footer: {
+                    Text("Reaches the SSH server through the in-app tunnel instead of this device's own network. It isn't a system VPN, so a VPN on this device (such as Tailscale) keeps working. The server's fingerprint is still checked.")
+                }
             }
             Section {
                 field(String(localized: "Address"), $targetHost, prompt: SSHRoute.defaultTargetHost, id: "ssh.targetHost")
@@ -343,7 +356,7 @@ struct SSHTunnelForm<Status: View>: View {
         guard !h.isEmpty, !u.isEmpty, let p = Self.portValue(port, default: 22),
               let tp = Self.portValue(targetPort, default: SSHRoute.defaultTargetPort) else { return nil }
         return SSHRoute(host: h, port: p, user: u, targetHost: targetHostValue, targetPort: tp, hostKey: pinned?.fingerprint,
-                        hostKeyAlgorithm: pinned?.algorithm, always: always)
+                        hostKeyAlgorithm: pinned?.algorithm, always: always, viaInAppTunnel: carrier != nil && viaInApp)
     }
 
     private func load() {
@@ -360,6 +373,7 @@ struct SSHTunnelForm<Status: View>: View {
         targetHost = saved.targetHost == SSHRoute.defaultTargetHost ? "" : saved.targetHost
         targetPort = saved.targetPort == SSHRoute.defaultTargetPort ? "" : String(saved.targetPort)
         always = saved.always
+        viaInApp = saved.viaInAppTunnel
         if let fp = saved.hostKey { pinned = (fp, saved.hostKeyAlgorithm ?? "") }
     }
 
@@ -390,7 +404,7 @@ struct SSHTunnelForm<Status: View>: View {
         problem = nil
         defer { checking = false }
         do {
-            let seen = try await SSHTunnels.shared.verify(route)
+            let seen = try await SSHTunnels.shared.verify(route, carrier: carrier)
             route.hostKey = seen.fingerprint
             route.hostKeyAlgorithm = seen.algorithm
             pinned = seen
@@ -413,6 +427,10 @@ struct SSHTunnelForm<Status: View>: View {
     /// What went wrong and what to do about it.
     static func advice(_ error: Error, _ route: SSHRoute) -> String {
         guard let e = error as? SSHTunnelError else { return error.localizedDescription }
+        if route.viaInAppTunnel, Self.notReached(e) {
+            // Through the in-app tunnel, a server the tunnel's network can't reach shows up as a dropped handshake.
+            return String(localized: "Couldn't reach \(route.host):\(String(route.port)) through the in-app tunnel (\(e.localizedDescription)). Check that the tunnel is signed in and that this server can be reached from the tunnel's network.")
+        }
         let target = route.targetHost.contains(":") ? "[\(route.targetHost)]:\(route.targetPort)" : "\(route.targetHost):\(route.targetPort)"
         return switch e {
         case .notAuthorized:
@@ -425,6 +443,13 @@ struct SSHTunnelForm<Status: View>: View {
             String(localized: "SSH handshake failed (\(why)). The server needs to support Ed25519 or ECDSA host keys and AES-GCM encryption.")
         default:
             e.localizedDescription
+        }
+    }
+
+    private static func notReached(_ e: SSHTunnelError) -> Bool {
+        switch e {
+        case .unreachable, .handshake, .timedOut: true
+        default: false
         }
     }
 }

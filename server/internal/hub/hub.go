@@ -121,6 +121,7 @@ type Hub struct {
 	moving    moves         // who carries what changing (ownership_moves.go)
 	// userLocale: the user's language, an i18n.Lang (locale.go)
 	userLocale atomic.Value
+	apps       clientApps  // the apps' versions as they last said (client_apps.go)
 	deleted    deletedBook // conversations taken out of the apps' lists (deleted_sessions.go)
 	secret     secretState // secretkey.go
 	devtok     devTokens   // device token lookups (devicetokens.go)

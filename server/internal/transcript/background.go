@@ -27,6 +27,8 @@ var (
 	expiresRe  = lazyre.New(`expires in (\d+)(ms|s|m|h)\b`)
 	wakeInRe   = lazyre.New(`Next wakeup scheduled for [^(]*\(in (\d+)s\)`)
 	bgMovedRe  = lazyre.New(`moved to the background \(ID: ([A-Za-z0-9_-]+)\)`) // a foreground command that timed out
+	// a foreground command backgrounded by hand: "Command was manually backgrounded by user with ID: bmk9rnfdz. Output is being written to: …"
+	bgManualRe = lazyre.New(`manually backgrounded by user with ID:?\s*([A-Za-z0-9_-]+)`)
 	bgOutputRe = lazyre.New(`Output is being written to:\s*(\S+?)\.?(?:\s|$)`)
 )
 
@@ -72,10 +74,15 @@ func (m *Meta) trackBackground(toolUseID, name string, raw json.RawMessage, ts t
 		}
 	case "Bash":
 		if !in.Background {
+			if m.fgBash == nil {
+				m.fgBash = map[string]proto.BackgroundTask{}
+			}
+			m.fgBash[toolUseID] = proto.BackgroundTask{Kind: "shell", Command: in.Command, Description: in.Description, StartedAt: ts}
 			return
 		}
 		m.pend(toolUseID, proto.BackgroundTask{Kind: "shell", Command: in.Command, Description: in.Description, StartedAt: ts})
 	case "Agent", "Task":
+		m.rememberAgentCall(toolUseID, in.Description)
 		// Whether it went to the background shows in the result ("Async agent launched").
 		m.pend(toolUseID, proto.BackgroundTask{Kind: "agent", Description: in.Description, StartedAt: ts})
 	case "Monitor":
@@ -93,6 +100,15 @@ func (m *Meta) trackBackground(toolUseID, name string, raw json.RawMessage, ts t
 		m.removeBackground(in.TaskID + in.ShellID)
 		m.workflowEnded(in.TaskID+in.ShellID, proto.WorkflowKilled, ts)
 	}
+}
+
+// manualBackground is bgManualRe's match in a tool result, nil without one; the cheap check first keeps the regexp
+// off every other result (TestToolUseResultNotCopied counts what parsing a line allocates).
+func manualBackground(result string) []string {
+	if !strings.Contains(result, "manually backgrounded") {
+		return nil
+	}
+	return bgManualRe.FindStringSubmatch(result)
 }
 
 // onceCron reports a cron expression pinned to one date ("33 17 21 10 *": day of month and month both fixed).
@@ -126,10 +142,25 @@ func (m *Meta) backgroundStarted(toolUseID, result string, isError bool, ts time
 				l.Ticks = m.Loop.Ticks
 			}
 			l.Ticks++
-			m.Loop = &l
+			loop := l
+			m.Loop = &loop
 		}
 		return
 	}
+	if mm := manualBackground(result); mm != nil && !isError {
+		// Its call is known when every line is read; the node's scan for background work reads only the lines that
+		// name it (node/bgscan.go), so there it is the id alone.
+		f := m.fgBash[toolUseID]
+		delete(m.fgBash, toolUseID)
+		f.Kind, f.ID, f.OutputFile = "shell", mm[1], outputFile(result)
+		if f.StartedAt.IsZero() {
+			f.StartedAt = ts
+		}
+		m.removeBackground(f.ID)
+		m.Background = append(m.Background, f)
+		return
+	}
+	delete(m.fgBash, toolUseID)
 	t, ok := m.bgPending[toolUseID]
 	if !ok {
 		if mv := bgMovedRe.FindStringSubmatch(result); mv != nil && !isError {
@@ -242,6 +273,9 @@ func outputFile(result string) string {
 }
 
 func (m *Meta) taskFinished(notification string, ts time.Time) {
+	if n, _ := taskNote(notification); n.Kind == "agent" && !agentTerminal(n.Status) {
+		return
+	}
 	if id := firstTag(notification, "task-id"); id != "" {
 		m.removeBackground(id)
 		m.workflowEnded(id, firstTag(notification, "status"), ts)
@@ -264,7 +298,7 @@ func (m *Meta) removeBackground(id string) {
 // started a new turn (ones absorbed mid-turn come as queued_command attachments instead).
 func markWake(items []proto.Item) {
 	for i := range items {
-		if items[i].Kind == proto.KindNotice {
+		if items[i].Kind == proto.KindNotice || items[i].Kind == proto.KindToolResult && items[i].Task != nil {
 			items[i].Wake = true
 		}
 	}

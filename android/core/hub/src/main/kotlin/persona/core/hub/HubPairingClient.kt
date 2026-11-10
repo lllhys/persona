@@ -34,9 +34,14 @@ class HubPairingClient private constructor(
     version: String,
     private val connection: OkHttpHubConnection?,
 ) : AutoCloseable {
-    /** Pairing uses temporary credentials before a live connection exists. */
-    constructor(expectedHubId: String?, fingerprint: String?, addresses: List<String>, version: String) :
-        this(expectedHubId, fingerprint, addresses, version, null)
+    /**
+     * Pairing uses temporary credentials before a live connection exists. [access] is the Cloudflare Access service token
+     * entered before pairing: sent to the pairing's HTTPS addresses (and those the hub lists) from the first probe on.
+     */
+    constructor(expectedHubId: String?, fingerprint: String?, addresses: List<String>, version: String, access: HubAccess? = null) :
+        this(expectedHubId, fingerprint, addresses, version, connection = null) {
+        if (access != null) http.access = { url -> access.takeIf { endpoints.any { it.url.toHttpUrl().sameOrigin(url) } } }
+    }
 
     /** Settings and downloads share the running connection's route and credentials. */
     constructor(connection: OkHttpHubConnection) : this(connection.http.hubId, connection.http.fingerprint,

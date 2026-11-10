@@ -281,6 +281,8 @@
     <string name="inbox_event_chain">What happened</string>
     <string name="inbox_event_chain_all">Show all (%1$d)</string>
     <string name="inbox_event_view_source">View original</string>
-    <string name="inbox_done_by_manager">Handled by the manager</string>
+    <string name="inbox_done_by_manager">Handled by the assistant</string>
     <string name="inbox_event_related">Related</string>
+    <!-- Source subscriptions (#2041): with the Inbox's other settings -->
+    <string name="inbox_subscriptions">Subscriptions</string>
 </resources>

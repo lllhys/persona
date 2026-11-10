@@ -287,7 +287,7 @@ func (s *Service) delegateCall(ctx context.Context, p DelegateParams) (DelegateR
 func (s *Service) escalate(ix proto.Interaction) {
 	s.fleet.mu.Lock()
 	p := s.fleet.interactions[ix.ID]
-	still := p != nil && !p.claimed
+	still := p != nil && !p.claimed && !p.told // told: a supervisor escalated it meanwhile (ask_route.go)
 	if still {
 		p.ix.Delegating, p.ix.Delegate = false, ix.Delegate
 	}

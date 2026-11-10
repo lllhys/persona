@@ -40,20 +40,27 @@ func (s *Service) setSessions(machine string, list []proto.Session) {
 		}
 		switch {
 		case sess.Status == proto.StatusWorking && prev != proto.StatusWorking:
-			s.takeTaskAnswerRetry(machine, sess.SessionID)
-			s.turnsBook().working(key, now)
-			s.replyWorked(machine, sess.SessionID) // answered: a question it asks next is a new one (agents_reply.go)
-			ref := SessionRef{MachineID: machine, SessionID: sess.SessionID}
 			// A first list or an offline-to-working transition can be a
 			// reconnect to the same turn. Only a known stopped turn proves a
 			// new one and resets its persisted loop state.
 			newTurn := prev == proto.StatusDone || prev == proto.StatusIdle || prev == proto.StatusInterrupted
+			if s.meetingTurnStarted(machine, sess.SessionID, newTurn) {
+				break // a meeting's batch: a side exchange, neither the turn tracker's nor a task's or the Agents' (meeting_turns.go)
+			}
+			s.takeTaskAnswerRetry(machine, sess.SessionID)
+			s.turnsBook().working(key, now)
+			s.replyWorked(machine, sess.SessionID) // answered: a question it asks next is a new one (agents_reply.go)
+			ref := SessionRef{MachineID: machine, SessionID: sess.SessionID}
 			s.inOrder(func() { s.turnStartedObserved(context.Background(), ref, newTurn) }) // after the items that came before it
 		case prev == proto.StatusWorking && (sess.Status == proto.StatusDone || sess.Status == proto.StatusIdle):
+			ref := SessionRef{MachineID: machine, SessionID: sess.SessionID}
+			if s.meetingTurnEnded(machine, sess.SessionID) { // no finished push, and the other turns' stay as they were
+				s.inOrder(func() { go s.turnEnded(context.Background(), ref, true) })
+				break
+			}
 			s.notifyFinished(machine, sess.SessionID, s.turnsBook().ended(key, now, backgroundRunning(sess)))
 			// A new assistant conversation is named after its first turn; a task from one may be done. After the
 			// items of the turn (a channel's answer is read from them).
-			ref := SessionRef{MachineID: machine, SessionID: sess.SessionID}
 			s.inOrder(func() { go s.TurnEnded(context.Background(), ref) })
 		case (sess.Status == proto.StatusDone || sess.Status == proto.StatusIdle) &&
 			(sess.Status != prev || sess.Rev != was.Rev || sess.LastText != was.LastText || !sess.UpdatedAt.Equal(was.UpdatedAt)) &&
@@ -61,7 +68,11 @@ func (s *Service) setSessions(machine string, list []proto.Session) {
 			ref := SessionRef{MachineID: machine, SessionID: sess.SessionID}
 			s.inOrder(func() { s.afterSettle(context.Background(), s.taskTurnSettled, ref.MachineID, ref.SessionID) })
 		}
-		if sess.Status == proto.StatusWorking && backgroundRunning(sess) {
+		if sess.Status != prev && sess.Status != proto.StatusWorking && !(prev == proto.StatusWorking && (sess.Status == proto.StatusDone || sess.Status == proto.StatusIdle)) {
+			// Stopped with no end seen (a restart, an interrupt, a card): a meeting turn there is over (meeting_turns.go).
+			s.meetingTurnStopped(machine, sess.SessionID, sess, prev == "")
+		}
+		if sess.Status == proto.StatusWorking && backgroundRunning(sess) && !s.meetingTurnNow(machine, sess.SessionID) {
 			s.turnsBook().sawBackground(key, now)
 		}
 	}

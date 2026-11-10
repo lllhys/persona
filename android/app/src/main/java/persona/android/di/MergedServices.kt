@@ -54,7 +54,8 @@ internal fun mergedSessions(stacks: GroupStacks): SessionsRepository = object : 
             .groupBy({ it.key }, { it.value }).mapValues { (_, values) -> values.sum() }
         SessionListStatus(
             paged = statuses.any { it.paged }, loaded = statuses.isNotEmpty() && statuses.all { it.loaded },
-            loading = statuses.any { it.loading }, hasMore = statuses.any { it.hasMore }, hasPrevious = statuses.any { it.hasPrevious },
+            loading = statuses.any { it.loading }, failed = statuses.any { it.failed },
+            hasMore = statuses.any { it.hasMore }, hasPrevious = statuses.any { it.hasPrevious },
             total = statuses.sumOf { it.total },
             counts = SessionListCounts(total = statuses.sumOf { it.counts.total }, machine = totals({ it.machine }),
                 project = totals({ it.project }), group = totals({ it.group }), state = totals({ it.state }),

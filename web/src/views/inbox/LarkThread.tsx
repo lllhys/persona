@@ -5,7 +5,7 @@
 // Like the phone's chat (lib/lark-chat.ts, LarkExtras.tsx): pictures open in the viewer, files download, voice and video
 // play here, a card's buttons press, my messages show who read them, reactions can be put on, an avatar opens the
 // person's card, a group's box can @ people, and what is typed stays as the chat's draft.
-import { chooseManager, ItemManager, noteConversation, otherManager, ownerHeaders, useItemManager, withManager } from "../../lib/manager-choice";
+import { ItemManager, ownerHeaders, useItemManager, withManager } from "../../lib/manager-choice";
 import { createContext, memo, use, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, enc, errorText, getToken } from "../../lib/api";
 import { startConversation } from "../../lib/assistant-start";
@@ -29,6 +29,7 @@ import { historyProblem, type HistoryProblem, latestOf, nearTop, OlderPaging, sc
 import { initialCursor, LarkReadTracker } from "../../lib/lark-read";
 import { clickLink, linkHref, prefetchLink } from "../../lib/links";
 import { isResumed } from "../../lib/reconnect";
+import { adoptConversation } from "../../lib/outbox";
 import { navigate } from "../../lib/router";
 import { getState, onHubEvent, useStore } from "../../lib/store";
 import { isForeignCached, translatesChat, useTranslatePrefs, useTranslation } from "../../lib/translate";
@@ -461,9 +462,8 @@ function LarkThreadBody({ chat, pinsOpen = false, onPinsOpen }: LarkThreadProps)
     try {
       // the chat's manager's Persona (the item's; a direct chat opened from a profile in it is the same one's)
       const r = await startConversation({ prompt }, ownerHeaders(manager));
-      // its requests (feed, stop…) go to that manager whatever the page shows later
-      noteConversation(r.session.session_id, otherManager(manager));
-      if (manager) chooseManager(manager);
+      // its requests (feed, stop…) go to that manager whatever the page shows later; the current assistant stays
+      adoptConversation(manager, r.session.session_id, r.session.machine_id);
       navigate({ name: "persona", sid: r.session.session_id });
     } catch (e) {
       toast(t("inbox-larkthread.summary_failed", { error: errorText(e) }), "error");

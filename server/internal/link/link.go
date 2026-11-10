@@ -30,6 +30,13 @@ const (
 	StreamPath = "/api/v1/link/stream"
 )
 
+// StreamCompression is the permessage-deflate every stream end asks for (the hub's and the manager's, active and
+// passive Persona Link): each message compressed on its own. With context takeover each end kept a flate writer and
+// its window for the stream's life, about 0.8 MB per end while idle, to send a sixth fewer bytes. Either end asking
+// for no context takeover decides it (RFC 7692), so an older end that still asks for takeover saves too
+// (compress_interop_test.go).
+const StreamCompression = websocket.CompressionNoContextTakeover
+
 // Close codes on the link besides the standard ones (1001: the hub is stopping).
 const (
 	CloseReplaced websocket.StatusCode = 4001 // a newer link of the same machine took over

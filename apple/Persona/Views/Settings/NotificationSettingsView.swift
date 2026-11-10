@@ -6,9 +6,11 @@ import UserNotifications
 
 /// Settings › Notifications: which pushes this iPhone gets. The hub keeps the choice per device (notify.go), so a second phone or
 /// an iPad can choose differently; the system switch (allowed at all, sounds, lock screen) stays in iOS Settings.
+/// Reading the prefs is `NotificationSettingsModel`'s: only the rows the hub keeps wait for it, the system-settings
+/// buttons work without the hub, and a failed read says why with Retry (#1860).
 struct NotificationSettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var prefs: NotifyPrefs?
+    @State private var page: NotificationSettingsModel?
     @State private var system: UNAuthorizationStatus?
     #if os(iOS)
     @State private var activitiesAllowed = ActivityAuthorizationInfo().areActivitiesEnabled
@@ -19,6 +21,15 @@ struct NotificationSettingsView: View {
 
     var body: some View {
         SettingsForm {
+            if let error = page?.error {
+                Section {
+                    LoadProblem(text: error)
+                    Button { Task { await page?.load() } } label: { Label("Retry", systemImage: Theme.Icon.retry).lineLimit(1) }
+                        .disabled(page?.loading == true)
+                        .accessibilityIdentifier("notify.retry")
+                }
+            }
+
             if systemOff {
                 Section {
                     Label {
@@ -41,6 +52,7 @@ struct NotificationSettingsView: View {
                                   detail: String(localized: "Questions, plan approvals, tool permissions, a terminal waiting for input"),
                                   symbol: "exclamationmark.bubble", tint: StatusPalette.needsYou.dot, iconColor: StatusPalette.needsYou.dot,
                                   isOn: binding(\.input))
+                .disabled(prefs == nil)
             } footer: {
                 #if os(macOS)
                 Text("On permission and plan notifications you can Allow/Approve or Deny/Reject directly (hover over the notification and click Options).")
@@ -63,6 +75,7 @@ struct NotificationSettingsView: View {
                 .pickerStyle(.inline)
                 #endif
                 .labelsHidden() // the section header says it
+                .disabled(prefs == nil)
             } header: {
                 Text("When an Agent Finishes")
             } footer: {
@@ -78,10 +91,11 @@ struct NotificationSettingsView: View {
                 SettingsSwitchRow(title: String(localized: "Lock Screen and Dynamic Island"),
                                   detail: String(localized: "One Live Activity sums up agents that need you, are working, or are done"),
                                   symbol: Theme.Icon.persona, tint: Theme.brand, iconColor: Theme.brand, isOn: binding(\.liveActivity))
+                .disabled(prefs == nil)
                 SettingsSwitchRow(title: String(localized: "Show Details on Lock Screen"),
                                   detail: String(localized: "When off, the Lock Screen shows only counts and “A permission is waiting”, not agent names or content"),
                                   symbol: Theme.Icon.view, tint: Theme.Hue.gray, iconColor: .secondary, isOn: binding(\.lockDetails))
-                .disabled(prefs?.liveActivity == false)
+                .disabled(prefs?.liveActivity != true)
                 NavigationLink {
                     IslandSettingsView(island: binding(\.island))
                 } label: {
@@ -91,7 +105,7 @@ struct NotificationSettingsView: View {
                         Label("Dynamic Island", systemImage: "capsule.fill")
                     }
                 }
-                .disabled(prefs?.liveActivity == false)
+                .disabled(prefs?.liveActivity != true)
                 if !activitiesAllowed {
                     Label {
                         Text("Live Activities for Persona are turned off in Settings").font(Theme.Font.caption)
@@ -121,9 +135,11 @@ struct NotificationSettingsView: View {
         .themedPage()
         .detailTitle(String(localized: "Notifications"))
         .navigationBarTitleDisplayMode(.inline)
-        .disabled(prefs == nil)
-        .overlay { if prefs == nil { ProgressView() } }
+        .overlay { if page?.spinning != false { ProgressView() } }
         .task { await load() }
+        .onChange(of: model.isLive) { _, live in
+            if live { Task { await page?.reloadIfNeeded() } } // the hub is back: read what failed
+        }
         #if DEBUG && os(iOS)
         // `-openIslandSettings YES` (with `-openNotificationSettings YES -tab settings`): Dynamic Island.
         .navigationDestination(isPresented: $debugIsland) { IslandSettingsView(island: binding(\.island)) }
@@ -135,7 +151,10 @@ struct NotificationSettingsView: View {
         }
         #endif
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { system = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+            Task {
+                system = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+                await page?.reloadIfNeeded()
+            }
             #if os(iOS)
             activitiesAllowed = ActivityAuthorizationInfo().areActivitiesEnabled
             #endif
@@ -268,14 +287,24 @@ struct NotificationSettingsView: View {
         }
     }
 
+    /// The prefs as read and as the optimistic saves leave them (nil until read).
+    private var prefs: NotifyPrefs? {
+        get { page?.prefs }
+        nonmutating set { page?.prefs = newValue }
+    }
+
     private func load() async {
         system = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-        guard let api = model.api else { return }
-        do {
-            let p = try await api.notifyPrefs(device: PushRegistrar.deviceID)
-            prefs = p
-            LiveActivityController.shared.settings(p)
-        } catch { model.show(error) }
+        if page == nil {
+            let api = { [model] in model.api }
+            page = NotificationSettingsModel(deps: .init(
+                load: {
+                    guard let api = api() else { throw APIError(status: 0, message: String(localized: "Not connected to the hub yet")) }
+                    return try await api.notifyPrefs(device: PushRegistrar.deviceID)
+                },
+                applied: { LiveActivityController.shared.settings($0) }))
+        }
+        await page?.load()
     }
 
     /// Optimistic: the control moves at once and goes back if the hub says no.

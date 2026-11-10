@@ -3,8 +3,9 @@
 // audio to the extension's input rate in 20 ms PCM16 frames; and a second AudioContext at the voice's output rate that
 // plays the PCM it sends back to back, with no gap, until `clear` drops all of it.
 //
-// Both contexts are made in the constructor, which runs inside the click that starts the call: a browser lets audio
-// start only from a user's gesture, and the microphone's permission prompt comes after.
+// Both contexts are made inside the click that starts the call (audio-contexts.ts): a browser lets audio start only from
+// a user's gesture, and the microphone's permission prompt comes after. The constructor makes them, as it runs in the
+// click; the first call of a page, whose code loads after the click, gets the ones the click made (calls.ts).
 //
 // The capture context's output is never exact silence. Its clock is what drives the worklet, so it is what sends the
 // 50 frames a second; Chrome moves a context whose output has been all zero for 30 seconds from the audio device to a
@@ -19,6 +20,7 @@
 // when the frames fall behind the wall clock all the same.
 import type { VoiceAudio, VoiceAudioEvent } from "./conversation";
 import { VoiceAudioError } from "./conversation";
+import { openContexts, type VoiceContexts } from "./audio-contexts";
 import { CapturePace } from "./capture-pace";
 import { cueSamples, type VoiceCue } from "./cues";
 import { meterLevel, pcmFloats } from "./resample";
@@ -63,23 +65,15 @@ export class BrowserVoiceAudio implements VoiceAudio {
   private drainTimer: ReturnType<typeof setTimeout> | undefined;
   cancelsEcho: boolean | undefined;
 
-  constructor(outputRate: number) {
-    this.capture = new AudioContext();
+  /** `contexts`: the ones the click made while this code was still loading (calls.ts); else made here, in the click. */
+  constructor(outputRate: number, contexts: VoiceContexts = openContexts(outputRate)) {
+    this.capture = contexts.capture;
+    this.player = contexts.player;
     // from the start: the microphone's permission prompt may take longer than the 30 seconds of silence
     this.keepAwake = this.capture.createConstantSource();
     this.keepAwake.offset.value = KEEP_AWAKE_LEVEL;
     this.keepAwake.connect(this.capture.destination);
     this.keepAwake.start();
-    let player: AudioContext;
-    try {
-      player = new AudioContext({ sampleRate: outputRate });
-    } catch {
-      // an older browser that cannot run a context at that rate: buffers carry their own rate, the context resamples
-      player = new AudioContext();
-    }
-    this.player = player;
-    void this.capture.resume().catch(() => {});
-    void this.player.resume().catch(() => {});
   }
 
   async start(o: { inputRate: number; muted: boolean; onFrame: (frame: Int16Array, rate: number) => void; onEvent: (e: VoiceAudioEvent) => void }): Promise<void> {

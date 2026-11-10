@@ -90,8 +90,17 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 			}
 		}
 		t.TodoID = todo.ID
-		if s.supervises(ctx, p.Conversation) { // the main conversation or a leader follows up what it hands out (supervise.go)
-			s.superviseTodo(ctx, todo.ID, p.Conversation, t.DoneWhen, t.ExpectMinutes)
+		s.setTaskStageKind(ctx, todo.ID, "", "", taskStageKind(t.Readonly, t.DoneWhen, todo.PRURL), false)
+		// The main conversation or a leader follows up what it hands out (supervise.go); a task the main conversation
+		// handed to a leader is that leader's, while it still is one (else the main conversation's again).
+		if sup := p.Conversation; s.supervises(ctx, sup) {
+			if t.Supervisor != "" && s.isLeader(ctx, t.Supervisor) {
+				sup = t.Supervisor
+				if t.ReuseTodo == "" {
+					s.taskCard(ctx, sup, todo.ID) // the leader sees its task's card too; the plan's stays where it was made
+				}
+			}
+			s.superviseTodo(ctx, todo.ID, sup, t.DoneWhen, t.ExpectMinutes)
 		}
 		if t.ReuseTodo != "" {
 			continue
@@ -109,10 +118,9 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 	s.event(ctx, map[string]any{"type": "task_plan", "plan": p})
 	for i := range p.Tasks {
 		if task := p.Tasks[i]; task.TodoID != "" {
-			go func() {
-				defer s.releaseTakenTodo(task.ReuseTodo) // linked or failed: the todo is no longer in the gap
-				s.startPlanTask(p.ID, p.Conversation, i, task, false)
-			}()
+			s.startPlanTaskAsync(p.ID, p.Conversation, i, task, false, func() {
+				s.releaseTakenTodo(task.ReuseTodo) // linked or failed: the todo is no longer in the gap
+			})
 		}
 	}
 	return p, nil
@@ -192,8 +200,29 @@ const taskFailTimeout = 30 * time.Second
 // done with why (so nothing shows it as going on, #1077), the plan keeps the error, and the conversation gets a
 // receipt — one per task: a retry that fails again (retry) updates the error the receipt shows (clients read it off
 // the todo). A task the user finished while its agent was still starting (#2954) is not a failed start: the agent
-// that did start stays in the task and the close loop retires it (tasks_close.go).
+// that did start stays in the task and the close loop retires it (tasks_close.go). Use startPlanTaskAsync to
+// schedule it: go startPlanTask would register too late for the manager's idle check.
 func (s *Service) startPlanTask(planID, conversation string, i int, t PlanTask, retry bool) {
+	s.taskStarting.Add(1)
+	defer s.taskStarting.Add(-1)
+	s.runPlanTaskStart(planID, conversation, i, t, retry)
+}
+
+// startPlanTaskAsync reserves the start before launching its goroutine: the request may return before the
+// goroutine is scheduled, and the manager must not see that gap as idle. Keep the reservation through cleanup.
+func (s *Service) startPlanTaskAsync(planID, conversation string, i int, t PlanTask, retry bool, after func()) {
+	s.taskStarting.Add(1)
+	go func() {
+		defer s.taskStarting.Add(-1)
+		if after != nil {
+			defer after()
+		}
+		s.runPlanTaskStart(planID, conversation, i, t, retry)
+	}()
+}
+
+// runPlanTaskStart is the shared start body; its caller owns the idle reservation through every return path.
+func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTask, retry bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), taskStartTimeout)
 	defer cancel()
 	placed, placedWhy := t.Machine, t.Why
@@ -379,14 +408,11 @@ func (s *Service) retryTask(ctx context.Context, todoID string) (json.RawMessage
 	}
 	s.logf("task %s: retrying its start on %s", todoID, m.ID)
 	started = true
-	go func() {
-		defer func() {
-			s.tasks.mu.Lock()
-			delete(s.tasks.retrying, todoID)
-			s.tasks.mu.Unlock()
-		}()
-		s.startPlanTask(p.ID, p.Conversation, i, t, true)
-	}()
+	s.startPlanTaskAsync(p.ID, p.Conversation, i, t, true, func() {
+		s.tasks.mu.Lock()
+		delete(s.tasks.retrying, todoID)
+		s.tasks.mu.Unlock()
+	})
 	return view, nil
 }
 

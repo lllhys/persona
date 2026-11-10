@@ -135,7 +135,7 @@ func TestAgentWorkOverTheBus(t *testing.T) {
 	m, n := workMachine(t, h)
 	useModel(t, h, workModel(t, `{"phase":"blocked","on":"user","line":"等你选方案",
 		"questions":[{"question":"用哪个方案？","header":"方案","options":[{"label":"用 D4","description":"推荐"},{"label":"用 D2"}]}]}`))
-	n.reply = "D2 / D4 选哪个？"
+	n.reply = "用哪个方案？D2 / D4 选哪个？"
 	connectAssistant(t, h, database) // Owned question answers require the manager's durable Store.
 	mux := h.routes()
 	if code, out := call(t, mux, "PUT", "/api/v1/agents/triage", h.cfg.Token, `{"enabled":true,"decide":true,"auto_continue":true,"wake":true}`); code != 200 {

@@ -37,6 +37,18 @@ final class TreeSwapAwayTests: XCTestCase {
         stillThere(app, "new-agent-after-swap")
     }
 
+    /// A fold and an unfold while the app is active (`-swapTreeWhole YES`) build the tree again, the pages' width class
+    /// with it: New Agent comes back open with the message typed and the photo attached (`-openNewAgentAttachments`).
+    @MainActor func testNewAgentComesBackAfterAFold() throws {
+        let (app, launched) = try openNewAgent(["-swapTreeAt", "45", "-swapTreeWhole", "YES", "-openNewAgentAttachments", "photo"])
+        XCTAssertLessThan(Date.now.timeIntervalSince(launched), 40, "typed too close to the fold")
+        sleep(UInt32(max(0, launched.addingTimeInterval(53).timeIntervalSinceNow)))
+        XCTAssertEqual(app.probe("tree", as: Swaps.self)?.rebuilt, 2, "the tree was not built again")
+        stillThere(app, "new-agent-after-fold")
+        guard !noDrag else { return } // not scrolled down to the form's attachments
+        XCTAssertTrue(app.buttons["移除图片 1"].waitForExistence(timeout: 5), "the photo went with the tree:\n\(app.debugDescription)")
+    }
+
     /// To the home screen and back: the sheet is still there with the message. A plain trip on a simulator; on an iPhone
     /// Duo open the snapshots on the way are taken in the outer screen's width.
     @MainActor func testNewAgentStaysOpenThroughTheHomeScreen() throws {

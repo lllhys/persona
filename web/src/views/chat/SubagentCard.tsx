@@ -5,7 +5,7 @@
 // Its whole conversation opens read-only in the side panel, the chat staying where it is.
 import { memo, useRef } from "react";
 import { openPanel } from "../../lib/panel";
-import { agentSummary, isLaunchReceipt, nestedSubagents, subagentEnded, subagentFor, subagentTitle } from "../../lib/tasks";
+import { agentSummary, isLaunchReceipt, nestedSubagents, subagentEnded, subagentFor, subagentTitle, taskPill } from "../../lib/tasks";
 import { segments } from "../../lib/turns";
 import type { Item, Subagent, TaskNote } from "../../lib/types";
 import { tsMs, workDuration, type AgentStatus, type ToolStep } from "../../lib/work-groups";
@@ -20,6 +20,7 @@ import { t } from "../../i18n";
 import { ScrollFold } from "./fold-scroll";
 import { Markdown } from "../../ui/Markdown";
 import { FoldedReport } from "./FoldedReport";
+import { useFullText } from "./FullText";
 
 const STATUS: Record<AgentStatus, string> = {
   running: t("chat-subagentcard.status_running"),
@@ -52,7 +53,7 @@ export function subagentLine(status: AgentStatus, meta: Subagent | undefined): {
   return { text: doing || t("chat-subagentcard.starting"), live: true };
 }
 
-export const SubagentCard = memo(function SubagentCard({ step, status, mid, scope = "" }: { step: ToolStep; status: AgentStatus; mid: string; scope?: string }) {
+export const SubagentCard = memo(function SubagentCard({ step, status, mid, sid, scope = "" }: { step: ToolStep; status: AgentStatus; mid: string; sid?: string; scope?: string }) {
   const { subagents, tasks } = useChatContext();
   const { use, result } = step;
   const inp = (use.tool_input ?? {}) as Record<string, unknown>;
@@ -62,7 +63,8 @@ export const SubagentCard = memo(function SubagentCard({ step, status, mid, scop
   const now = useNow(1000, running);
   const title = (typeof inp.description === "string" && inp.description.trim()) || (meta ? subagentTitle(meta) : "") || t("chat-subagentcard.untitled_task");
   const prompt = typeof inp.prompt === "string" ? inp.prompt.trim() : "";
-  const summary = reportOf(result, use.tool_use_id ? tasks.notes.get(use.tool_use_id) : undefined) || agentSummary(result, meta);
+  const reports = use.tool_use_id ? tasks.reports.get(use.tool_use_id) ?? [] : [];
+  const summary = reports.length || result?.task?.kind === "agent" ? "" : reportOf(result, use.tool_use_id ? tasks.notes.get(use.tool_use_id) : undefined) || agentSummary(result, meta);
   const type = (typeof inp.subagent_type === "string" && inp.subagent_type) || meta?.type || "";
   const start = ms(meta?.started_at) ?? ms(use.ts);
   const end = running ? now : subagentEnded(result, meta);
@@ -123,6 +125,7 @@ export const SubagentCard = memo(function SubagentCard({ step, status, mid, scop
                 </FoldedReport>
               </div>
             )}
+            {reports.map((item) => <SubagentReport key={item.id} item={item} mid={mid} sid={sid} scope={scope} />)}
             {meta && open && <RecentSteps mid={mid} agent={meta} running={running} />}
             {nested.length > 0 && (
               <div className="flex flex-col" data-subagent-nested>
@@ -159,6 +162,22 @@ export const SubagentCard = memo(function SubagentCard({ step, status, mid, scop
     </div>
   );
 });
+
+/** One report keeps its own disclosure and full-output identity, including after another report arrives. */
+function SubagentReport({ item, mid, sid, scope }: { item: Item; mid: string; sid?: string; scope: string }) {
+  const full = useFullText(item.kind === "tool_result" ? item : undefined, mid, sid);
+  const text = item.kind === "tool_result" ? full.text : item.task?.detail ?? "";
+  const pill = item.task ? taskPill(item.task) : null;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5" data-subagent-summary data-items={item.id}>
+      <span className="text-xs text-ink-3">{pill?.text ?? (item.task?.status === "running" ? t("chat-subagentcard.status_running") : t("chat-subagentcard.result"))}</span>
+      <FoldedReport id={`${scope}task-report:${item.id}`} text={text}>
+        <Markdown text={text} small mid={mid} />
+        {full.more}
+      </FoldedReport>
+    </div>
+  );
+}
 
 /** The subagent's latest few tool calls while the card is open: it follows the subagent's own transcript (the hub
  *  pushes what it writes), instead of one fetch that went stale (#5602). */

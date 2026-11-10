@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"hash/crc32"
 	"io"
+	"maps"
 	"os"
 	"sort"
 
@@ -54,7 +55,12 @@ var (
 	seedBash         = []byte("<bash-")
 	seedUltracode    = []byte("ultra_effort_")
 	seedStdout       = []byte("local-command-stdout")
-	seedHandback     = []byte(`"senderTaskId":"`) // a subagent's message (a hand-back among them): its id follows
+	seedHandback     = []byte(`"senderTaskId":"`)
+	seedAgent        = []byte(`"Agent"`)
+	seedTask         = []byte(`"Task"`)
+	seedAgentID      = []byte(`agentId:`)
+	seedAgentRecord  = []byte(`"agentId"`)
+	seedPeer         = []byte(`"peer"`)
 )
 
 // scanLines reads a file once without parsing it: where each complete line starts, which lines mention a seed marker,
@@ -80,7 +86,7 @@ func scanLines(fh *os.File, size int64) (starts []int64, notif []notifSeed, bash
 		}
 		data := buf[:n]
 		own := min(int64(block), n) // bytes this block owns; the rest is the next block's start, read for markers
-		for _, m := range [][]byte{seedNotification, seedBash, seedUltracode, seedStdout, seedHandback} {
+		for _, m := range [][]byte{seedNotification, seedBash, seedUltracode, seedStdout, seedHandback, seedAgent, seedTask, seedAgentID, seedAgentRecord, seedPeer} {
 			for i := 0; ; {
 				j := bytes.Index(data[i:], m)
 				if j < 0 || int64(i+j) >= own {
@@ -137,6 +143,17 @@ func scanLines(fh *os.File, size int64) (starts []int64, notif []notifSeed, bash
 				bash = append(bash, line)
 			}
 		} else {
+			length := lastNL - starts[line-1]
+			if line < len(starts) {
+				length = starts[line] - starts[line-1]
+			}
+			if length > 64<<10 {
+				var prefix [1024]byte
+				n, _ := fh.ReadAt(prefix[:], starts[line-1])
+				if seedRequestTypeRe.Match(prefix[:n]) {
+					continue
+				}
+			}
 			notif = append(notif, notifSeed{line, h.id})
 		}
 	}
@@ -194,12 +211,12 @@ func (f *File) openWindow(fh *os.File, size int64) (fresh []proto.Item, ok bool,
 // drops it. Callers hold f.mu.
 func (f *File) seeNotifications(data []byte) {
 	w := f.win
-	if w == nil || !f.partialMeta || !bytes.Contains(data, []byte("<task-id>")) {
+	if w == nil || !f.partialMeta {
 		return
 	}
 	fresh := map[string]bool{}
-	for _, m := range taskIDRe.FindAllSubmatch(data, -1) {
-		if id := string(m[1]); !w.ids[id] {
+	for id := range seedTaskIDs(data) {
+		if !w.ids[id] {
 			fresh[id], w.ids[id] = true, true
 		}
 	}
@@ -211,8 +228,8 @@ func (f *File) seeNotifications(data []byte) {
 		return
 	}
 	defer fh.Close()
-	scratch := Meta{Sidechain: f.meta.Sidechain, Codex: w.codex, notified: f.meta.notified, taskCalls: f.meta.taskCalls,
-		handbacks: f.meta.handbacks}
+	scratch := Meta{Sidechain: f.meta.Sidechain, Codex: w.codex, notified: f.meta.notified, taskCalls: maps.Clone(f.meta.taskCalls),
+		handbacks: f.meta.handbacks, agentCalls: maps.Clone(f.meta.agentCalls)}
 	last := 0
 	for _, s := range w.notif {
 		if s.line >= w.start {
@@ -227,7 +244,23 @@ func (f *File) seeNotifications(data []byte) {
 			ParseLine(s.line, bytes.TrimRight(line, "\n"), &scratch)
 		}
 	}
-	f.meta.notified, f.meta.taskCalls, f.meta.handbacks = scratch.notified, scratch.taskCalls, scratch.handbacks
+	f.meta.notified, f.meta.handbacks = scratch.notified, scratch.handbacks
+	for id := range fresh {
+		call := scratch.taskCalls[id]
+		if call == "" {
+			continue
+		}
+		if f.meta.taskCalls == nil {
+			f.meta.taskCalls = map[string]string{}
+		}
+		f.meta.taskCalls[id] = call
+		if agent, ok := scratch.agentCalls[call]; ok {
+			if f.meta.agentCalls == nil {
+				f.meta.agentCalls = map[string]agentCall{}
+			}
+			f.meta.agentCalls[call] = agent
+		}
+	}
 }
 
 // lineStart is where line n (1-based) starts; one past the last line known gives end.
@@ -292,10 +325,7 @@ func (f *File) seeded(fh *os.File, w *window, b int, end int64, window []byte) M
 		}
 		return bytes.TrimRight(line, "\n")
 	}
-	ids := map[string]bool{}
-	for _, m := range taskIDRe.FindAllSubmatch(window, -1) {
-		ids[string(m[1])] = true
-	}
+	ids := seedTaskIDs(window)
 	scratch := Meta{Sidechain: f.meta.Sidechain, Codex: w.codex}
 	last := 0
 	for _, s := range w.notif {
@@ -340,11 +370,23 @@ func (f *File) seeded(fh *os.File, w *window, b int, end int64, window []byte) M
 		}
 	}
 	return Meta{Sidechain: f.meta.Sidechain, Codex: w.codex, notified: scratch.notified, taskCalls: scratch.taskCalls,
-		handbacks: scratch.handbacks, bashInput: bash,
+		handbacks: scratch.handbacks, agentCalls: scratch.agentCalls, bashInput: bash,
 		Ultracode: ultra.Ultracode, UltracodeAt: ultra.UltracodeAt, UltracodeSince: ultra.UltracodeSince, ultracodeCommand: ultra.ultracodeCommand}
 }
 
 var taskIDRe = lazyre.New(`<task-id>([^<]{1,200})</task-id>`)
+var seedRequestTypeRe = lazyre.New(`"type"\s*:\s*"(?:api-request-blob|api-request-shape|tools-used)"`)
+var peerTaskIDRe = lazyre.New(`"(?:senderTaskId|from)"\s*:\s*"([^"\\]{1,200})"`)
+
+func seedTaskIDs(data []byte) map[string]bool {
+	ids := map[string]bool{}
+	for _, re := range []*lazyre.Regexp{taskIDRe, peerTaskIDRe} {
+		for _, m := range re.FindAllSubmatch(data, -1) {
+			ids[string(m[1])] = true
+		}
+	}
+	return ids
+}
 
 // parseLines parses complete lines in data (starting at file offset pos, line number n) into meta: the stored (light)
 // items go to kept, the ones to send (light, images kept) to sent when it is not nil. Callers hold f.mu.

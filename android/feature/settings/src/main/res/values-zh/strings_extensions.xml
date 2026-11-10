@@ -156,7 +156,7 @@
     <string name="settings_ext_list_footer">扩展只能在 hub 所在的机器上安装、升级和卸载（personad extension），这里可以开关、改设置、填密钥。</string>
     <string name="settings_ext_save">保存</string>
     <string name="settings_ext_saved_restart">已保存，扩展会重新启动</string>
-    <string name="settings_ext_read_only">这个扩展写在它所属管理者的 manager.json 里：开关和设置去那里改，改完重启这个管理者。</string>
+    <string name="settings_ext_read_only">这个扩展写在它所属助手的 manager.json 里：开关和设置去那里改，改完重启这个助手。</string>
     <string name="settings_ext_enabled">启用</string>
     <string name="settings_ext_enabled_note">停用后它不再运行，提供的连接器等也一起关掉；设置和密钥留着。</string>
     <string name="settings_ext_unavailable">读不到</string>
@@ -349,4 +349,10 @@
     <string name="settings_ext_open_image">查看图片</string>
     <string name="settings_ext_chosen_count">已选 %1$d 项</string>
     <string name="settings_ext_pick_time">时间</string>
+    <!-- Source subscriptions (#2041): the entry rows -->
+    <string name="settings_subscriptions_title">订阅来源</string>
+    <string name="settings_subscriptions_row">订阅</string>
+    <string name="settings_subscriptions_counts_on">%1$d 个开着</string>
+    <string name="settings_subscriptions_counts_failing">%1$d 个开着 · %2$d 个出错</string>
+    <string name="settings_subscriptions_counts_none">可以订阅</string>
 </resources>

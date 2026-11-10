@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="settings_managers_title">マネージャー</string>
-    <string name="settings_managers_hint">各マネージャーはそれぞれ完全なアシスタントで、どこで動かすかはあなたが決めます</string>
-    <string name="settings_managers_unsupported">このハブのバージョンはまだマネージャーに対応していません。ハブをアップデートしてからもう一度開いてください</string>
-    <string name="settings_managers_demo">体験モードにはマネージャーがありません。自分のハブに接続してから開いてください</string>
+    <string name="settings_managers_title">アシスタント</string>
+    <string name="settings_managers_hint">各アシスタントは自分の会話、受信箱、コンピュータを持ち、どこで動かすかはあなたが決めます</string>
+    <string name="settings_managers_unsupported">このハブのバージョンはまだアシスタントに対応していません。ハブをアップデートしてからもう一度開いてください</string>
+    <string name="settings_managers_demo">体験モードにはアシスタントがありません。自分のハブに接続してから開いてください</string>
     <string name="settings_managers_default">デフォルト</string>
     <string name="settings_managers_online">オンライン</string>
     <string name="settings_managers_offline">オフライン</string>
@@ -22,16 +22,16 @@
     <string name="settings_managers_save">保存</string>
     <string name="settings_managers_make_default">デフォルトにする</string>
     <string name="settings_managers_move">別の場所にインストール</string>
-    <string name="settings_managers_move_confirm">別の場所にインストールすると新しいインストールコードが発行されます。そのコードでインストールすると、元の場所のマネージャーはすぐに動かなくなります。</string>
+    <string name="settings_managers_move_confirm">別の場所にインストールすると新しいインストールコードが発行されます。そのコードでインストールすると、元の場所のアシスタントはすぐに動かなくなります。</string>
     <string name="settings_managers_new_code">新しいインストールコード</string>
     <string name="settings_managers_delete">削除</string>
     <string name="settings_managers_delete_confirm">「%1$s」を削除しますか？トークンはすぐに無効になり、接続中の接続は切断されます。</string>
     <string name="settings_managers_cancel_install">インストールを取り消す</string>
     <string name="settings_managers_cancel_install_confirm">「%1$s」のインストールを取り消しますか？インストールコードは無効になります。</string>
     <string name="settings_managers_keep">残す</string>
-    <string name="settings_managers_delete_builtin">ハブ自身が動かすマネージャーは削除できません</string>
-    <string name="settings_managers_delete_default">デフォルトのマネージャーは削除できません。先に別のマネージャーをデフォルトにしてください</string>
-    <string name="settings_managers_new">新しいマネージャー</string>
+    <string name="settings_managers_delete_builtin">ハブ自身が動かすアシスタントは削除できません</string>
+    <string name="settings_managers_delete_default">デフォルトのアシスタントは削除できません。先に別のアシスタントをデフォルトにしてください</string>
+    <string name="settings_managers_new">新しいアシスタント</string>
     <string name="settings_managers_create">作成</string>
     <string name="settings_managers_code_title">インストールコード</string>
     <string name="settings_managers_copy">コピー</string>
@@ -39,11 +39,11 @@
     <string name="settings_managers_expired">期限切れ</string>
     <string name="settings_managers_install_service">サービスとして</string>
     <string name="settings_managers_install_docker">Docker で</string>
-    <string name="settings_managers_code_note">動かすコンピュータでこのインストールコードを使ってマネージャーをインストールしてください。インストールが終わると一覧に表示されます。</string>
+    <string name="settings_managers_code_note">動かすコンピュータでこのインストールコードを使ってアシスタントをインストールしてください。インストールが終わると一覧に表示されます。</string>
     <string name="settings_managers_done">完了</string>
-    <string name="settings_managers_err_default">これはデフォルトのマネージャーです。削除する前に別のマネージャーをデフォルトにしてください</string>
-    <string name="settings_managers_err_builtin">これはハブ自身が動かすマネージャーです。削除や別の場所へのインストールはできません</string>
-    <string name="settings_managers_err_gone">このマネージャーはもうありません</string>
+    <string name="settings_managers_err_default">これはデフォルトのアシスタントです。削除する前に別のアシスタントをデフォルトにしてください</string>
+    <string name="settings_managers_err_builtin">これはハブ自身が動かすアシスタントです。削除や別の場所へのインストールはできません</string>
+    <string name="settings_managers_err_gone">このアシスタントはもうありません</string>
     <string name="settings_managers_err_installing">まだインストールされていません。インストール後に名前の変更やデフォルト設定ができます</string>
     <string name="settings_managers_err_name">名前は1〜40文字にしてください</string>
     <string name="settings_managers_err_forbidden">このデバイスには変更する権限がありません</string>
@@ -51,12 +51,15 @@
         <item quantity="other">インストール中 · コードはあと%1$d分で期限切れ</item>
     </plurals>
     <string name="settings_managers_push">プッシュ通知</string>
-    <string name="settings_managers_push_note">オフにすると、このデバイスはこのマネージャーからのプッシュ通知を受け取りません</string>
+    <string name="settings_managers_push_note">オフにすると、このデバイスはこのアシスタントからのプッシュ通知を受け取りません</string>
     <string name="settings_managers_push_failed">プッシュ通知を変更できませんでした：%1$s</string>
     <plurals name="settings_managers_delete_machines">
-        <item quantity="other">この管理者の %1$d 台のコンピュータは hub 自身の管理者に戻ります。</item>
+        <item quantity="other">このアシスタントの %1$d 台のコンピュータは hub 自身のアシスタントに戻ります。</item>
     </plurals>
-    <string name="settings_managers_delete_sources">ソース（メールアカウントなど）はこの管理者自身のデータベースにあります。先に別の管理者へ移さないと、一緒に削除されます。</string>
+    <string name="settings_managers_delete_sources">ソース（メールアカウントなど）はこのアシスタント自身のデータベースにあります。先に別のアシスタントへ移さないと、一緒に削除されます。</string>
     <string name="settings_managers_needs_update">要更新</string>
-    <string name="settings_managers_needs_update_note">この管理者の personad は古く、自分の設定（manager.json）をまだ読まないため、組み込みの既定値で動いています。動いているコンピューターで personad を更新してください。</string>
+    <string name="settings_managers_needs_update_note">このアシスタントの personad は古く、自分の設定（manager.json）をまだ読まないため、組み込みの既定値で動いています。動いているコンピューターで personad を更新してください。</string>
+    <string name="settings_switcher_line">%1$s · %2$s</string>
+    <string name="settings_switcher_switched">%1$sに切り替えました</string>
+    <string name="settings_switcher_manage">アシスタントを管理…</string>
 </resources>

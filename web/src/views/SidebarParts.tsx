@@ -12,7 +12,8 @@ import { useExtensionSlot } from "../lib/extension-slots";
 import { toneOf } from "../lib/extension-ui";
 import { BADGE_TONE, navIcon, pageRoute } from "./extensions/ExtensionSlots";
 import { href, navigate, type Route } from "../lib/router";
-import { useAgentSessions, useCounts } from "../lib/sessions";
+import { useAgentSessions } from "../lib/sessions";
+import { scoped, useScope, useScopedCounts, useScopedTodos } from "../lib/current-assistant";
 import { triageTodos } from "../lib/todo-triage";
 import { makeSessionLookup } from "../lib/todos";
 import { useRestoredTodos } from "../lib/todo-restore";
@@ -20,7 +21,7 @@ import { useLarkOn, useStore } from "../lib/store";
 import { connPhase } from "../lib/connection";
 import { useWorkspaceBoardSetting } from "../lib/workspace-board-setting";
 import type { Session } from "../lib/types";
-import { Collapse, cx, type MenuItem } from "../ui/atoms";
+import { Collapse, cx, sidebarFoldMotion, type MenuItem } from "../ui/atoms";
 import { Icon, type IconName } from "../ui/icons";
 import type { MenuNode } from "../lib/node-actions";
 import { contextMenuProps } from "../ui/context-menu";
@@ -65,19 +66,23 @@ export type NavPage = { k: string; to: Route; icon: IconName; label: string; sho
 /** The sidebar's pages ("Overview" … "Settings", the extensions' pages) and the connection, shared by the sidebar and its rail. */
 export function useNavPages() {
   const phase = connPhase(useStore((s) => s.conn), useStore((s) => s.link));
-  const online = useStore((s) => s.machines.filter((m) => m.online).length);
-  const total = useStore((s) => s.machines.length);
+  // the counts on the pages are the current assistant's (docs/assistant/managers.md "Clients"); the other assistants' are in
+  // the switcher at the sidebar's head. Numbers, not the computers: a push of a computer's load or memory leaves them
+  // equal and doesn't draw the sidebar again.
+  const scope = useScope();
+  const online = useStore((s) => scoped(s.machines, scope).filter((m) => m.online).length);
+  const total = useStore((s) => scoped(s.machines, scope).length);
   // "Terminal" (docs/integrations/terminal.md "Standalone terminal") is there where the hub can list panes
   const terminalPanes = useStore((s) => s.features.includes("terminal_panes"));
   const assistant = useStore((s) => s.assistant);
-  const todos = useStore((s) => s.todos);
+  const todos = useScopedTodos();
   const todosSupported = useStore((s) => s.todosSupported);
   // The To-dos page's open count (#3156): not shelved, not finished; quiet tasks (#1731) are told about in the main
   // conversation, not counted here.
   const agentSessions = useAgentSessions();
   const [restored] = useRestoredTodos();
   const uncompletedTodosCount = useMemo(() => triageTodos(todos, makeSessionLookup(agentSessions), Date.now(), restored, { quiet: false }).open, [todos, agentSessions, restored]);
-  const counts = useCounts();
+  const counts = useScopedCounts();
   const inbox = useInboxBadge();
   const larkSwitch = useLarkHome();
   const lark = useLarkOn();
@@ -137,13 +142,13 @@ export function Section({ title, children, folded, onToggle, right, onMenu, firs
       <div className="group/sec relative flex items-center gap-1 px-2 pb-1" {...(onMenu ? contextMenuProps(onMenu) : {})}>
         <button type="button" aria-expanded={!folded} onClick={onToggle} title={hint} className="touch-hit relative z-10 flex min-w-0 flex-1 items-center gap-1 whitespace-nowrap text-left text-[11px] font-semibold text-ink-3 hover:text-ink-2">
           <span className="min-w-0 truncate">{title}</span>
-          <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 opacity-0 transition-[opacity,transform] duration-200 group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100" style={{ transform: folded ? "rotate(-90deg)" : "none" }} />
+          <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 opacity-0 transition-[opacity,transform] group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
         </button>
         {right}
       </div>
       {/* a group whose name does not say why its agents are here ("Not on a to-do", "Opened in the terminal") says it in one line, folded too */}
       {hint && <p className="px-2 pb-1 text-[11px] leading-[1.45] text-ink-3">{hint}</p>}
-      <Collapse open={!folded}>
+      <Collapse open={!folded} sidebarFold>
         <div className="flex flex-col gap-px" inert={folded || undefined}>{children}</div>
       </Collapse>
     </div>

@@ -351,6 +351,7 @@ func newBulkFailHub(t *testing.T) (*inboxHub, *inboxPutFailStore) {
 	if err := h.inboxReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitNeedsYouIdle(t, h)
 	return &inboxHub{Service: h, f: f, in: in, st: st.inboxMemStore}, st
 }
 

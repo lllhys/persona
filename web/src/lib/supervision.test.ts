@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkCount, checklist, latestReview, progressLine, reportLine, reviewBadge, reviewState, type Supervision } from "./supervision";
+import { checkCount, checklist, latestReview, progressLine, reportLine, reportText, reviewBadge, reviewState, type Supervision } from "./supervision";
 import { todoStatusLabel, type Todo } from "./todos";
 
 const base: Todo = { id: "todo_1", title: "部署 hub", created_at: "2026-11-05T08:00:00Z", updated_at: "2026-11-05T08:00:00Z" };
@@ -15,6 +15,19 @@ describe("supervision", () => {
     expect(progressLine(sup({ progress: { kind: "question", step: 2, steps: 5, text: "要不要停写？" } }))).toBe("问 Persona：要不要停写？");
     expect(reportLine("blocked", "等 CI")).toBe("卡住了：等 CI");
     expect(reportLine("done", "PR 已合并")).toBe("说做完了：PR 已合并");
+  });
+
+  it("words the report in the hub's paraphrase when it has one, and keeps the original for the details (#3181)", () => {
+    const progress = { kind: "progress" as const, step: 3, steps: 5, text: "Ran the **migration** on staging: 41 tables moved", line: "迁移跑完，41 张表已搬" };
+    expect(progressLine(sup({ progress }))).toBe("第 3/5 步 · 迁移跑完，41 张表已搬");
+    expect(progressLine(sup({ progress: { ...progress, kind: "question", line: "先灰度还是直接全量" } }))).toBe("问 Persona：先灰度还是直接全量");
+    // no line yet, no model, or an older hub: the agent's words, as before
+    expect(progressLine(sup({ progress: { ...progress, line: undefined } }))).toBe("第 3/5 步 · Ran the **migration** on staging: 41 tables moved");
+    expect(progressLine(sup({ progress: { ...progress, line: "  " } }))).toBe("第 3/5 步 · Ran the **migration** on staging: 41 tables moved");
+    // the details: the whole report when the hub kept it apart, else the text
+    expect(reportText(sup({ progress: { ...progress, detail: "Ran the **migration**:\n\n- 41 tables moved" } }))).toBe("Ran the **migration**:\n\n- 41 tables moved");
+    expect(reportText(sup({ progress }))).toBe("Ran the **migration** on staging: 41 tables moved");
+    expect(reportText(sup({}))).toBeUndefined();
   });
 
   it("has no badge for a task that is not supervised (an older hub)", () => {

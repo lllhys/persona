@@ -856,6 +856,7 @@
         "jarvis-pi-runtime",
         "jarvis-ports",
         "jarvis-user-package",
+        "mcp__jarvis__ask_user",
         "mcp__jarvis__lark_agent_reply"
       ],
       "path_tokens": [],

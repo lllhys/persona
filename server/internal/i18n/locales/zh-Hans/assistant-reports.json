@@ -80,5 +80,14 @@
   "deploy_gate_out": "等部署：线上 hub（{hub}）还没包含合并提交 {merge}",
   "deploy_gate_unmerged": "PR 还没合并，谈不上部署",
   "deploy_gate_unknown": "等确认部署：查不到线上 hub 有没有这次合并",
-  "deploy_gate_not_in": "等部署：线上 hub（{hub}）里还没有这个 PR 的合并"
+  "deploy_gate_not_in": "等部署：线上 hub（{hub}）里还没有这个 PR 的合并",
+  "leader_reached": "已达成：{task}",
+  "leader_decision": "要你拍板：{task}",
+  "leader_decision_why": "要你拍板：{task}。{why}",
+  "leader_stuck_waiting": "卡住超过一天，在等你：{task}",
+  "leader_stuck_stopped": "卡住超过一天，停着没做完：{task}",
+  "leader_plan_waiting": "计划等你点开始：{tasks}",
+  "progress_reached": "达成：{text}",
+  "progress_doing": "在做：{text}",
+  "progress_needs_you": "要你做：{text}"
 }

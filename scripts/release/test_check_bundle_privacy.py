@@ -1,4 +1,5 @@
 from contextlib import redirect_stdout
+import gzip
 import hashlib
 import io
 import ipaddress
@@ -7,6 +8,7 @@ import plistlib
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -385,7 +387,7 @@ class GoDependenciesTests(unittest.TestCase):
 class BundleScanIntegrationTests(unittest.TestCase):
     def scan(self, text, words=(), public=True, config=None, dependencies=DEPENDENCIES):
         with tempfile.TemporaryDirectory(prefix="bundle-privacy-test-") as directory:
-            (Path(directory) / "binary").write_bytes(text.encode())
+            (Path(directory) / "binary").write_bytes(text if isinstance(text, bytes) else text.encode())
             output = io.StringIO()
             args = ["check_bundle_privacy.py"] + (["--whole-short"] if public else []) + [directory]
             with patch.object(sys, "argv", args), patch.object(cbp.pc, "module_paths", return_value=None), \
@@ -441,6 +443,38 @@ class BundleScanIntegrationTests(unittest.TestCase):
         self.assertIn("private IP", output)
         self.assertNotIn(EMAIL, output)
         self.assertNotIn(address, output)
+
+    def test_gzip_members_in_a_binary_are_scanned_inflated(self):
+        # A Go build embeds the runtime packages as gzipped tars (server/internal/runtimepkg): their text must count.
+        def member(text):
+            archive = io.BytesIO()
+            with tarfile.open(fileobj=archive, mode="w") as tar:
+                data = text.encode()
+                info = tarfile.TarInfo("runtime-sdk/lib/runtime.js")
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            return gzip.compress(archive.getvalue(), compresslevel=9, mtime=0)
+
+        word = "privatehost"
+        plain = member("const a = 1;\n" * 50)
+        # Filler that does not compress to nothing, so half the member still holds the start of the file.
+        long = member("// " + word + " " + "".join("%x" % i for i in range(3000)))
+        for name, data in (
+                ("alone", member("export const host = '" + word + "'")),
+                ("inside a binary", b"\x7fELF\x00" * 64 + member("// " + word) + b"\x00\x1f\x8b\x08junk" * 8),
+                ("after another member", plain + member("// " + word)),
+                ("cut short", long[:len(long) // 2])):
+            with self.subTest(name):
+                self.assertNotIn(word.encode(), data)
+                code, output = self.scan(data, words=(word,))
+                self.assertNotEqual(code, 0)
+                self.assertIn("private value", output)
+                self.assertNotIn(word, output)
+        code, output = self.scan(member("mail " + EMAIL))
+        self.assertNotEqual(code, 0)
+        self.assertIn("email", output)
+        code, output = self.scan(plain + b"\x1f\x8b\x08\x00" * 4, words=(word,))
+        self.assertEqual(code, 0, output)
 
     def test_app_accepts_only_the_exact_configured_public_relay_url(self):
         relay = "https://relay.example.test/relay"

@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="chat_tray_pending">Pending</string>
-    <string name="chat_tray_progress">Progress</string>
-    <string name="chat_tray_agents">Agents</string>
+    <string name="chat_tray_entry_needs_you">Needs you</string>
+    <string name="chat_tray_entry_running">In progress</string>
     <string name="chat_tray_items">%1$d items</string>
     <string name="chat_tray_approve_all">Approve all</string>
     <string name="chat_tray_approve">Approve</string>
@@ -19,8 +18,12 @@
     <string name="chat_tray_no_progress">No tasks in progress</string>
     <string name="chat_tray_agent_detail">%1$s · %2$s</string>
     <string name="chat_tray_working">Working</string>
-    <string name="chat_tray_needs_you">Needs you</string>
-    <string name="chat_tray_unread">Done, unread</string>
+    <string name="chat_tray_waiting">Waiting</string>
+    <string name="chat_tray_background_tasks_running">Background tasks running: %1$d</string>
+    <string name="chat_tray_subagents_running">Subagents running: %1$d</string>
+    <string name="chat_tray_background_running">Background work is running</string>
+    <string name="chat_tray_background_workflow">Background workflow</string>
+    <string name="chat_tray_workflow_more">%1$d more</string>
     <string name="chat_tray_expanded">Expanded</string>
     <string name="chat_tray_collapsed">Collapsed</string>
     <string name="chat_tray_blocked">Blocked</string>
@@ -35,6 +38,9 @@
     <string name="chat_tray_recommended">Recommended: %1$s</string>
     <string name="chat_tray_accept_changed">The acceptance request changed. Review the latest round.</string>
     <string name="chat_tray_cancelled">Cancelled</string>
+    <string name="chat_tray_stopped_state">Stopped</string>
+    <string name="chat_tray_stopped">Stopped, not done yet</string>
+    <string name="chat_tray_stopped_reason">Stopped, not done yet · %1$s</string>
     <string name="chat_tray_pr_number">PR #%1$s</string>
     <string name="chat_tray_done">Completed</string>
     <string name="chat_tray_accepted">Accepted</string>

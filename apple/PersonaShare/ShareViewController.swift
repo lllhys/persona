@@ -153,10 +153,12 @@ enum ShareHub {
     struct Image: Encodable { var mime: String; var data: String }
 
     enum Failure: Error {
-        case notPaired, unauthorized, noMain, unreachable
+        case notPaired, unauthorized, noMain, unreachable, accessNeeded, accessRejected
 
         var sentence: String {
             switch self {
+            case .accessNeeded: String(localized: "This hub is behind Cloudflare Access and needs a service token")
+            case .accessRejected: String(localized: "Cloudflare Access rejected the service token")
             case .notPaired: String(localized: "No hub paired yet: pair one in Persona first")
             case .unauthorized: String(localized: "The pairing no longer works: pair again in Persona")
             case .noMain: String(localized: "No main conversation yet: send something in Persona first")
@@ -168,7 +170,17 @@ enum ShareHub {
     /// The registry's shape, only what the extension uses (Shared/Hubs.swift `HubRegistry`).
     private struct Registry: Decodable {
         struct Hub: Decodable {
-            struct Config: Decodable { var url: URL; var token: String }
+            struct Config: Decodable {
+                var url: URL
+                var token: String
+                /// The hub's Cloudflare Access service token (Shared/CloudflareAccess.swift `HubAccess`).
+                var access: Access?
+            }
+            struct Access: Decodable {
+                var clientID: String
+                var clientSecret: String
+                enum CodingKeys: String, CodingKey { case clientID = "client_id", clientSecret = "client_secret" }
+            }
             var config: Config
             var group: String?
         }
@@ -223,17 +235,38 @@ enum ShareHub {
         var req = URLRequest(url: hub.config.url.appending(path: path), timeoutInterval: 60)
         req.httpMethod = method
         req.setValue("Bearer \(hub.config.token)", forHTTPHeaderField: "Authorization")
+        if let access = hub.config.access { // the request is on the hub's own address
+            req.setValue(access.clientID, forHTTPHeaderField: "CF-Access-Client-Id")
+            req.setValue(access.clientSecret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        }
         if let body {
             req.httpBody = body
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         let (data, response): (Data, URLResponse)
-        do { (data, response) = try await URLSession.shared.data(for: req) } catch { throw Failure.unreachable }
-        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        do { (data, response) = try await URLSession.shared.data(for: req, delegate: NoRedirects()) } catch { throw Failure.unreachable }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        // Cloudflare Access in front of the hub: a redirect to its login (not followed), or its own page (as
+        // `CloudflareAccess.blocked` in the app).
+        let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location")?.lowercased() ?? ""
+        let page = (response.mimeType ?? "").contains("html") ? String(decoding: data.prefix(64 << 10), as: UTF8.self).lowercased() : ""
+        if location.contains("cloudflareaccess.com") || page.contains("cloudflareaccess.com") || page.contains("/cdn-cgi/access/") {
+            throw hub.config.access == nil ? Failure.accessNeeded : Failure.accessRejected
+        }
+        switch status {
         case 200..<300: return data
         case 401, 403: throw Failure.unauthorized
         default: throw Failure.unreachable
         }
+    }
+}
+
+/// Redirects are not followed: the hub's credential and its Cloudflare Access token stay on its own address.
+/// `nonisolated`: this target defaults to MainActor, and a MainActor redirect method would never be called (#1378).
+private nonisolated final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 

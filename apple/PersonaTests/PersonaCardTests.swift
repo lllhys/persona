@@ -44,6 +44,25 @@ struct PersonaCardTests {
         #expect(AssistantCardBlock.parse(language: "swift", #"{"type":"stat","value":1}"#) == nil, "another language is code")
     }
 
+    /// A card the app cannot draw (a type it does not know yet, or one missing what its type needs) is its numbers in
+    /// words, never its JSON; a block that does not parse or says nothing stays a code block.
+    @Test func whatTheAppCannotDrawIsWords() throws {
+        let future = try #require(AssistantCardBlock.words(language: "persona-card",
+            #"{"type":"sunburst","title":"今日热量","unit":"kcal","total":{"value":2000},"segments":[{"label":"早餐","value":450},{"label":"午餐","value":720.5}],"rest":{"label":"弹性","value":300},"note":"还能吃 529 kcal"}"#))
+        #expect(future.title == "今日热量")
+        let line = { (label: String, amount: String) in String(localized: "\(label): \(amount)") }
+        #expect(future.lines == [line("早餐", "450 kcal"), line("午餐", "720.5 kcal"), line("弹性", "300 kcal"), line(String(localized: "Total"), "2,000 kcal"), "还能吃 529 kcal"])
+        let points = try #require(AssistantCardBlock.words(language: "persona-card",
+            #"{"type":"line","title":"体重","unit":"kg","value":70.2,"points":[{"label":"周一","value":70.2}]}"#))
+        #expect(points.title == "体重" && points.lines == ["70.2 kg", line("周一", "70.2 kg")], "a line with one point")
+        let untitled = try #require(AssistantCardBlock.words(language: "persona-card", #"{"type":"pie","segments":[{"label":"a","value":1}]}"#))
+        #expect(untitled.title == nil && untitled.lines == [line("a", "1")])
+        for text in ["", #"{"type":"sunburst","segments":[{"label":"早餐""#, #"{"type":"sunburst"}"#, "[1,2]"] {
+            #expect(AssistantCardBlock.words(language: "persona-card", text) == nil, "\(text)")
+        }
+        #expect(AssistantCardBlock.words(language: "persona-view", #"{"type":"sunburst","title":"x"}"#) == nil, "only persona-card blocks")
+    }
+
     @Test func numbersAreGroupedTheSameEverywhere() {
         #expect(ExtensionPersonaCard.number(2250) == "2,250")
         #expect(ExtensionPersonaCard.number(7.25) == "7.3" || ExtensionPersonaCard.number(7.25) == "7.2")

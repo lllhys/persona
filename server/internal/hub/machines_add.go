@@ -110,6 +110,9 @@ func (h *Hub) addMachineMoving(mc *MachineConfig, by string) error {
 		if err == nil {
 			h.logf("%s: machine %q (%s) added to %s's own list", by, mc.ID, mc.Kind, target)
 			h.setLeaving(mc.ID, false) // added again after a reject (machine_trust.go)
+			// It is target's only from the record putKept wrote: a hand-over sent before (the one markMachinePending
+			// asked for, when the put took longer) gave its pending mark to the carrier, and target must have it.
+			h.devicesConfigChanged()
 			return nil
 		}
 		if !errors.Is(err, errKeeperAway) {
@@ -167,6 +170,47 @@ type machineAddRequest struct {
 	// OS (mac, linux, windows) only picks the install instructions a client shows.
 	OS   string `json:"os"`
 	Icon string `json:"icon"`
+	// Manager is the manager the computer is added to (the one the client is showing); left out, the carrier's, as
+	// before it was asked. Checked by addTarget.
+	Manager string `json:"manager"`
+}
+
+// addTarget checks the manager a computer is added to (add.manager): "" is the carrier, as before the field was
+// there. One the roster lacks is 404 no_manager, one still being installed 409 installing; an offline one is fine,
+// as for a move (POST /api/v1/managers/{id}/machines): the computer waits in hub.json until it connects.
+func (h *Hub) addTarget(ctx context.Context, id string) error {
+	if id == "" || id == devicesOwner {
+		return nil
+	}
+	m, err := h.managerByID(ctx, id)
+	switch {
+	case errors.Is(err, errNoManager):
+		return refuseAdd(http.StatusNotFound, "no_manager", i18n.Err("hub-pairing.no_assistant"))
+	case err != nil:
+		return refuseAdd(http.StatusServiceUnavailable, "", err)
+	case m.Installing != nil:
+		return refuseAdd(http.StatusConflict, "installing", i18n.Err("hub-pairing.assistant_installing"))
+	}
+	return nil
+}
+
+// toManagerErr is how adding a computer to a manager, or moving the one used again there, is refused, with the
+// codes of the move route (POST /api/v1/managers/{id}/machines).
+func toManagerErr(err error) error {
+	var refused *addMachineError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errUnknownManager): // removed since addTarget
+		return refuseAdd(http.StatusNotFound, "no_manager", i18n.Err("hub-pairing.no_assistant"))
+	case errors.As(err, &refused):
+		return err
+	case errors.Is(err, errOwnersUnknown):
+		return refuseAdd(http.StatusServiceUnavailable, "owners_unknown", err)
+	case errors.Is(err, errKeeperAway): // the manager whose own list has it now
+		return refuseAdd(http.StatusServiceUnavailable, "assistant_offline", i18n.Err("hub-pairing.assistant_away"))
+	}
+	return err
 }
 
 // machineSlug is an id for a computer named name (which may be Chinese): its ASCII letters and digits, lower case,
@@ -241,7 +285,8 @@ func (h *Hub) pendingCount() int {
 // computerFor is the link computer a code is made for: the one in machine, or the one add describes (added now,
 // unless one of that id or name can be used again). fromDevice: a signed-in device asked, so a computer it adds is
 // pending, and it makes codes only for pending ones (one already confirmed gets its keys: a code a device hands out
-// for it must not let another computer be it). added: it was added now.
+// for it must not let another computer be it). added: it was added now. With add.manager (addTarget checked it), the
+// computer is that manager's: added to it, or the one used again moved to it.
 func (h *Hub) computerFor(ctx context.Context, machine string, add *machineAddRequest, fromDevice bool, actor string) (id string, added bool, err error) {
 	if add == nil {
 		mc := h.knownEntry(machine)
@@ -278,8 +323,15 @@ func (h *Hub) computerFor(ctx context.Context, machine string, add *machineAddRe
 	reusable := func(mc *MachineConfig) bool {
 		return mc != nil && mc.Kind == kindLink && (!fromDevice || (h.machinePending(mc.ID) && h.neverConnected(mc.ID)))
 	}
-	// reuse is the code for a computer there is already: a device's revokes what an earlier code of it gave.
+	target := strings.TrimSpace(add.Manager)
+	// reuse is the code for a computer there is already: a device's revokes what an earlier code of it gave. Asked
+	// for another manager's, it moves there first.
 	reuse := func(id string) (string, bool, error) {
+		if target != "" && h.entryOwner(id) != target {
+			if _, err := h.moveMachine(ctx, id, target); err != nil {
+				return "", false, toManagerErr(err)
+			}
+		}
 		if fromDevice {
 			if _, err := h.revokeComputer(ctx, id); err != nil {
 				return "", false, err
@@ -318,7 +370,7 @@ func (h *Hub) computerFor(ctx context.Context, machine string, add *machineAddRe
 	}
 	mc := MachineConfig{ID: id, Name: name, Kind: kindLink, Icon: add.Icon}
 	if !fromDevice {
-		return id, true, h.addMachine(&mc, actor)
+		return id, true, h.addComputer(ctx, &mc, target, actor)
 	}
 	if h.pendingCount() >= maxPendingComputers {
 		return "", false, refuseAdd(http.StatusTooManyRequests, "too_many_pending",
@@ -332,7 +384,7 @@ func (h *Hub) computerFor(ctx context.Context, machine string, add *machineAddRe
 	if err := h.markMachinePending(ctx, id, actor); err != nil {
 		return "", false, err
 	}
-	if err := h.addMachine(&mc, "device "+actor); err != nil {
+	if err := h.addComputer(ctx, &mc, target, "device "+actor); err != nil {
 		if ferr := ts.ForgetMachineTrust(context.WithoutCancel(ctx), id); ferr != nil {
 			h.logf("[%s] could not be added, and its pending row stays: %v", id, ferr)
 		}
@@ -340,6 +392,15 @@ func (h *Hub) computerFor(ctx context.Context, machine string, add *machineAddRe
 		return "", false, err
 	}
 	return id, true, nil
+}
+
+// addComputer adds mc for the carrier (owner "" or the carrier: addMachine, as before add.manager), else as owner's
+// from the start (addMachineTo).
+func (h *Hub) addComputer(ctx context.Context, mc *MachineConfig, owner, by string) error {
+	if owner == "" || owner == devicesOwner {
+		return h.addMachine(mc, by)
+	}
+	return toManagerErr(h.addMachineTo(ctx, mc, owner, by))
 }
 
 // revokeComputer revokes every Persona Link credential of computer id and its pairing codes not used yet, closing what

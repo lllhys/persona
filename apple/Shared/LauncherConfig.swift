@@ -52,6 +52,19 @@ nonisolated struct LauncherView: Codable, Identifiable, Hashable, Sendable {
     var stale: [String]?
     /// The built-in claude: Claude Code's version on each machine that said.
     var versions: [String: String]?
+    /// The harness a managed launcher runs in: claude (also when left out), codex, agy, omp.
+    var agent: String?
+    /// A managed provider's device scope (docs/integrations/launchers.md "Device scope and on-demand delivery"); all nil
+    /// from a hub without `launcher_scope`. `share`: all | selected | none; `scopeMachines`: the computers it runs on
+    /// (selected) or the work computers added to all; `delivery`: on_demand | push; `ownService`: skip | use.
+    var share: String?
+    var scopeMachines: [String]?
+    var delivery: String?
+    var ownService: String?
+    /// The computers with a key of their own (the keys are never sent back).
+    var keyMachines: [String]?
+    /// Saved before scopes existed: all (work computers too) + push + use, until a scope field is saved.
+    var legacyScope: Bool?
     var id: String { name }
     /// What a person reads: the display name, else the name.
     var title: String { displayName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? name }
@@ -65,8 +78,9 @@ nonisolated struct LauncherView: Codable, Identifiable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case name, source, model, args, machines, hidden, definitions, details, kind, api, auth, models, proxy, effort, origin
-        case stale, versions
+        case stale, versions, agent, share, delivery
         case rcFiles = "rc_files"
+        case scopeMachines = "scope_machines", ownService = "own_service", keyMachines = "key_machines", legacyScope = "legacy_scope"
         case baseURL = "base_url", smallModel = "small_model", hasKey = "has_key"
         case subagentModel = "subagent_model", customModel = "custom_model"
         case customModelName = "custom_model_name", customModelDescription = "custom_model_description"
@@ -244,8 +258,16 @@ nonisolated struct LauncherInput: Encodable, Sendable {
     /// The uses to put on the new provider while they are still at their default (`assistant`, `agent.new`;
     /// POST only, a hub with `builtin_presets`): the answer says which were and which were kept.
     var assign: [String]? = nil
+    /// The device scope's fields (`ProviderScopeForm.fields`): nil is left out and keeps what the hub has. `machineKeys`:
+    /// a key for single computers, "" removes that computer's.
+    var share: String? = nil
+    var scopeMachines: [String]? = nil
+    var delivery: String? = nil
+    var ownService: String? = nil
+    var machineKeys: [String: String]? = nil
     enum CodingKeys: String, CodingKey {
-        case name, model, args, kind, api, preset, auth, models, headers, env, proxy, effort, assign
+        case name, model, args, kind, api, preset, auth, models, headers, env, proxy, effort, assign, share, delivery
+        case scopeMachines = "scope_machines", ownService = "own_service", machineKeys = "machine_keys"
         case displayName = "display_name"
         case baseURL = "base_url", smallModel = "small_model", apiKey = "api_key"
         case subagentModel = "subagent_model", customModel = "custom_model"

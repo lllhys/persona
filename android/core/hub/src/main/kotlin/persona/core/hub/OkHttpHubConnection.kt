@@ -83,6 +83,11 @@ class OkHttpHubConnection(
     private val ways: HubWays? = null,
     /** How often a socket that went through a tunnel because no address answered asks the addresses again. */
     private val tunnelRecheckMillis: Long = HubWay.RECHECK_MILLIS,
+    /**
+     * A paired hub's Cloudflare Access service token, by hub id (docs/operations/network.md "Behind Cloudflare Access").
+     * Asked per request; null for the mesh's hubs, which are not paired here.
+     */
+    private val access: (hubId: String) -> HubAccess? = { null },
 ) : HubConnection, ConnectionDiagnosticsSource, AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val lock = Any()
@@ -189,7 +194,18 @@ class OkHttpHubConnection(
     /** Where the next socket resumes from: the stream and its last broadcast seen. */
     internal val resumePoint: Pair<String, Long>? get() = eventStream?.let { it to lastEventSeq.get() }
 
-    init { updateDiagnostics { it }; reconnect() }
+    init { http.access = ::accessFor; updateDiagnostics { it }; reconnect() }
+
+    /**
+     * The service token a request to [url] carries: that of the paired hub one of whose HTTPS candidates has its origin,
+     * this hub's first. Never for another origin, so a group's other hubs, the mesh's and any other URL get none.
+     */
+    private fun accessFor(url: HttpUrl): HubAccess? {
+        fun List<Endpoint>.serve() = any { runCatching { it.baseUrl() }.getOrNull()?.sameOrigin(url) == true }
+        if (!url.isHttps) return null
+        config.hubId?.let { home -> if ((config.endpoints + candidates()).serve()) return access(home) }
+        return members.firstOrNull { it.token != null && memberCandidates(it).serve() }?.let { access(it.hubId) }
+    }
 
     override suspend fun readDiagnostics(): ConnectionDiagnostics {
         val deviceId = config.deviceId ?: return diagnostics.value

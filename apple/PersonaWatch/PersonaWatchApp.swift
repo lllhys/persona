@@ -103,12 +103,10 @@ final class WatchModel {
     init() {
         NativeStateMigration.prepare()
         seenInteractionUids = UserDefaults.standard.stringArray(forKey: Self.seenUidsKey) ?? []
-        if let data = UserDefaults.standard.data(forKey: "configs"), let all = try? JSONDecoder().decode(WatchConfigs.self, from: data) {
+        if let all = WatchConfigs.stored() {
             (configs, names, missing) = (all.configs, all.names, all.missing ?? [])
             extensionDeviceIDs = all.deviceIDs ?? [:]
             extensionCapabilities = all.features ?? [:]
-        } else if let data = UserDefaults.standard.data(forKey: "config"), let c = try? JSONDecoder().decode(ServerConfig.self, from: data) {
-            configs = ["": c]
         }
         #if DEBUG
         if let s = UserDefaults.standard.string(forKey: "pairURL"), let c = ServerConfig(pairURL: s) { configs = ["": c] }
@@ -132,8 +130,7 @@ final class WatchModel {
             extensionDeviceIDs = [:]
             extensionCapabilities = [:]
             syncExtensionSurfaces()
-            UserDefaults.standard.set(try? JSONEncoder().encode(c), forKey: "config")
-            UserDefaults.standard.removeObject(forKey: "configs")
+            WatchConfigs(configs: ["": c]).store()
             Task { await self.refresh() }
             Task { await self.refreshExtensionSurfaces() }
         }
@@ -147,7 +144,7 @@ final class WatchModel {
             extensionDeviceIDs = all.deviceIDs ?? [:]
             extensionCapabilities = all.features ?? [:]
             syncExtensionSurfaces()
-            UserDefaults.standard.set(try? JSONEncoder().encode(all), forKey: "configs")
+            all.store()
             Task { await self.refresh() }
             Task { await self.refreshExtensionSurfaces() }
         }

@@ -18,7 +18,10 @@ func TestInboxMailReplyTargetConflict(t *testing.T) {
 	h := newInboxHub(t)
 	mux := h.routes()
 	item := &InboxItem{ID: "mail-item", Mail: &InboxMail{AccountID: "account", Mailbox: "INBOX", UIDs: []uint32{7}, MessageID: "original@example.com", From: MailAddress{Email: "sender@example.com"}}}
-	h.inboxReady(context.Background())
+	if err := h.inboxReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitNeedsYouIdle(t, h.Service)
 	h.inbox.items[item.ID] = item
 	get := httptest.NewRecorder()
 	mux.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/inbox/mail-item", nil))

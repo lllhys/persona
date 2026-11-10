@@ -163,6 +163,7 @@ func userText(mk func(int, string, string) proto.Item, s string, meta *Meta) []p
 		it.Task, it.Text = taskNote(trimmed)
 		meta.noteCall(it.Task)
 		meta.reportFor(it.Task)
+		meta.agentNotification(&it)
 		return []proto.Item{it}
 	}
 	if trimmed == "[Request interrupted by user]" || trimmed == "[Request interrupted by user for tool use]" {

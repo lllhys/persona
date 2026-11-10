@@ -227,12 +227,15 @@ func TestCodexOriginTellsAppChatsFromCLIAndSubagents(t *testing.T) {
 		os.WriteFile(p, []byte(`{"type":"session_meta","payload":`+meta+"}\n"), 0o600)
 		return codexSource{home: home, thread: name, path: p}
 	}
-	os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(`{"projectless-thread-ids":["app"]}`), 0o600)
+	os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(`{"projectless-thread-ids":["app","work"]}`), 0o600)
 	app := write("app", `{"originator":"Codex Desktop","source":"vscode"}`)
+	work := write("work", `{"originator":"codex_work_desktop","source":"vscode"}`)
 	tool := write("tool", `{"originator":"Codex Desktop","source":"vscode"}`)
+	workTool := write("work-tool", `{"originator":"codex_work_desktop","source":"vscode"}`)
 	cli := write("cli", `{"originator":"codex-tui","source":"cli"}`)
 	sub := write("sub", `{"originator":"Codex Desktop","source":{"subagent":{"thread_spawn":{"parent_thread_id":"app","depth":1}}}}`)
-	if !codexDesktopChat(app) || codexDesktopChat(cli) || codexDesktopChat(sub) || codexDesktopChat(tool) {
+	workSub := write("work-sub", `{"originator":"codex_work_desktop","source":{"subagent":{"thread_spawn":{"parent_thread_id":"work","depth":1}}}}`)
+	if !codexDesktopChat(app) || !codexDesktopChat(work) || codexDesktopChat(cli) || codexDesktopChat(sub) || codexDesktopChat(workSub) || codexDesktopChat(tool) || codexDesktopChat(workTool) {
 		t.Fatal("only a chat the App lists goes through its bus")
 	}
 	if o := readCodexOrigin(cli.path); !o.cli || o.desktop {
@@ -240,6 +243,9 @@ func TestCodexOriginTellsAppChatsFromCLIAndSubagents(t *testing.T) {
 	}
 	if o := readCodexOrigin(sub.path); o.parent != "app" || !o.desktop {
 		t.Fatalf("subagent origin = %+v", o)
+	}
+	if o := readCodexOrigin(workSub.path); o.parent != "work" || !o.desktop {
+		t.Fatalf("work subagent origin = %+v", o)
 	}
 }
 

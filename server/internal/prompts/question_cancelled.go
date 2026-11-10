@@ -31,3 +31,7 @@ type QuestionDefaulted struct {
 func RenderQuestionDefaulted(q QuestionDefaulted) string {
 	return render("agents/question_defaulted", q)
 }
+
+// RenderSettingUnanswered is what persona_settings returns when its approval card ended without the user's own allow
+// or deny: it expired, was closed, or someone else answered it (#3722).
+func RenderSettingUnanswered() string { return render("agents/setting_unanswered", nil) }

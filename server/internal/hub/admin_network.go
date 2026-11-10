@@ -58,6 +58,7 @@ func (h *Hub) adminNetworkView(r *http.Request) map[string]any {
 		"endpoints":      h.endpointList(),
 		"security": map[string]any{
 			"trusted_cidrs": trusted, "allow_public_plaintext": h.cfg.Security.AllowPublicPlaintext,
+			"plaintext_loopback_only": h.cfg.Security.PlaintextLoopbackOnly,
 		},
 		"admin": map[string]any{
 			"access": scope.access, "cidrs": cidrs, "session_hours": file.sessionLifetime(), "from_env": scope.fromEnv,

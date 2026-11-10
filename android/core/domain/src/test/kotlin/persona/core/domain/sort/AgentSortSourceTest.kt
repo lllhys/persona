@@ -18,6 +18,9 @@ class AgentSortSourceTest {
         assertEquals(AgentSource.Feishu, row("a", pane = "botmux:topic").session.agentSource)
         assertTrue(row("a", pane = "botmux:topic").session.isBotmux)
         assertNull(row("a", pane = "orca:1").session.agentSource)
+        // A Tern pane is a block's number behind its kind; it is a terminal like herdr's.
+        assertTrue(row("a", pane = "tern:201863462919").session.isTern)
+        assertEquals(AgentSource.Terminal, row("a", pane = "tern:201863462919").session.agentSource)
         assertNull(row("a", pane = null).session.agentSource)
     }
 

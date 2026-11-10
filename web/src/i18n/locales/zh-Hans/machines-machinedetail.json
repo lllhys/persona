@@ -59,5 +59,7 @@
   "rename": "改名",
   "rename_label": "电脑名字",
   "rename_hint": "所有 App 和这台电脑的 Persona Link 都会显示这个名字；留空就用 id，id 不变。",
-  "renamed": "已改名为「{name}」"
+  "renamed": "已改名为「{name}」",
+  "screen": "查看屏幕",
+  "screen_hint": "打开这台 Mac 的实时屏幕（屏幕共享）"
 }

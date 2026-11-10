@@ -351,7 +351,7 @@ private struct MacShell: View {
         case .todos: n = TodoStore.shared.badgeCount
         case .assistant: n = model.badges.assistant
         case .agents: n = model.badges.agents
-        case .inbox: n = InboxStore.shared.actionCount
+        case .inbox: n = InboxStore.shared.unreadCount
         case .settings: return model.isDemo ? .word(String(localized: "Demo", comment: "Sidebar badge: demo mode is on")) : nil
         }
         return n > 0 ? .count(n) : nil

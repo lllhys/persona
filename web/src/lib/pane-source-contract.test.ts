@@ -11,6 +11,8 @@ const cases = JSON.parse(readFileSync(new URL("../../../server/internal/sessiono
 }[];
 
 it("agrees with the pane-source contract across 8,000 mixed rows", () => {
+  // As in the hub's expansion, the last 800 rows are Feishu: the corpus ends with its two Feishu cases.
+  expect(cases.slice(-2).map((c) => c.want)).toEqual(["feishu", "feishu"]);
   const counts: Record<string, number> = {};
   for (let n = 0; n < 8000; n++) {
     const c = n < 7200 ? cases[n % (cases.length - 2)] : cases[cases.length - 2 + n % 2];
@@ -18,5 +20,7 @@ it("agrees with the pane-source contract across 8,000 mixed rows", () => {
     expect(sessionSource(row) ?? "unknown", `${n}: ${c.name}`).toBe(c.want);
     counts[c.want] = (counts[c.want] ?? 0) + 1;
   }
-  expect(counts).toEqual({ terminal: 2400, desktop: 2400, unknown: 2400, feishu: 800 });
+  // Every origin is exercised; the split follows the corpus, which gains a case with each new host (Tern, #2154).
+  expect(Object.keys(counts).sort()).toEqual(["desktop", "feishu", "terminal", "unknown"]);
+  expect(counts.feishu).toBe(800);
 });

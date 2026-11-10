@@ -265,6 +265,8 @@
     <string name="inbox_event_chain">処理の流れ</string>
     <string name="inbox_event_chain_all">すべて表示（%1$d）</string>
     <string name="inbox_event_view_source">原文を見る</string>
-    <string name="inbox_done_by_manager">マネージャーが処理済み</string>
+    <string name="inbox_done_by_manager">アシスタントが処理済み</string>
     <string name="inbox_event_related">関連</string>
+    <!-- Source subscriptions (#2041): with the Inbox's other settings -->
+    <string name="inbox_subscriptions">購読</string>
 </resources>

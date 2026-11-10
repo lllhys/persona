@@ -100,11 +100,12 @@ fun EntryProviderScope<NavKey>.agentsEntries(
         ) {
             val operations = LocalAgentsOperations.current
             val tasksStore = dependencies.tasks() ?: wiring.tasks
+            val assistant = persona.core.designsystem.currentAssistant()
             val model = viewModel(key = "agents:${wiring.scope}:${operations?.operations?.scope.orEmpty()}") {
                 AgentsViewModel(dependencies.sessions(), dependencies.interactions(), dependencies.connection(), dependencies.sender(), dependencies.preferences(), operations, wiring.mainSender,
                     wiring.scope.ifEmpty { operations?.operations?.scope.orEmpty() }, renamer, tasksStore, hubUpdates = dependencies.hubUpdates(), machineManagement = dependencies.machines(),
                     hubGroups = dependencies.groups(), listContext = kotlinx.coroutines.Dispatchers.Default, archiveService = wiring.archives)
-                    .also { it.machine(initialMachine) }
+                    .also { it.machine(initialMachine); it.show(assistant) }
             }
             val source = LocalAgentsDraftSource.current
             val draftsFlow = remember(dependencies, source) {
@@ -147,8 +148,10 @@ fun EntryProviderScope<NavKey>.agentsEntries(
         val sessions by dependencies.sessions().sessions.collectAsStateWithLifecycle()
         val todos by (tasksStore?.todos ?: flowOf(emptyList())).collectAsStateWithLifecycle(emptyList())
         val pending by dependencies.interactions().pending.collectAsStateWithLifecycle()
+        // The current assistant's to-dos (docs/assistant/managers.md "Clients"): the hub's list is every manager's.
+        val assistant = persona.core.designsystem.currentAssistant()
         TodosScreen(
-            todos = todos,
+            todos = remember(todos, assistant) { todos.filter { assistant.owns(it.manager) } },
             sessions = sessions,
             pending = pending,
             tasks = tasksStore,

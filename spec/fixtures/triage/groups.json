@@ -1,0 +1,555 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "merges_related",
+      "description": "同一 issue、PR、标题或计划合成一行，最急的那个领头。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "fix",
+            "title": "Fix #412 lost pushes",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "run",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv"
+          },
+          {
+            "id": "test",
+            "title": "#412 lost pushes: regression test",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-06T08:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "old",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv"
+          },
+          {
+            "id": "pr-a",
+            "title": "A",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-05T12:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "old2",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv",
+            "pr_url": "https://example.com/pull/9"
+          },
+          {
+            "id": "pr-b",
+            "title": "B",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-05T11:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "old2",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv",
+            "pr_url": "https://example.com/pull/9/"
+          },
+          {
+            "id": "lone",
+            "title": "Something else",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [],
+            "origin": "conv"
+          }
+        ],
+        "include_quiet": true
+      },
+      "expected": {
+        "sections": {
+          "working": [
+            [
+              "fix",
+              "test"
+            ]
+          ],
+          "pr": [
+            [
+              "pr-a",
+              "pr-b"
+            ]
+          ],
+          "other": [
+            [
+              "lone"
+            ]
+          ]
+        },
+        "open": 4,
+        "shelved": 1,
+        "finished": 0
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > merges the same issue, PR, title or plan into one row, led by its most urgent member"
+    },
+    {
+      "name": "closed_never_joins_open",
+      "description": "关掉的待办不并进开着的行。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "a",
+            "title": "Same title",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [],
+            "origin": "conv"
+          },
+          {
+            "id": "b",
+            "title": "Same title",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": "2026-11-10T11:00:00.000Z",
+            "agents": [],
+            "origin": "conv"
+          }
+        ],
+        "include_quiet": true
+      },
+      "expected": {
+        "sections": {
+          "other": [
+            [
+              "a"
+            ]
+          ],
+          "just_done": [
+            [
+              "b"
+            ]
+          ]
+        },
+        "open": 1,
+        "shelved": 0,
+        "finished": 1
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > never merges a closed to-do into an open one's row"
+    },
+    {
+      "name": "failed_start_counts_open",
+      "description": "没开起来、等你重试：算开着，虽然 hub 设了 done_at。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "f",
+            "title": "f",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": "2026-11-10T11:00:00.000Z",
+            "agents": [],
+            "origin": "conv",
+            "start_error": "no launcher"
+          }
+        ],
+        "include_quiet": true
+      },
+      "expected": {
+        "sections": {
+          "waiting": [
+            [
+              "f"
+            ]
+          ]
+        },
+        "open": 1,
+        "shelved": 0,
+        "finished": 0
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > counts a failed start waiting on the owner as open, though the hub set done_at"
+    },
+    {
+      "name": "quiet_listed_on_page",
+      "description": "安静任务在待办页列出、计数。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "q",
+            "title": "q",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [],
+            "origin": "conv",
+            "quiet": true
+          }
+        ],
+        "include_quiet": true
+      },
+      "expected": {
+        "sections": {
+          "other": [
+            [
+              "q"
+            ]
+          ]
+        },
+        "open": 1,
+        "shelved": 0,
+        "finished": 0
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > lists quiet tasks on the page, leaves them out for the sidebar"
+    },
+    {
+      "name": "quiet_left_out_of_badge",
+      "description": "侧栏角标不算安静任务。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "q",
+            "title": "q",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [],
+            "origin": "conv",
+            "quiet": true
+          }
+        ],
+        "include_quiet": false
+      },
+      "expected": {
+        "sections": {},
+        "open": 0,
+        "shelved": 0,
+        "finished": 0
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > lists quiet tasks on the page, leaves them out for the sidebar"
+    },
+    {
+      "name": "counts_open_shelved_finished",
+      "description": "开着、搁置、完成分开计数，不算安静任务。",
+      "source": [
+        "docs/assistant/todo-status-sop.md \"Related to-dos\"",
+        "web/src/lib/todo-triage.ts triageTodos"
+      ],
+      "input": {
+        "now": "2026-11-10T12:00:00Z",
+        "sessions": [
+          {
+            "machine_id": "m",
+            "session_id": "run",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T11:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-06T08:00:00.000Z"
+          },
+          {
+            "machine_id": "m",
+            "session_id": "old2",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-05T12:00:00.000Z"
+          }
+        ],
+        "todos": [
+          {
+            "id": "run",
+            "title": "run",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "run",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv"
+          },
+          {
+            "id": "stale",
+            "title": "stale",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-06T08:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "old",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv"
+          },
+          {
+            "id": "closed",
+            "title": "closed",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": "2026-11-10T10:00:00.000Z",
+            "agents": [],
+            "origin": "conv"
+          },
+          {
+            "id": "accepted",
+            "title": "accepted",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [
+              {
+                "machine_id": "m",
+                "session_id": "old",
+                "linked_at": "2026-11-02T04:00:00.000Z"
+              }
+            ],
+            "origin": "conv",
+            "supervision": {
+              "supervisor": "conv",
+              "done_when": [
+                "c1",
+                "c2",
+                "c3",
+                "c4",
+                "c5",
+                "c6",
+                "c7",
+                "c8"
+              ],
+              "state": "accepted",
+              "round": 1,
+              "reviews": [
+                {
+                  "at": "2026-11-10T07:00:00.000Z",
+                  "verdict": "accepted",
+                  "checks": [
+                    {
+                      "criterion": "c1",
+                      "met": true
+                    },
+                    {
+                      "criterion": "c2",
+                      "met": true
+                    },
+                    {
+                      "criterion": "c3",
+                      "met": true
+                    },
+                    {
+                      "criterion": "c4",
+                      "met": true
+                    },
+                    {
+                      "criterion": "c5",
+                      "met": true
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "quiet",
+            "title": "quiet",
+            "created_at": "2026-10-29T00:00:00.000Z",
+            "updated_at": "2026-11-10T11:00:00.000Z",
+            "done_at": null,
+            "agents": [],
+            "origin": "conv",
+            "quiet": true
+          }
+        ],
+        "include_quiet": false
+      },
+      "expected": {
+        "sections": {
+          "working": [
+            [
+              "run"
+            ]
+          ],
+          "shelved": [
+            [
+              "stale"
+            ]
+          ],
+          "just_done": [
+            [
+              "accepted"
+            ],
+            [
+              "closed"
+            ]
+          ]
+        },
+        "open": 1,
+        "shelved": 1,
+        "finished": 2
+      },
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > counts shelved and finished apart from open, and leaves quiet tasks out"
+    }
+  ]
+}

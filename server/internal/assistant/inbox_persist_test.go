@@ -96,6 +96,7 @@ func TestInboxPersistenceKeepsLatestState(t *testing.T) {
 	if err := h.inboxReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitNeedsYouIdle(t, h)
 	h.inbox.items["item"] = &InboxItem{ID: "item", Source: "mail", UpdatedAt: time.Now()}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(s.releaseFirst) }) }

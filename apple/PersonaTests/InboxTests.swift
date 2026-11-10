@@ -18,6 +18,25 @@ struct InboxTests {
 
     private struct List: Decodable { var items: [InboxItem] }
 
+    @Test func unreadBadgePreservesReadPendingItemsAcrossDecoding() throws {
+        var items = try JSON.decoder.decode(List.self, from: Data(json.utf8)).items
+        var pending = items[0]
+        pending.id = "read-pending"
+        pending.read = true
+        items.append(pending)
+        #expect(items.filter(\.isUnread).count == 1)
+        #expect(!pending.isDone && pending.triage == .action)
+        items[0].read = true
+        #expect(items.filter(\.isUnread).isEmpty)
+        let restored = try JSON.decoder.decode([InboxItem].self, from: JSON.encoder.encode(items))
+        #expect(restored.filter(\.isUnread).isEmpty)
+        #expect(restored.filter { !$0.isDone }.count == 2)
+        var fyi = pending
+        fyi.tier = "fyi"
+        fyi.read = false
+        #expect(fyi.isUnread)
+    }
+
     @Test func decodesItemsAndOpensThem() throws {
         let items = try JSON.decoder.decode(List.self, from: Data(json.utf8)).items
         #expect(items.count == 2)

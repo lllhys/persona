@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -315,7 +316,8 @@ func TestClearedPinnedIsClearedInPipelineObject(t *testing.T) {
 func TestManualSummaryFailureIsReturned(t *testing.T) {
 	e := editEngine(t)
 	_ = e.Store.PutChat(&Chat{ID: "chat"})
-	if err := os.Mkdir(e.Store.Path(KindChat, "chat", "summary.md.tmp"), 0700); err != nil {
+	// A non-empty directory in place of summary.md: the rename over it fails on every platform.
+	if err := os.MkdirAll(filepath.Join(e.Store.Path(KindChat, "chat", "summary.md"), "inside"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.Apply(KindChat, "chat", Update{Summary: "Synthetic summary"}); err == nil {

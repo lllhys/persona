@@ -36,6 +36,9 @@ type TriageSwitches struct {
 	Wake         bool `json:"wake"`          // wake agents whose wait should be over
 	Decide       bool `json:"decide"`        // cards for what the user is to decide
 	ToolLoop     bool `json:"tool_loop"`     // detect repeated tool calls while a turn runs
+	// Closeout: hold an agent's stop once when a turn that did work ends without a closeout, and ask for one
+	// (agents_closeout.go). The held stop runs one more turn of the agent on its own model.
+	Closeout bool `json:"closeout"`
 	// ReplyReminder: push once when an agent the user looked at still waits on their answer (agents_reply.go,
 	// #5096). Rules only, no tokens: unset is on.
 	ReplyReminder *bool `json:"reply_reminder,omitempty"`
@@ -72,7 +75,7 @@ func set(b *bool) bool { return b != nil && *b }
 
 func switchesOf(c assistantwire.TriageConfig) TriageSwitches {
 	return TriageSwitches{Enabled: set(c.Enabled), AutoContinue: set(c.AutoContinue), Wake: set(c.Wake), Decide: set(c.Decide), ToolLoop: set(c.ToolLoop),
-		TransientRetry: c.TransientRetry}
+		Closeout: set(c.Closeout), TransientRetry: c.TransientRetry}
 }
 
 func maxRetries(c assistantwire.TriageConfig) int { return cmp0(c.MaxRetries, 5) }

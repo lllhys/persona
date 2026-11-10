@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/connector"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -327,5 +328,31 @@ func TestTodayCardConcurrentOpensMakeOne(t *testing.T) {
 	}
 	if n := s.tasks.todayLocks.len(); n != 0 {
 		t.Fatalf("%d conversation locks kept after the opens, want none", n)
+	}
+}
+
+// The "Today" card takes the meetings and the @-me chats from one ask of the connectors (#2885).
+func TestTodayCardAsksTheConnectorsOnce(t *testing.T) {
+	s, f := newTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+	f.liveStates = []any{connector.SnapshotData{
+		Chats:    &connector.SnapshotChats{AtMe: []connector.SnapshotChat{{Name: "发布群", Unread: 2}}, Other: []connector.SnapshotChat{{Name: "闲聊", Unread: 5}}},
+		Meetings: []connector.SnapshotMeeting{{Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), Title: "周会"}},
+	}}
+	it, made, err := s.ensureToday(ctx, "conv1")
+	if err != nil || !made {
+		t.Fatalf("today = %+v made=%v err=%v", it, made, err)
+	}
+	f.mu.Lock()
+	asks := f.snapshotAsks
+	f.mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("asked the connectors %d times for one card, want 1", asks)
+	}
+	var body todayBody
+	_ = json.Unmarshal(it.Body, &body)
+	if len(body.Meetings) != 1 || body.Meetings[0].Title != "周会" || len(body.AtMe) != 1 || body.AtMe[0].Name != "发布群" || body.Unread != 1 {
+		t.Fatalf("body = %+v", body)
 	}
 }

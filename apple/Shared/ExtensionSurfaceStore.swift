@@ -11,6 +11,8 @@ nonisolated struct ExtensionSurfaceCredential: Codable, Hashable, Sendable {
     var answerOnly: Bool? = nil
     /// Forwarded from the phone's authenticated hello, never inferred from an empty public health response.
     var capabilities: [String]? = nil
+    /// The hub's Cloudflare Access service token (`ServerConfig.access`), sent to `url`'s origin only.
+    var access: HubAccess? = nil
 
     var isAnswerOnly: Bool {
         #if os(watchOS)

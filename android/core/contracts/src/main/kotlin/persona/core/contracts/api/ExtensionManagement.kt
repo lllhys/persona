@@ -29,6 +29,15 @@ interface ExtensionManagement : ExtensionUi, ExtensionMarkets {
     /** Badge changes the hub pushes (`extension_ui` events) for nav pages. */
     val uiEvents: Flow<persona.core.contracts.ExtensionUiEvent> get() = kotlinx.coroutines.flow.emptyFlow()
 
+    /**
+     * Whether the hub shows source subscriptions (#2041, `source_subscriptions` in its features: they deliver to the Inbox and
+     * the knowledge base): only then the entry rows show. The pages are drawn as an extension's under [SUBSCRIPTIONS_UI].
+     */
+    val subscriptionsAvailable: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(false)
+
+    /** `GET /api/v1/subscriptions/summary`: each connector's counts, for the entry rows. */
+    suspend fun subscriptionSummary(): List<SubscriptionSummaryLine> = emptyList()
+
     /** `GET /api/v1/extensions`. */
     suspend fun extensions(): List<HubExtension>
 
@@ -235,4 +244,27 @@ data class ExtensionDetail(
             )
         }
     }
+}
+
+/**
+ * The id the source subscription pages (#2041) are drawn under as an extension's page: no extension can have it (ids never
+ * start with "-"); the hub answers them at `POST /api/v1/subscriptions/-/ui`.
+ */
+const val SUBSCRIPTIONS_UI = "-subscriptions"
+
+/** One connector's line of `GET /api/v1/subscriptions/summary`; [subscribable] is null until its catalog was read. */
+@Serializable
+data class SubscriptionSummaryLine(
+    val connector: String,
+    val extension: String = "",
+    val subscribable: Boolean? = null,
+    val on: Int = 0,
+    val failing: Int = 0,
+)
+
+/** How many are on and failing for the lines one entry row stands for; null when none can be subscribed (the row is hidden). */
+fun List<SubscriptionSummaryLine>.subscriptionCounts(pick: (SubscriptionSummaryLine) -> Boolean): Pair<Int, Int>? {
+    val mine = filter(pick)
+    if (mine.none { it.subscribable == true || it.on > 0 }) return null
+    return mine.sumOf { it.on } to mine.sumOf { it.failing }
 }

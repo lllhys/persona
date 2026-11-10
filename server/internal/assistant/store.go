@@ -21,6 +21,7 @@ type Store interface {
 	TaskPlan(ctx context.Context, id string) (*db.TaskPlanRow, error) // db.ErrTaskPlanNotFound
 	// TaskPlansByID reads the plans with ids in one query; an id with no plan is left out.
 	TaskPlansByID(ctx context.Context, ids []string) ([]db.TaskPlanRow, error)
+	TaskPlans(ctx context.Context, conversation string) ([]db.TaskPlanRow, error)
 	// UpdateTaskPlan moves plan id from state from to to with tasks; false when it was not in from.
 	UpdateTaskPlan(ctx context.Context, id, from, to string, tasks json.RawMessage, at time.Time) (bool, error)
 

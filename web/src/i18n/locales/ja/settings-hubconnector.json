@@ -10,7 +10,7 @@
   "no_status": "状態を取得できません",
   "signed_in_via": "サインイン",
   "last_sync": "最終同期",
-  "hub_side_note": "サインインはマネージャーの設定（manager.json）で設定します。ここでは状態のみ表示します。",
+  "hub_side_note": "サインインはアシスタントの設定（manager.json）で設定します。ここでは状態のみ表示します。",
   "fix_title": "解決方法",
   "to_knowledge": "ナレッジに追加",
   "to_inbox": "受信トレイに追加",

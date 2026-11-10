@@ -361,18 +361,95 @@ extension AppModel {
     }
 }
 
-/// Asks for the readiness while the page is in front (`.tabActiveTask`) and when the machines change.
+/// Asks for the readiness while the page is in front (`.tabActiveTask`) and when the machines change; while a step can
+/// finish on another computer it keeps asking (`ReadinessPoller`).
 struct ReadinessRefresh: ViewModifier {
     @Environment(AppModel.self) private var model
     func body(content: Content) -> some View {
         content
             // Once as it appears (not a poll: a window drawn in the background, the Mac's, is never 'in front'),
-            // then again whenever the page comes to the front.
+            // then again whenever the page comes to the front. On iOS and visionOS that includes the scene becoming
+            // active again: `.tabActiveTask` waits for an active scene, so coming back to the app asks once more.
             .task { await model.refreshReadiness(force: false) }
             .tabActiveTask { await model.refreshReadiness() }
             .onChange(of: model.readinessMachinesKey) { Task { await model.refreshReadiness() } }
             // Right after pairing the hub's features come in after this page asked (and found none).
             .onChange(of: model.hubFeatures.contains(AssistantReadiness.feature)) { Task { await model.refreshReadiness() } }
+            // A view of its own, so the page is not drawn again each time the readiness or the app's state changes.
+            .background { ReadinessPoller() }
+    }
+}
+
+/// When to ask the hub again without being asked (#1893): installing Claude Code, signing in to it or waking a computer
+/// happen on that computer, and nothing in this app changes to say so. While one of those steps is still open, and
+/// only while its page is in front and the app active, ask at growing intervals; a different set of open steps starts
+/// again from the shortest. Trying a message is not polled: only the user's own try (which asks itself) moves it.
+nonisolated enum ReadinessPoll {
+    static let first: Duration = .seconds(5)
+    /// The hub keeps a negative Claude Code answer for a minute (`readinessClaudeRetry`): two asks in that minute at most.
+    static let longest: Duration = .seconds(30)
+
+    /// What the open steps are (id, state, code), or nil when nothing can finish by itself elsewhere.
+    static func key(_ r: AssistantReadiness?) -> String? {
+        guard let r else { return nil }
+        let open = r.steps.filter { s in
+            if s.state == "checking" { return true }
+            guard AssistantReadiness.blocking.contains(s.id) else { return false }
+            return !["ok", "skipped", "unknown"].contains(s.state) // todo, problem, and a state this app does not know
+        }
+        guard !open.isEmpty else { return nil }
+        return open.map { "\($0.id):\($0.state):\($0.code ?? "")" }.joined(separator: ",")
+    }
+
+    /// Whether to poll: something is open, the page is in front, the scene active (iPhone) and the app frontmost (Mac).
+    static func runs(key: String?, tabActive: Bool, sceneActive: Bool, appActive: Bool) -> Bool {
+        key != nil && tabActive && sceneActive && appActive
+    }
+
+    /// The wait before the next ask, after `asked` asks with the same open steps: 5 s, 10 s, 20 s, then every 30 s.
+    static func delay(after asked: Int) -> Duration {
+        let seconds = 5 * (1 << min(max(asked, 0), 3))
+        return min(.seconds(seconds), longest)
+    }
+}
+
+/// `ReadinessPoll` on a page that shows the readiness, and on the Mac a fresh ask whenever the app comes back to the
+/// front (switching to Terminal to install Claude Code and back never changes this window's scene phase).
+private struct ReadinessPoller: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.tabIsActive) private var tabActive
+    @Environment(\.scenePhase) private var phase
+    #if os(macOS)
+    @State private var appActive = NSApp?.isActive ?? true
+    #else
+    private let appActive = true
+    #endif
+
+    var body: some View {
+        let key = ReadinessPoll.key(model.readiness.current)
+        let runs = ReadinessPoll.runs(key: key, tabActive: tabActive, sceneActive: VisibleScenePolicy.permits(phase), appActive: appActive)
+        Color.clear
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .task(id: runs ? key : nil) {
+                guard runs else { return }
+                var asked = 0
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: ReadinessPoll.delay(after: asked))
+                    guard !Task.isCancelled else { return }
+                    asked += 1
+                    await model.refreshReadiness(force: false)
+                }
+            }
+            #if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                appActive = true
+                Task { await model.refreshReadiness(force: false) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                appActive = false
+            }
+            #endif
     }
 }
 

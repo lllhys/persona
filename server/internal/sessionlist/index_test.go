@@ -658,3 +658,62 @@ func TestConcurrentQueriesAndReplacement(t *testing.T) {
 		t.Fatal("concurrent use exceeded bounds")
 	}
 }
+
+// Manager selects the rows of the batches replaced with that owner, in pages, counts and deltas; the rows of a batch
+// whose owner changes leave the old owner's list as removals and enter the new one's though nothing else of them
+// changed, and a cursor is bound to the filter. A batch replaced with the same owner and rows is no change.
+func TestManagerFilter(t *testing.T) {
+	var index Index
+	at := time.Unix(100, 0)
+	row := func(id, machine string) Item {
+		return Item{ID: id, Machine: machine, State: "idle", UpdatedAt: at, Full: id, Summary: id}
+	}
+	index.ReplaceOwned("ma", "assistant", []Item{row("a1", "ma"), row("a2", "ma")})
+	index.ReplaceOwned("mb", "m-0b0b0b", []Item{row("b1", "mb")})
+	index.Replace("mc", []Item{row("c1", "mc")}) // no owner: in no manager's list
+	page := func(o Options) Page {
+		t.Helper()
+		p, err := index.Query(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	mine, theirs := page(Options{Manager: "assistant"}), page(Options{Manager: "m-0b0b0b"})
+	if mine.Total != 2 || len(mine.Sessions) != 2 || theirs.Total != 1 || theirs.Sessions[0] != "b1" {
+		t.Fatalf("pages: %+v %+v", mine, theirs)
+	}
+	if all, none := page(Options{}), page(Options{Manager: "m-ffffff"}); all.Total != 4 || none.Total != 0 || len(none.Sessions) != 0 {
+		t.Fatalf("no filter %+v, an owner of nothing %+v", all, none)
+	}
+	counts, err := index.Counts(Options{Manager: "assistant"})
+	if err != nil || counts.Total != 2 || len(counts.Machine) != 1 || counts.Machine["ma"] != 2 {
+		t.Fatalf("counts: %+v %v", counts, err)
+	}
+	first := page(Options{Manager: "assistant", Limit: 1})
+	if !first.HasMore {
+		t.Fatalf("first: %+v", first)
+	}
+	if _, err := index.Query(Options{Manager: "m-0b0b0b", Limit: 1, Cursor: first.NextCursor}); err == nil {
+		t.Fatal("a cursor of one owner's list was taken for another's")
+	}
+	if next := page(Options{Manager: "assistant", Limit: 1, Cursor: first.NextCursor}); next.HasMore || len(next.Sessions) != 1 {
+		t.Fatalf("next: %+v", next)
+	}
+	// The same owner and rows again: no revision.
+	before := index.Revision()
+	index.ReplaceOwned("ma", "assistant", []Item{row("a1", "ma"), row("a2", "ma")})
+	if index.Revision() != before {
+		t.Fatal("an unchanged batch made a revision")
+	}
+	// ma changes owner: nothing else of its rows changed.
+	index.ReplaceOwned("ma", "m-0b0b0b", []Item{row("a1", "ma"), row("a2", "ma")})
+	left := page(Options{Manager: "assistant", Since: mine.Revision})
+	if left.Total != 0 || len(left.Sessions) != 0 || len(left.Remove) != 2 {
+		t.Fatalf("the old owner's delta: %+v", left)
+	}
+	came := page(Options{Manager: "m-0b0b0b", Since: theirs.Revision})
+	if came.Total != 3 || len(came.Sessions) != 2 || len(came.Remove) != 0 {
+		t.Fatalf("the new owner's delta: %+v", came)
+	}
+}

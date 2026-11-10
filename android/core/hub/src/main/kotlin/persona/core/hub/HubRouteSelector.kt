@@ -178,6 +178,7 @@ class HubRouteSelector internal constructor(
                 }
                 throw failures.firstOrNull { it.kind == HubError.CertificateMismatch }
                     ?: failures.firstOrNull { it.kind == HubError.HubMismatch }
+                    ?: failures.firstOrNull { it.kind == HubError.AccessRejected || it.kind == HubError.AccessRequired }
                     ?: failures.first()
             } finally {
                 probes.forEach { it.cancel() }
@@ -245,6 +246,7 @@ class HubRouteSelector internal constructor(
                 memberWinner?.let { return@coroutineScope it }
                 throw failures.firstOrNull { it.kind == HubError.CertificateMismatch }
                     ?: failures.firstOrNull { it.kind == HubError.HubMismatch }
+                    ?: failures.firstOrNull { it.kind == HubError.AccessRejected || it.kind == HubError.AccessRequired }
                     ?: failures.firstOrNull()
                     ?: HubFailure(HubError.Unreachable)
             } finally {

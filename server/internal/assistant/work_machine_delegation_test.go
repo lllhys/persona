@@ -139,7 +139,9 @@ func TestInboxDoesNotResumeOnWorkMachine(t *testing.T) {
 	delegationMachineTrust(t, h.Service, "work", "work")
 	it := actionItem("event", time.Now())
 	it.Agent = &InboxAgent{State: AgentRunning, MachineID: "work", SessionID: "twin-session"}
+	h.inbox.mu.Lock()
 	h.inbox.items[it.ID] = it
+	h.inbox.mu.Unlock()
 	h.inbox.tell(it, inboxNote{Name: prompts.NoteInstructed, Text: "Private update"}, true, time.Now())
 	h.originSet(ctx, "work", "twin-session", OriginInbox, it.ID, "")
 	if _, found := h.conversationsByEvent(ctx)[it.ID]; found {

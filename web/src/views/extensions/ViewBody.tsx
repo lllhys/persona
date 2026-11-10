@@ -686,7 +686,7 @@ function Row({ item: it, busy, onPress, pressable, chosen, h }: { item: UIItem; 
       disabled={!!busy || !pressable(it.action)}
       aria-pressed={chosen ? chosen === it.action.id : undefined}
       onClick={() => onPress(it.action!)}
-      className={cx("flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 text-left whitespace-nowrap transition-colors enabled:hover:bg-hover", chosen === it.action.id && "bg-accent-tint", c && !slider ? "pr-2" : menu.button ? "pr-1" : "pr-4")}
+      className={cx("flex min-w-0 flex-1 w-full items-center gap-3 py-2.5 pl-4 text-left whitespace-nowrap transition-colors enabled:hover:bg-hover", chosen === it.action.id && "bg-accent-tint", c && !slider ? "pr-2" : menu.button ? "pr-1" : "pr-4")}
     >
       {body}
     </button>

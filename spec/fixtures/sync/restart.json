@@ -3,7 +3,7 @@
   "cases": [
     {
       "name": "restart_resumable_send_in_flight",
-      "description": "The hub restarts while a send is in flight; the old process typed it but its answer was lost; after the resumed hello the retry gets the receipt and the message shows once.",
+      "description": "The hub restarts while a send is in flight; the old process typed it but its answer was lost; after the resumed hello the device posts it again or reads its op's receipt, gets the receipt, and the message shows once.",
       "source": {
         "rule": "Hub restarts: the client reconnects at once and keeps the UI; writes with an op id are done once",
         "docs": "docs/operations/hub-restart.md",
@@ -134,8 +134,16 @@
                   "id": "m1"
                 },
                 {
-                  "post": "messages",
-                  "id": "m1"
+                  "one_of": [
+                    {
+                      "post": "messages",
+                      "id": "m1"
+                    },
+                    {
+                      "get": "/ops",
+                      "id": "m1"
+                    }
+                  ]
                 }
               ]
             }

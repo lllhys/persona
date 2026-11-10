@@ -114,7 +114,8 @@ class CapsuleRuntime @Inject constructor(
                         val uri = if (key == null) Uri.parse(if (assistant) AskPersonaLink else "persona://open?target=tab&tab=agents")
                             else NotificationRoute.conversation(key.machineId, key.sessionId, assistant).uri()
                         launchApp(uri)
-                    }, openCard = { card -> launchApp(NotificationRoute.card(card.machineId, card.requestId).uri()) })
+                    }, openCard = { card -> launchApp(NotificationRoute.card(card.machineId, card.requestId).uri()) },
+                        computationContext = Dispatchers.Default)
                     val inboxSource = CapsuleInboxSource(session, this, openInbox, CapsuleNoticeMemory(app, "${session.identity}:inbox"))
                     val source = CapsuleConversationsSource(agents, inboxSource, this,
                         store = app.getSharedPreferences("capsule-passed-${session.identity.hashCode()}", android.content.Context.MODE_PRIVATE),

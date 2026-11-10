@@ -60,7 +60,10 @@ func TestInboxTriageWaitsOutAnExhaustedQuota(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := newInboxHub(t)
-	h.inboxReady(ctx)
+	if err := h.inboxReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitNeedsYouIdle(t, h.Service)
 	var logs logBuffer
 	h.logf = logs.logf
 	h.in.model = ai.New(ai.Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})

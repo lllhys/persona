@@ -168,6 +168,10 @@ func TestAManagerKeepsItsOwnList(t *testing.T) {
 		m := h.machineByID("box")
 		return m != nil && m.snapshot().Online
 	})
+	// Out of hub.json but kept: the admin page shows it running, not removed at the next restart.
+	if s := adminStates(h); s["box"] != "active" {
+		t.Fatalf("box on the admin page after it moved out of hub.json: %v", s)
+	}
 
 	// The admin page's add goes to the manager's own list, not hub.json.
 	if err := h.addMachine(&MachineConfig{ID: "lap", Name: "Lap", Kind: kindLink}, "admin"); err != nil {
@@ -260,6 +264,8 @@ type fakeKeeper struct {
 	stop context.CancelFunc
 	mu   sync.Mutex
 	list map[string]json.RawMessage
+	// putDelay is how long a put takes (a slow manager); set it under mu.
+	putDelay time.Duration
 }
 
 func connectKeeper(t *testing.T, h *Hub, srv *httptest.Server, id string, list ...json.RawMessage) *fakeKeeper {
@@ -278,9 +284,22 @@ func connectKeeper(t *testing.T, h *Hub, srv *httptest.Server, id string, list .
 	t.Cleanup(func() { _ = ws.CloseNow() })
 	conn := bus.NewConn(ctx, ws)
 	f.peer = rpc.New("k", conn)
-	f.peer.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
+	f.peer.OnRequest = func(rctx context.Context, method string, params json.RawMessage) (any, error) {
 		var ref devicewire.MachineRef
 		var put devicewire.MachinePut
+		if method == devicewire.MethodMachinesPut {
+			f.mu.Lock()
+			delay := f.putDelay
+			f.mu.Unlock()
+			// a slow manager: the put answers after delay, or not at all once the request or the peer is gone
+			select {
+			case <-time.After(delay):
+			case <-rctx.Done():
+				return nil, rctx.Err()
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch method {
@@ -627,5 +646,40 @@ func TestAKeptMachineMissingFromAReportStaysAsReported(t *testing.T) {
 	h.takeMachineEntries("m-0a0a0a", devicewire.States{})
 	if mc := h.knownEntry("far"); mc == nil || mc.Kind != kindLink || mc.Name != "Far" {
 		t.Fatalf("far after a report without it: %+v", mc)
+	}
+}
+
+// adminStates is each machine's state on the admin page, by id.
+func adminStates(h *Hub) map[string]string {
+	out := map[string]string{}
+	for _, m := range h.adminMachines() {
+		out[m.ID] = m.State
+	}
+	return out
+}
+
+// The admin page goes by hub.json plus the machines their managers keep: one moved out of hub.json into its
+// manager's own list is active, while one taken out of hub.json that no manager keeps is still removed at the restart.
+func TestAdminMachinesShowKeptMachinesActive(t *testing.T) {
+	ctx := context.Background()
+	h := newTestHub(t)
+	if err := os.WriteFile(filepath.Join(h.cfg.dir, "hub.json"), []byte(`{"machines":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.startDevices(ctx)
+	kept := newMachine(h, MachineConfig{ID: "lap", Name: "Lap", Kind: kindLink})
+	gone := newMachine(h, MachineConfig{ID: "old", Name: "Old", Kind: kindLink})
+	h.fleet.mu.Lock()
+	h.machines = []*Machine{kept, gone}
+	h.byID["lap"], h.byID["old"] = kept, gone
+	h.fleet.mu.Unlock()
+	h.devices.moving.Lock()
+	err := h.setKept(ctx, "lap", "m-0a0a0a")
+	h.devices.moving.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := adminStates(h); s["lap"] != "active" || s["old"] != "pending_remove" {
+		t.Fatalf("admin page states: %v (want lap active, old pending_remove)", s)
 	}
 }

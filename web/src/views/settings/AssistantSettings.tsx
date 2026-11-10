@@ -38,7 +38,13 @@ interface AssistantState {
   main_tasks_quiet?: boolean;
   /** "Start what I asked for in the chat right away" (#2559): on by default; tasks the user asked for start without the plan card's "Start". */
   start_requested_tasks?: boolean;
+  /** The role a meeting recording pre-selects (#2981, docs/assistant/meeting-minutes.md "Attendance fields"); only from a hub
+   *  that attends meetings. */
+  meeting_attendance_default?: string;
 }
+
+/** `meeting_attendance_default`'s values, in the picker's order. */
+const MEETING_ROLES = ["off", "listener", "participant"] as const;
 
 export function AssistantSettings({ bare }: { /** Without its header (the profile page has its own). */ bare?: boolean } = {}) {
   const owner = useSyncExternalStore(subscribeCredentialOwner, credentialOwner);
@@ -68,6 +74,17 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
     } catch (e) {
       toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
     } finally { setPermissionBusy(false); }
+  };
+  const [meetingBusy, setMeetingBusy] = useState(false);
+  const setMeetingRole = async (role: string) => {
+    setMeetingBusy(true);
+    try {
+      const r = await scopedApi<AssistantState>("/assistant", { method: "PUT", json: { meeting_attendance_default: role } });
+      if (r.manager !== manager || r.meeting_attendance_default !== role) throw new Error(t("settings-assistantsettings.meeting_attendance_unconfirmed"));
+      setInfo((i) => i ? { ...i, meeting_attendance_default: r.meeting_attendance_default } : i);
+    } catch (e) {
+      toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
+    } finally { setMeetingBusy(false); }
   };
 
   const setQuiet = async (on: boolean) => {
@@ -189,6 +206,20 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
           </select>
         </Row>
       </Group>
+
+      {typeof info?.meeting_attendance_default === "string" && (
+        <Group anchor="meetings" title={t("settings-assistantsettings.meetings_title")} footer={t("settings-assistantsettings.meeting_attendance_footer")}>
+          <Row label={t("settings-assistantsettings.meeting_attendance")}>
+            <select aria-label={t("settings-assistantsettings.meeting_attendance")} value={info.meeting_attendance_default} disabled={info.manager !== manager || meetingBusy}
+              className="min-w-0 max-w-full rounded-control bg-field px-3 py-2 text-[13px] text-ink shadow-inset-field"
+              onChange={(e) => void setMeetingRole(e.target.value)}>
+              {/* A role this page does not know yet stays shown as it is, not as the first option. */}
+              {!(MEETING_ROLES as readonly string[]).includes(info.meeting_attendance_default) && <option value={info.meeting_attendance_default} disabled>{info.meeting_attendance_default}</option>}
+              {MEETING_ROLES.map((role) => <option key={role} value={role}>{t(`settings-assistantsettings.meeting_attendance_${role}`)}</option>)}
+            </select>
+          </Row>
+        </Group>
+      )}
 
       <Group title={t("settings-assistantsettings.knows_title")} footer={t("settings-assistantsettings.knows_footer")}>
         {info && <AboutMe notesSaves={notesSaves} info={info} onSaved={(notes) => setInfo((i) => (i ? { ...i, notes, notes_effective: notes.trim() } : i))} />}

@@ -20,6 +20,7 @@ import {
   LAST_MODE_KEY,
   PREFERENCE_KEY,
   SURFACE_MS,
+  inHerdrClient,
   noFullClient,
   otherMode,
   pickMode,
@@ -436,7 +437,7 @@ export function TerminalPanel({
 }) {
   const session = useStore(() => getSession(mid, sid));
   const machine = useStore((s) => machineWithHub(mid, s.machines));
-  const supported = useStore((s) => s.features.includes("herdr_client"));
+  const supported = useStore((s) => s.features.includes("herdr_client")) && inHerdrClient(sid, session?.pane_id);
   const key = `${mid}\n${sid}`;
   const root = useRef<HTMLDivElement>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItem } from "../ui/menu-model";
-import { canChangeHost, gitOutcomeText, machineNode, nodeActions, sessionNode, termPaneNode, termSpaceNode, termTabNode, type MenuNode, type NodeActionDeps } from "./node-actions";
+import { canChangeHost, canRenameIn, gitOutcomeText, machineNode, nodeActions, sessionNode, termPaneNode, termSpaceNode, termTabNode, type MenuNode, type NodeActionDeps } from "./node-actions";
 import { buildTerminalTree, shellsOnly, type PanesResponse } from "./terminals";
 import type { Session } from "./types";
 
@@ -11,6 +11,7 @@ function deps(over: Partial<NodeActionDeps> = {}): NodeActionDeps {
     renameTab: vi.fn(async () => {}),
     launchers: vi.fn(async () => [{ name: "claude" }, { name: "work", model: "m1" }, { name: "cx", agent: "codex" }]),
     newAgent: vi.fn(),
+    openSession: vi.fn(),
     copy: vi.fn(),
     notify: vi.fn(),
     changed: vi.fn(),
@@ -79,7 +80,7 @@ describe("splitting and running an agent", () => {
   });
 
   it("lists the launchers that start Claude Code when the submenu opens, and starts the one picked in the pane", async () => {
-    const d = deps();
+    const d = deps({ post: vi.fn(async () => ({ session_id: "s9" })) });
     const agent = by(nodeActions(tab, d), "node-agent");
     expect(typeof agent.children).toBe("function");
     const list = await (agent.children as () => Promise<MenuItem[]>)();
@@ -87,6 +88,27 @@ describe("splitting and running an agent", () => {
     expect(list[1].hint).toBe("m1");
     await list[1].onSelect();
     expect(d.post).toHaveBeenCalledWith("m1", "panes/agent", { pane: "w1:p2", launcher: "work" });
+    expect(d.notify).toHaveBeenCalledWith(expect.any(String), "ok");
+    expect(d.changed).toHaveBeenCalled();
+    // the agent it started opens, as New agent's does (#3287)
+    expect(d.openSession).toHaveBeenCalledWith("m1", "s9");
+  });
+
+  it("stays where it is when the answer names no session", async () => {
+    for (const answer of [{}, { session_id: "" }, undefined]) {
+      const d = deps({ post: vi.fn(async () => answer) });
+      const list = await (by(nodeActions(tab, d), "node-agent").children as () => Promise<MenuItem[]>)();
+      await list[0].onSelect();
+      expect(d.notify).toHaveBeenCalledWith(expect.any(String), "ok");
+      expect(d.openSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it("opens nothing when the start fails", async () => {
+    const d = deps({ post: vi.fn(async () => Promise.reject(new Error("pane busy"))) });
+    const list = await (by(nodeActions(tab, d), "node-agent").children as () => Promise<MenuItem[]>)();
+    await expect(list[0].onSelect()).rejects.toThrow("pane busy");
+    expect(d.openSession).not.toHaveBeenCalled();
   });
 
   it("says why a launcher this computer's terminal can't run, after the usable ones, and still lets it run (#1643)", async () => {
@@ -206,6 +228,29 @@ describe("what a computer that cannot be changed is offered", () => {
     expect(canChangeHost(undefined)).toBe(true);
     expect(canChangeHost("herdr")).toBe(true);
     expect(canChangeHost("herdr-core")).toBe(false);
+  });
+});
+
+describe("a Tern node (#2154)", () => {
+  const ternTab: MenuNode = { ...tab, host: "tern", workspaceId: "s1", tabId: "t2", paneId: "tern:5" };
+  const ternSpace: MenuNode = { kind: "workspace", mid: "m1", host: "tern", label: "proj", workspaceId: "s1", cwd: "/home/me/proj", branch: "main", canWorktree: true };
+
+  it("renames its tabs and workspaces, and is not asked to split, run an agent, git, close or make a worktree", async () => {
+    const d = deps({ newWorktree: vi.fn() });
+    expect(keys(nodeActions(ternTab, d))).toEqual(["node-rename", "node-copy-path", "node-copy-id", "node-copy-branch"]);
+    expect(keys(nodeActions(ternSpace, d))).toEqual(["node-new-agent", "node-rename", "node-copy-path", "node-copy-id", "node-copy-branch"]);
+    await by(nodeActions(ternTab, d), "node-rename").rename!.commit("deploy");
+    expect(d.renameTab).toHaveBeenCalledWith(ternTab, "deploy");
+    await by(nodeActions(ternSpace, d), "node-rename").rename!.commit("docs");
+    expect(d.renameWorkspace).toHaveBeenCalledWith(ternSpace, "docs");
+  });
+
+  it("renames nothing while its machine is offline; the other hosts still rename nothing", () => {
+    expect(keys(nodeActions({ ...ternTab, online: false }, deps()))).not.toContain("node-rename");
+    for (const host of ["orca", "herdr-core", "botmux"]) expect(keys(nodeActions({ ...ternTab, host }, deps()))).not.toContain("node-rename");
+    expect(canRenameIn("tern")).toBe(true);
+    expect(canRenameIn(undefined)).toBe(true);
+    expect(canChangeHost("tern")).toBe(false);
   });
 });
 

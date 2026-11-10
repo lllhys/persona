@@ -125,6 +125,22 @@ internal fun isAssistantPath(url: HttpUrl): Boolean {
     return api.firstOrNull() == "assistant" && !(api.size > 2 && api[1] == "conversations")
 }
 
+/**
+ * The requests that are the current assistant's (docs/assistant/managers.md "Clients"): the assistant page's
+ * ([isAssistantPath]), the knowledge base (`kb…`, `kb-search`), and a new to-do (`POST todos`). The to-dos list itself
+ * is asked of every manager (its items carry `manager`, and a to-do's own routes name the one it was listed under), as
+ * the inbox is.
+ */
+internal fun isCurrentAssistantPath(url: HttpUrl, method: String = "GET"): Boolean {
+    if (isAssistantPath(url)) return true
+    val api = apiSegments(url) ?: return false
+    return when (api.firstOrNull()) {
+        "kb", "kb-search" -> true
+        "todos" -> api.size == 1 && method.equals("POST", ignoreCase = true)
+        else -> false
+    }
+}
+
 /** The segments after `api/v1`, under whatever sub-path the hub sits at; null for another path. */
 private fun apiSegments(url: HttpUrl): List<String>? {
     val segments = url.pathSegments
@@ -135,15 +151,37 @@ private fun apiSegments(url: HttpUrl): List<String>? {
 }
 
 /**
- * The `X-Persona-Manager` a request to [url] carries, if any (docs/protocol/protocol.md「Per-manager routing」): the assistant
- * page's pick on its routes; else a list's stamp (an inbox item, an extension, a conversation the page listed) of
- * [hubId]'s hub. A page's pins name theirs on the URL where the request is made (withRequestManager).
+ * The `X-Persona-Manager` a request to [url] carries, if any (docs/protocol/protocol.md「Per-manager routing」): the current
+ * assistant on its routes ([isCurrentAssistantPath]); else a list's stamp (an inbox item, a to-do, an extension, a
+ * conversation the page listed) of [hubId]'s hub. A page's pins name theirs on the URL where the request is made
+ * (withRequestManager).
  */
-internal fun managerHeaderFor(url: HttpUrl, hubId: String?): String? {
+internal fun managerHeaderFor(url: HttpUrl, hubId: String?, method: String = "GET"): String? {
     val choice = persona.core.contracts.api.AssistantManagerChoice
-    if (isAssistantPath(url)) choice.header(hubId)?.let { return it }
+    if (isCurrentAssistantPath(url, method)) choice.header(hubId)?.let { return it }
     return apiSegments(url)?.let { choice.itemHeader(it, hubId) }
 }
+
+/**
+ * Cloudflare Access answered instead of the hub: a redirect to its login (`*.cloudflareaccess.com` or `/cdn-cgi/access/`),
+ * or a 401 / 403 of Cloudflare's own that is not the hub's JSON and names Access. The hub never redirects and always
+ * answers errors in JSON, so neither can be the hub's.
+ */
+fun isCloudflareAccessBlock(response: Response): Boolean {
+    if (response.isRedirect) {
+        val location = response.header("Location")?.let { response.request.url.resolve(it) } ?: return false
+        return location.host.endsWith(".cloudflareaccess.com") || location.encodedPath.startsWith("/cdn-cgi/access/")
+    }
+    if (response.code != 401 && response.code != 403) return false
+    if (response.header("WWW-Authenticate")?.contains("Cloudflare-Access", ignoreCase = true) == true) return true
+    if (response.header("Server")?.equals("cloudflare", ignoreCase = true) != true) return false
+    if (response.header("Content-Type")?.contains("json", ignoreCase = true) == true) return false
+    val body = runCatching { response.peekBody(16 * 1024).string() }.getOrNull() ?: return false
+    return body.contains("cloudflareaccess.com", ignoreCase = true) || body.contains("Cloudflare Access", ignoreCase = true)
+}
+
+/** Same scheme, host and port: the origin a Cloudflare Access token belongs to. */
+internal fun HttpUrl.sameOrigin(other: HttpUrl) = scheme == other.scheme && host == other.host && port == other.port
 
 /** How TLS pins are keyed: the host as OkHttp hands it to the hostname verifier, and the port. */
 internal fun tlsKey(host: String, port: Int) = "${host.lowercase()}:$port"
@@ -195,6 +233,13 @@ class HubHttpClient(
         expectedPins.putAll(keys)
     }
 
+    /**
+     * The Cloudflare Access service token a request to [HttpUrl] carries (docs/operations/network.md "Behind Cloudflare
+     * Access"): the owner's answer for one of its paired hub's own HTTPS origins, null for anything else. Asked per
+     * request, so a token saved in settings, or an origin the hub lists later, takes effect at once.
+     */
+    @Volatile var access: (HttpUrl) -> persona.core.contracts.api.HubAccess? = { null }
+
     /** The pin the endpoint at [url] presented in its last TLS handshake. */
     internal fun seenPin(url: HttpUrl): String? = seenPins[tlsKey(url.host, url.port)]
 
@@ -235,14 +280,14 @@ class HubHttpClient(
                 ProtocolCompatibility.operationHeaders.firstNotNullOfOrNull { request.header(it) }?.let { id ->
                     ProtocolCompatibility.operationHeaders.forEach { builder.header(it, id) }
                 }
-                // The manager the assistant page shows (docs/assistant/managers.md): its requests name it; none for the default.
+                // The current assistant (docs/assistant/managers.md): its requests name it; none for the default.
                 // A thing a merged list showed as another manager's (an inbox item, an extension) names that one. A
                 // request pinned to one (`?manager=`) keeps it: the default's (empty) goes without either.
                 var url = request.url
                 val pinned = url.queryParameter(ManagerQuery)
                 if (pinned != null) {
                     if (pinned.isEmpty()) url = url.newBuilder().removeAllQueryParameters(ManagerQuery).build().also(builder::url)
-                } else if (request.header(ManagerHeader) == null) managerHeaderFor(url, hubId)?.let { builder.header(ManagerHeader, it) }
+                } else if (request.header(ManagerHeader) == null) managerHeaderFor(url, hubId, request.method)?.let { builder.header(ManagerHeader, it) }
                 if (!url.isHttps) {
                     // WebSocket upgrades skip network interceptors. Freeze the checked DNS
                     // result into the URL so the upgrade cannot resolve to a different peer.
@@ -251,7 +296,20 @@ class HubHttpClient(
                     val authority = url.toString().substringAfter("://").substringBefore('/')
                     builder.url(url.newBuilder().host(peer.hostAddress!!).build()).header("Host", authority)
                 }
-                chain.proceed(builder.build())
+                // Only on HTTPS and only to the hub the owner names for this origin: redirects are not followed, so the
+                // headers never reach the Access login page or any other host.
+                val token = if (url.isHttps) access(url) else null
+                token?.let {
+                    builder.header(persona.core.contracts.api.HubAccess.ClientIdHeader, it.clientId)
+                        .header(persona.core.contracts.api.HubAccess.ClientSecretHeader, it.clientSecret)
+                }
+                val response = chain.proceed(builder.build())
+                if (isCloudflareAccessBlock(response)) {
+                    val status = response.code
+                    response.close()
+                    throw HubFailure(if (token != null) HubError.AccessRejected else HubError.AccessRequired, status = status)
+                }
+                response
             }
             .addNetworkInterceptor { chain ->
                 // Inspect the actual peer before sending headers, including after DNS resolution.

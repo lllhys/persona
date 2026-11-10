@@ -19,7 +19,7 @@ struct ClipboardSection: View {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 Toggle(isOn: Binding(get: { state.usable }, set: { on in Task { await setEnabled(on) } })) {
                     VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                        Text("Share Clipboard with Phone").font(Theme.Font.body).lineLimit(1).minimumScaleFactor(0.8)
+                        Text("Share Clipboard with Phone").font(Theme.Font.body) // a switch's title, not a button: wraps at large sizes
                         Text("Off by default. When on, you can send this phone's clipboard to this computer and get the computer's here. Nothing is kept on the hub.")
                             .font(Theme.Font.label).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
@@ -67,14 +67,23 @@ struct ClipboardSection: View {
                 HStack(spacing: Theme.Space.s) { sendButton; getButton }
                 VStack(alignment: .leading, spacing: Theme.Space.s) { sendButton; getButton }
             }
-            HStack(spacing: Theme.Space.s) {
-                SystemPasteButton { content in await send(content) }
-                    .disabled(model?.busy != nil)
-                Text("Sends without the paste prompt").font(Theme.Font.label).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Side by side, or the words under the button at the largest text sizes.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Theme.Space.s) { pasteButton; pasteNote.fixedSize() }
+                VStack(alignment: .leading, spacing: Theme.Space.xs) { pasteButton; pasteNote }
             }
             if let fetched = model?.fetched { preview(fetched) }
         }
+    }
+
+    private var pasteButton: some View {
+        SystemPasteButton { content in await send(content) }
+            .disabled(model?.busy != nil)
+    }
+
+    private var pasteNote: some View {
+        Text("Sends without the paste prompt").font(Theme.Font.label).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var sendButton: some View {
@@ -112,7 +121,7 @@ struct ClipboardSection: View {
     @ViewBuilder private func preview(_ content: ClipboardContent) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             Label {
-                Text("Now on this phone's clipboard").font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                Text("Now on this phone's clipboard").font(Theme.Font.label).foregroundStyle(.secondary)
             } icon: {
                 ThemedIcon(Theme.Icon.success).foregroundStyle(Theme.positive)
             }
@@ -141,19 +150,39 @@ struct ClipboardSection: View {
     /// iOS asks before every paste unless Settings › Persona › Paste from Other Apps is Allow.
     private var pasteHint: some View {
         NoticeBanner(text: String(localized: "Asked every time? In Settings, set Paste from Other Apps to Allow."), tone: .neutral,
-                     symbol: Theme.Icon.clipboard) {
-            HStack(spacing: Theme.Space.l) {
-                Button(String(localized: "Open Settings")) {
-                    model?.dismissPasteHint()
-                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                }
-                .accessibilityIdentifier("clipboard-hint-settings")
-                Button(String(localized: "Don't Show Again")) { withAnimation(Theme.Motion.layout) { model?.dismissPasteHint() } }
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("clipboard-hint-dismiss")
+                     symbol: Theme.Icon.clipboard, lineLimit: nil) {
+            // Side by side, or one under the other at the largest text sizes: never cut short.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Theme.Space.l) { hintButtons }
+                VStack(alignment: .leading, spacing: 0) { hintButtons }
             }
         }
         .accessibilityIdentifier("clipboard-hint")
+    }
+
+    @ViewBuilder private var hintButtons: some View {
+        Button {
+            model?.dismissPasteHint()
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        } label: {
+            hintAction(String(localized: "Open Settings"))
+        }
+        .accessibilityIdentifier("clipboard-hint-settings")
+        Button {
+            withAnimation(Theme.Motion.layout) { model?.dismissPasteHint() }
+        } label: {
+            hintAction(String(localized: "Don't Show Again"))
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("clipboard-hint-dismiss")
+    }
+
+    /// A hint button's label: one line, and at least a finger's height to hit (section 6.3 of the design spec), here
+    /// only, so the other notices keep their look.
+    private func hintAction(_ title: String) -> some View {
+        Text(title)
+            .scaledFrame(minHeight: Theme.Size.tapTarget)
+            .contentShape(.rect)
     }
 
     private func line(_ text: String, ok: Bool) -> some View {

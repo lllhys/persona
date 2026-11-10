@@ -82,6 +82,7 @@ func TestTaskPushThroughTheApp(t *testing.T) {
 func TestScheduleToolsTakePush(t *testing.T) {
 	h := newStorelessService(t, newFakeHub().withMachine())
 	ctx := context.Background()
+	setSettings(t, h, func(v *Settings) { v.Main, v.MachineID = "main", "server" })
 	tool := func(session, name string, args map[string]any) (string, error) {
 		raw, _ := json.Marshal(args)
 		return h.runTool(ctx, "server", session, name, raw)
@@ -128,6 +129,26 @@ func TestScheduleToolsTakePush(t *testing.T) {
 	fu := only("fu_")
 	if fu.Push != pushAsked || fu.Repeat != repeatInterval || fu.SessionID != "" {
 		t.Fatalf("a follow-up that pushes only what it sends runs in its own conversation, not the main one: %+v", fu)
+	}
+	// Asked from another conversation (a leader's patrol), it goes on there (#3673).
+	out, err = tool("lead1", "schedule_followup", map[string]any{"prompt": "巡检一遍待办", "title": "巡检", "every": "30m", "push": "asked"})
+	if err != nil || !strings.Contains(out, "notify_user") || !strings.Contains(out, "the conversation it came from") {
+		t.Fatalf("schedule_followup push asked from a leader conversation: %q %v", out, err)
+	}
+	sc := h.loadSchedule(ctx)
+	sc.mu.Lock()
+	var patrol Task
+	for _, task := range sc.tasks {
+		if task.Title == "巡检" {
+			patrol = task
+		}
+	}
+	sc.mu.Unlock()
+	if patrol.Push != pushAsked || patrol.SessionID != "lead1" || patrol.Repeat != repeatInterval {
+		t.Fatalf("a quiet follow-up keeps the conversation it came from, other than the main one: %+v", patrol)
+	}
+	if _, err := h.deleteTask(ctx, patrol.ID); err != nil {
+		t.Fatal(err)
 	}
 	// schedule_routine with an id changes any task's push, and only that.
 	if _, err := tool("main", "schedule_routine", map[string]any{"id": fu.ID, "push": "every"}); err != nil {
@@ -189,10 +210,45 @@ func TestScheduleOwnKeepsPush(t *testing.T) {
 	}
 }
 
-// A task that pushes only what its runs send runs in its own conversation (#2396): set from the app, a follow-up
-// that ran in the conversation it came from (the main one) moves to its own; switched back, it stays there.
+// A run rescheduling a follow-up that continues a conversation cannot give it its own launcher: those runs keep the
+// conversation's. Refused before the task is touched.
+func TestScheduleOwnRefusesAModelOverrideIntoASourceConversation(t *testing.T) {
+	h := newStorelessService(t, newFakeHub().withMachine())
+	ctx := context.Background()
+	setTasks(h, Task{ID: "fu_own", Title: "新邮件", Prompt: "看看邮箱", Repeat: repeatOnce, At: time.Now().Add(-time.Minute), Enabled: false,
+		MachineID: "server", SessionID: "source-1", LastRun: time.Now().Add(-time.Minute)})
+	sc := h.loadSchedule(ctx)
+	sc.mu.Lock()
+	sc.runs = append(sc.runs, ScheduleRun{RefID: "fu_own", SessionID: "run-1", Status: runOK})
+	sc.mu.Unlock()
+	raw, _ := json.Marshal(map[string]any{"prompt": "看看邮箱", "title": "新邮件", "at": "30m", "launcher": "cheap"})
+	if _, err := h.runTool(ctx, "server", "run-1", "schedule_followup", raw); err == nil {
+		t.Fatal("a launcher override for a run into a source conversation was accepted")
+	}
+	if got, _ := taskByID(h, "fu_own"); got.Enabled {
+		t.Fatalf("the refused call still rescheduled the task: %+v", got)
+	}
+	// A task with its own conversation: an invalid launcher is refused before the reschedule is saved.
+	setTasks(h, Task{ID: "fu_own2", Title: "自己的", Prompt: "看看", Repeat: repeatOnce, At: time.Now().Add(-time.Minute), Enabled: false,
+		MachineID: "server"})
+	sc = h.loadSchedule(ctx)
+	sc.mu.Lock()
+	sc.runs = append(sc.runs, ScheduleRun{RefID: "fu_own2", SessionID: "run-2", Status: runOK})
+	sc.mu.Unlock()
+	raw, _ = json.Marshal(map[string]any{"prompt": "看看", "title": "自己的", "at": "30m", "launcher": "no-such-launcher"})
+	if _, err := h.runTool(ctx, "server", "run-2", "schedule_followup", raw); err == nil {
+		t.Fatal("an invalid launcher was accepted")
+	}
+	if got, _ := taskByID(h, "fu_own2"); got.Enabled {
+		t.Fatalf("the refused call still rescheduled the task: %+v", got)
+	}
+}
+
+// A task that pushes only what its runs send never runs in the main conversation (#2396): set from the app, a
+// follow-up that ran in the main one moves to its own; switched back, it stays there.
 func TestQuietTaskRunsInItsOwnConversation(t *testing.T) {
 	h := newStorelessService(t, newFakeHub().withMachine())
+	setSettings(t, h, func(v *Settings) { v.Main, v.MachineID = "main-1", "server" })
 	setTasks(h, Task{ID: "fu_1", Title: "新邮件", Prompt: "看看邮箱", Repeat: repeatInterval, EveryMinutes: 5, At: time.Now().Add(time.Minute),
 		Enabled: true, MachineID: "server", SessionID: "main-1"})
 	put := func(body string) {
@@ -381,5 +437,94 @@ func TestQuietTaskWhenTheMainConversationIsUnknown(t *testing.T) {
 	}
 	if !h.mayBeMain(ctx, "own-q") {
 		t.Fatal("the task's conversation may be the main one: it does not go on in it")
+	}
+}
+
+// A quiet follow-up going on in the conversation it came from (a leader's patrol, #3673) holds that conversation's
+// pushes for its run: the run's normal finish is neither pushed nor mirrored, an error is, and the user speaking there
+// releases them. A run that comes while another turn is on there does not hold them (that turn's finish is pushed), a
+// task that pushes every run never does, and once the conversation is the main one the run goes to its own.
+func TestQuietFollowupHoldsTheConversationItCameFrom(t *testing.T) {
+	n := newFakeHub().withMachine()
+	h := newStorelessService(t, n)
+	ctx := context.Background()
+	setSettings(t, h, func(v *Settings) { v.Main, v.MachineID = "main-1", "server" })
+	setTasks(h,
+		Task{ID: "fu_p", Title: "巡检", Prompt: "巡检一遍待办", Repeat: repeatInterval, EveryMinutes: 30, At: time.Now().Add(time.Hour),
+			Enabled: true, MachineID: "server", SessionID: "lead1", Push: pushAsked},
+		Task{ID: "fu_e", Title: "日报", Prompt: "写日报", Repeat: repeatInterval, EveryMinutes: 30, At: time.Now().Add(time.Hour),
+			Enabled: true, MachineID: "server", SessionID: "lead2"})
+	idle := proto.Session{SessionID: "lead1", Status: proto.StatusDone, Assistant: true, LastText: "没有新情况。"}
+	n.setSessions("server", idle, proto.Session{SessionID: "lead2", Status: proto.StatusDone, Assistant: true, LastText: "日报好了。"})
+
+	if _, err := runNow(t, h, "fu_p"); err != nil {
+		t.Fatal(err)
+	}
+	if p := n.lastSend(t); p["session_id"] != "lead1" || p[holdPushesParam] != true {
+		t.Fatalf("the run goes on in its conversation, holding its pushes: %v", p)
+	}
+	if !h.supervising("lead1") || !h.quietTaskTurn(ctx, "server", "lead1") {
+		t.Fatal("the run's normal finish is not pushed or mirrored")
+	}
+	failed := idle
+	failed.TurnError = "overloaded"
+	n.setSessions("server", failed)
+	if h.quietTaskTurn(ctx, "server", "lead1") {
+		t.Fatal("a failed run is mirrored as ever")
+	}
+	n.setSessions("server", idle)
+	h.UserSpoke(ctx, SessionRef{MachineID: "server", SessionID: "lead1"})
+	if h.supervising("lead1") || h.quietTaskTurn(ctx, "server", "lead1") {
+		t.Fatal("the user spoke there: its turns are pushed as ever")
+	}
+
+	busy := idle
+	busy.Status = proto.StatusWorking
+	n.setSessions("server", busy)
+	if _, err := runNow(t, h, "fu_p"); err != nil {
+		t.Fatal(err)
+	}
+	if p := n.lastSend(t); p["session_id"] != "lead1" || p[holdPushesParam] == true || h.supervising("lead1") {
+		t.Fatalf("a run that comes while another turn is on holds nothing: %v", p)
+	}
+
+	if _, err := runNow(t, h, "fu_e"); err != nil {
+		t.Fatal(err)
+	}
+	if p := n.lastSend(t); p["session_id"] != "lead2" || p[holdPushesParam] == true || h.supervising("lead2") {
+		t.Fatalf("a task that pushes every run holds nothing: %v", p)
+	}
+
+	setSettings(t, h, func(v *Settings) { v.Main = "lead1" })
+	n.setSessions("server", idle)
+	if _, err := runNow(t, h, "fu_p"); err != nil {
+		t.Fatal(err)
+	}
+	if p := n.lastSend(t); p["session_id"] == "lead1" || h.supervising("lead1") {
+		t.Fatalf("the main conversation is never quiet: %v", p)
+	}
+}
+
+// The app sets push "asked" on a follow-up that goes on in a conversation other than the main one: it keeps that
+// conversation, as the API reads back (#3673).
+func TestQuietFollowupKeepsItsConversationThroughTheApp(t *testing.T) {
+	h := newStorelessService(t, newFakeHub().withMachine())
+	setSettings(t, h, func(v *Settings) { v.Main, v.MachineID = "main-1", "server" })
+	setTasks(h, Task{ID: "fu_1", Title: "巡检", Prompt: "巡检一遍待办", Repeat: repeatInterval, EveryMinutes: 30, At: time.Now().Add(time.Minute),
+		Enabled: true, MachineID: "server", SessionID: "lead1"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/assistant/tasks/fu_1", strings.NewReader(
+		`{"title":"巡检","prompt":"巡检一遍待办","repeat":"interval","every_minutes":30,"enabled":true,"machine_id":"server","session_id":"lead1","push":"asked"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	got, _ := taskByID(h, "fu_1")
+	if got.Push != pushAsked || got.SessionID != "lead1" {
+		t.Fatalf("push asked keeps the conversation it came from: %+v", got)
+	}
+	list := httptest.NewRecorder()
+	h.ServeHTTP(list, httptest.NewRequest("GET", "/api/v1/assistant/tasks", nil))
+	if body := list.Body.String(); !strings.Contains(body, `"session_id":"lead1"`) || !strings.Contains(body, `"push":"asked"`) {
+		t.Fatalf("read back: %s", body)
 	}
 }

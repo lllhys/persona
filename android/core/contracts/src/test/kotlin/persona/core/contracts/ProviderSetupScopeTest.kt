@@ -16,6 +16,7 @@ class ProviderSetupScopeTest {
             override suspend fun create(provider: NewProvider): ProviderAdded { record("create"); return ProviderAdded(provider.name) }
             override suspend fun test(probe: ProviderProbe): ProviderTest { record("test"); return ProviderTest(ok = true) }
             override suspend fun discover(probe: ProviderProbe): ProviderDiscovery { record("discover"); return ProviderDiscovery() }
+            override suspend fun update(name: String, changes: ProviderUpdate) { record("update") }
             override suspend fun launchers(): List<HubLauncher> { record("list"); return emptyList() }
             override suspend fun launcher(name: String): HubLauncher { record("detail"); return HubLauncher(name) }
             override suspend fun remove(name: String) { record("remove") }
@@ -28,8 +29,9 @@ class ProviderSetupScopeTest {
         scoped.presets(); scoped.add(NewProvider("demo", "")); scoped.create(NewProvider("demo", ""))
         scoped.test(ProviderProbe()); scoped.discover(ProviderProbe()); scoped.launchers(); scoped.launcher("demo")
         scoped.remove("demo"); scoped.restore("demo"); scoped.check("demo", null)
+        scoped.update("demo", ProviderUpdate("demo", "launcher", "messages", "", "m", "", "", "", "", "", emptyList()))
         scoped.importPreview("computer"); scoped.import("computer", listOf("demo"))
-        assertEquals(12, calls.size)
+        assertEquals(13, calls.size)
         assertTrue(calls.all { it.second == "work" })
         assertNull(currentCoroutineContext()[RequestManager])
     }

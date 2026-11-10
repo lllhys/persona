@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_access_title">Cloudflare Access</string>
+    <string name="settings_access_of">Cloudflare Access · %1$s</string>
+    <string name="settings_access_on">On</string>
+    <string name="settings_access_off">Off</string>
+    <string name="settings_access_client_id">Client ID</string>
+    <string name="settings_access_client_secret">Client Secret</string>
+    <string name="settings_access_caption">For a hub published behind Cloudflare Access. Create a service token in Cloudflare Zero Trust and add it to a Service Auth policy of the hub\'s application. Only this hub\'s requests carry it.</string>
+    <string name="settings_access_pairing_caption">Only for a hub behind Cloudflare Access: enter its service token before connecting, or the first request is already turned away.</string>
+    <string name="settings_access_save">Save</string>
+    <string name="settings_access_saved">Service token saved</string>
+    <string name="settings_access_clear">Remove service token</string>
+    <string name="settings_access_cleared">Service token removed</string>
+    <string name="settings_access_failed">Couldn\'t save the service token. Try again.</string>
+    <string name="settings_pairing_failure_access_required">This hub is behind Cloudflare Access and needs a service token. Enter its Client ID and Client Secret under Cloudflare Access, then connect again.</string>
+    <string name="settings_pairing_failure_access_rejected">Cloudflare Access rejected the service token. Check the Client ID and Client Secret, and that the hub\'s Access policy includes this token.</string>
+    <string name="settings_pairing_recovery_access">Enter service token</string>
+</resources>

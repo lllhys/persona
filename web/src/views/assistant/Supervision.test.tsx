@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FeedItem } from "../../lib/feed";
 import type { Todo } from "../../lib/todos";
 import { FeedLineView } from "./Tasks";
-import { ReviewBadge, ReviewChecklist } from "./Supervision";
+import { LatestReport, ReviewBadge, ReviewChecklist } from "./Supervision";
 
 const todo: Todo = {
   id: "todo_1",
@@ -45,6 +45,26 @@ describe("a supervised task", () => {
     expect(html).toContain('aria-label="缺口"');
     expect(html).toContain("只有浅色");
     expect(html).toContain("督办说明：补深色截图");
+  });
+
+  it("shows the agent's latest report as it wrote it, Markdown rendered, on its page (#3181)", () => {
+    const progress = { kind: "progress" as const, text: "Ran the **migration**: - 41 tables moved", line: "迁移跑完", detail: "Ran the **migration**:\n\n- 41 tables moved\n- `orders` needs a backfill", at: "2026-11-05T09:00:00Z" };
+    const html = renderToStaticMarkup(<LatestReport todo={{ ...todo, supervision: { ...todo.supervision!, progress } }} />);
+    expect(html).toContain('data-testid="latest-report"');
+    expect(html).toContain("最新汇报");
+    expect(html).toContain("<strong>migration</strong>");
+    expect(html).toContain("<li>");
+    expect(html).toContain("<code");
+    expect(html).not.toContain("迁移跑完");
+    // without a detail, the text; without a report, nothing
+    const plain = renderToStaticMarkup(<LatestReport todo={{ ...todo, supervision: { ...todo.supervision!, progress: { ...progress, detail: undefined } } }} />);
+    expect(plain).toContain("<strong>migration</strong>");
+    expect(renderToStaticMarkup(<LatestReport todo={todo} />)).toBe("");
+    // over the agent's chat in the task panel: open, with a toggle that folds it to its title line
+    const banner = renderToStaticMarkup(<LatestReport todo={{ ...todo, supervision: { ...todo.supervision!, progress } }} banner />);
+    expect(banner).toContain('aria-expanded="true"');
+    expect(banner).toContain("<strong>migration</strong>");
+    expect(renderToStaticMarkup(<LatestReport todo={todo} banner />)).toBe("");
   });
 
   it("says when no criteria were given", () => {

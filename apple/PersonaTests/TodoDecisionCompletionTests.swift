@@ -112,8 +112,11 @@ import Testing
         await actions.completeDirectly(decision, group: "")
         let finished = try #require(tasks.todos[decision.id])
         #expect(finished.doneAt != nil && finished.openAsk == nil && tasks.state(finished) == .done)
-        let tray = ActionTrayContent(tasks: [.init(id: finished.id, state: tasks.state(finished))], own: [], taskAgents: [])
-        #expect(tray.pending.isEmpty && tray.count(.pending) == 0)
+        // done, it is in neither of the action bar's entries
+        let entries = AssistantEntries.split(conversation: "main", main: "main", todos: [finished], sessions: [], interactions: [],
+                                             plans: [:], feed: [])
+        let tray = ActionTrayContent(entries)
+        #expect(tray.needsYou.isEmpty && tray.count(.needsYou) == 0 && tray.count(.running) == 0)
     }
 
     @Test func anotherHubOrRoundDoesNotInheritCompletion() async {

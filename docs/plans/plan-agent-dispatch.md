@@ -102,6 +102,7 @@ Agent on computer A ──MCP──► node A ──► hub ──► manager �
   - Work computers' Agents and guest conversations do not get the tools.
 - **A start with no answer** is not reported as a failure and not recorded: the Agent is told that a session may exist and to tell the user instead of starting again.
 - **Visibility**: the child is a normal session. The user sees it in every client, can answer its questions, and can stop it. Triage and notifications treat it as any Agent.
+- **Supervision** (#3439): the child also becomes a to-do supervised by the main conversation, through the path `agent_supervise` uses (`adoptAgent` in `server/internal/assistant/agent_control.go`). Its notes say which Agent on which computer handed it out, its task card appears in the main conversation, the main conversation gets its supervision messages (done, stuck, no progress) and closes it with `task_review`, and the live snapshot lists it. The caller still reads the result with `dispatch_read`. With no main conversation no to-do is made and the task runs untracked; a failure to make the to-do never fails the start.
 
 Trade-offs taken in step 1:
 

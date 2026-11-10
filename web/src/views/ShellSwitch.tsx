@@ -1,8 +1,10 @@
 // "Assistant | Agents" in the middle of a phone's top bar (#1996), like the iOS app's new shell (docs/apple/ios.md "New shell"): the
 // main conversation and the Agents page, side by side. Agents carries how many agents are waiting for you (quiet ones
-// are told about in the main conversation, not counted here). Narrow screens only; wide ones have the sidebar.
+// are told about in the main conversation, not counted here), the current assistant's with several. Narrow screens only;
+// wide ones have the sidebar.
 import { href, onLinkClick, type Route } from "../lib/router";
-import { othersWaiting, useCounts } from "../lib/sessions";
+import { useScopedCounts } from "../lib/current-assistant";
+import { othersWaiting } from "../lib/sessions";
 import type { Session } from "../lib/types";
 import { cx, IconButton } from "../ui/atoms";
 import { HEADER_SLOT, HEADER_SLOT_END, HEADER_SLOT_START } from "./chat/header";
@@ -16,7 +18,7 @@ const SHELL_PAGES: { page: ShellPage; label: string; to: Route }[] = [
 ];
 
 export function ShellSwitch({ page }: { page: ShellPage }) {
-  return <ShellSwitchView page={page} waiting={useCounts().badge} />;
+  return <ShellSwitchView page={page} waiting={useScopedCounts().badge} />;
 }
 
 function WaitingBadge({ count, className }: { count: number; className?: string }) {
@@ -26,7 +28,7 @@ function WaitingBadge({ count, className }: { count: number; className?: string 
 /** A chat header's way to the sidebar on a narrow screen, carrying how many other agents are waiting for you. `counted` is
  *  off where the header's switch already shows that number. */
 export function ChatSidebarButton({ session, counted, onClick }: { session?: Session; counted: boolean; onClick: () => void }) {
-  const { badge, quietCounted } = useCounts();
+  const { badge, quietCounted } = useScopedCounts();
   const waiting = counted ? othersWaiting(badge, session, quietCounted) : 0;
   const label = t("chat-chatview.sidebar");
   return (

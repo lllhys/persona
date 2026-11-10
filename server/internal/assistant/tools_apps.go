@@ -33,6 +33,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 	case "kb_search":
 		a := struct {
 			Query    string `json:"query"`
+			Kind     string `json:"kind"`
 			Messages *bool  `json:"messages"`
 			Limit    int    `json:"limit"`
 		}{}
@@ -40,7 +41,16 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if a.Limit <= 0 {
 			a.Limit = 40
 		}
-		hits := e.Search(a.Query, a.Messages == nil || *a.Messages, min(a.Limit, 200))
+		messages, limit := a.Messages == nil || *a.Messages, min(a.Limit, 200)
+		var hits []kb.Hit
+		switch {
+		case a.Kind == "":
+			hits = e.Search(a.Query, messages, limit)
+		case kbRPCKind(a.Kind):
+			hits = e.SearchKind(a.Query, a.Kind, messages, limit)
+		default:
+			return "", fmt.Errorf("kind %q: one of projects, chats, people, docs, meetings, events, recordings", a.Kind)
+		}
 		if len(hits) == 0 {
 			// A neutral, localized line: it can be relayed to the owner, so it never names the store's disk path.
 			l := s.lang(ctx)
@@ -69,6 +79,14 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		}
 		if len(items) > a.Limit {
 			items = items[:a.Limit]
+		}
+		if a.Kind == kb.KindMeeting || a.Kind == kb.KindEvent { // when it is (or was), so "last week's" can be told
+			loc := s.location(ctx)
+			for i, x := range items {
+				if !x.Updated.IsZero() {
+					items[i].Extra = strings.TrimSpace(x.Updated.In(loc).Format("2006-01-02 15:04") + " " + x.Extra)
+				}
+			}
 		}
 		if len(items) == 0 {
 			return i18n.T(s.lang(ctx), "assistant-kb_tools.list_empty"), nil
@@ -117,7 +135,11 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			var m kb.Minutes
 			if json.Unmarshal(d.Minutes, &m) == nil && m.Markdown != "" {
 				fmt.Fprintf(&b, "\nminutes.md:\n%s\n", m.Markdown)
+				b.WriteString(s.minutesActionLines(ctx, d.ID, &m))
 			}
+		}
+		if a.Kind == kb.KindMeeting || a.Kind == kb.KindEvent {
+			b.WriteString(s.recordingsAt(ctx, e, a.Kind, d.ID))
 		}
 		switch {
 		case d.Recent != "" && a.Kind == kb.KindRecording:
@@ -175,6 +197,7 @@ func (s *Service) toolInteractionAnswer(ctx context.Context, self string, args j
 		SessionID     string          `json:"session_id"`
 		InteractionID string          `json:"interaction_id"`
 		Answers       json.RawMessage `json:"answers"`
+		Reason        string          `json:"reason"`
 	}
 	_ = json.Unmarshal(args, &a)
 	am, c, err := s.findAgent(ctx, a.Machine, a.SessionID)
@@ -210,16 +233,21 @@ func (s *Service) toolInteractionAnswer(ctx context.Context, self string, args j
 	if err != nil {
 		return "", err
 	}
+	// A card handed to this conversation before the user (ask_route.go): its answer is the task's decision.
+	todo, routed := s.routedTo(ix.ID, self)
 	var res struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
 	}
 	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsAnswer, map[string]any{"machine_id": ix.MachineID,
-		"session_id": ix.SessionID, "interaction_id": ix.ID, "answers": answers}, &res); err != nil {
+		"session_id": ix.SessionID, "interaction_id": ix.ID, "answers": answers, "reason": clip(oneLine(a.Reason), 120)}, &res); err != nil {
 		return "", err
 	}
 	if !res.OK {
 		return "", interactionEnded(ix.ID, res.Status)
+	}
+	if routed {
+		s.askAnswered(ctx, todo, self, ix, answers, a.Reason)
 	}
 	var b strings.Builder
 	b.WriteString("Answered for the user:\n")
@@ -367,6 +395,26 @@ func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.Raw
 		return "", fmt.Errorf("change %+v is not one the item lists (ref, field and one of its values)", *refused)
 	}
 	return "The draft is in the user's inbox; they will send it. You're done.", nil
+}
+
+// recordingsAt is what kb_get adds to calendar item kind/id (meetings or events, id as stored): the recordings matched
+// to it by time (kb/minutes.go matchRecordings), which hold its minutes; "" when there are none.
+func (s *Service) recordingsAt(ctx context.Context, e *kb.Engine, kind, id string) string {
+	var at []kb.Entry
+	for _, r := range e.Store.Recordings() {
+		if r.Meeting != nil && r.Meeting.Kind == kind && kb.SafeID(r.Meeting.ID) == id {
+			at = append(at, kb.Entry{Kind: kb.KindRecording, ID: r.ID, Name: r.Name, Updated: r.StartedAt})
+		}
+	}
+	if len(at) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nRecorded at it (kb_get kind=recordings for the minutes and the transcript):\n")
+	for _, x := range s.recordingLines(ctx, e, at, 10) {
+		fmt.Fprintf(&b, "- %s · %s %s\n", x.ID, x.Name, x.Extra)
+	}
+	return b.String()
 }
 
 // recordingLines is kb_list's first limit recordings newest first (what "the meeting just now" asks for), each saying

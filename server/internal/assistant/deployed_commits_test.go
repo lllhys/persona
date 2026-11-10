@@ -56,7 +56,10 @@ func TestDeployedCommitsWithoutGitHub(t *testing.T) {
 	todo := startedTask(t, s, f)
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, deployedReply, 0)
-	waitFor(t, "accepted", func() bool { a := askOf(s, todo.ID); return a != nil && !a.AcceptedAt.IsZero() && todoNow(s, todo.ID).Stage == "verify" })
+	waitFor(t, "accepted", func() bool {
+		a := askOf(s, todo.ID)
+		return a != nil && !a.AcceptedAt.IsZero() && todoNow(s, todo.ID).Stage == "verify"
+	})
 	if forge.calls != 0 || verifyCards(posts()) != 0 {
 		t.Fatalf("%d GitHub calls, %d cards", forge.calls, verifyCards(posts()))
 	}

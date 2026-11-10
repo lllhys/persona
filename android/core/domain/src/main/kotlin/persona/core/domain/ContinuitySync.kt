@@ -23,6 +23,16 @@ class ContinuitySync(val reducer: ContinuityReducer) {
 
     private var filling = false
     private var fillPages = 0
+    /**
+     * Gaps and rev moves heard ([settle] with a fill), and how many of them the newest read covers: a read covers what
+     * was heard when it was sent, not when it came back (#3601, the web's RevWatch #3195, iOS #3191). A move heard while
+     * a read is on its way is read again once that read ends.
+     */
+    private var heard = 0L
+    private var asked = 0L
+
+    /** A gap or rev move was heard after the newest read was sent: the chat may still miss a line. */
+    val behind: Boolean get() = heard > asked
     private var loadingOlder = false
     private var opening: Item? = null
     private var rangePages = 0
@@ -30,7 +40,10 @@ class ContinuitySync(val reducer: ContinuityReducer) {
 
     fun settle(gap: Gap): List<Action> = when (gap) {
         Gap.None -> emptyList()
-        Gap.Fill -> listOf(Action.ScheduleFill())
+        Gap.Fill -> {
+            heard++
+            listOf(Action.ScheduleFill())
+        }
         Gap.Reload -> listOf(Action.FetchLatest())
     }
 
@@ -39,6 +52,7 @@ class ContinuitySync(val reducer: ContinuityReducer) {
         if (filling) return emptyList()
         filling = true
         fillPages = 0
+        asked = heard
         return listOf(Action.FetchAfter(reducer.covered))
     }
 
@@ -46,14 +60,17 @@ class ContinuitySync(val reducer: ContinuityReducer) {
     fun after(items: List<Item>, history: String?, fromSeq: Int?, toSeq: Int?, moreAfter: Boolean = false): Result {
         val gap = reducer.apply(items, history, fromSeq, toSeq, moreAfter = moreAfter)
         fillPages++
+        // A move heard while this page was on its way may be past it: one more page reads it.
+        val again = gap == Gap.None && behind
         val actions = when {
-            gap == Gap.Reload || gap == Gap.Fill && fillPages >= 8 -> listOf(Action.FetchLatest())
-            gap == Gap.Fill -> listOf(Action.FetchAfter(reducer.covered))
+            gap == Gap.Reload || (gap == Gap.Fill || again) && fillPages >= 8 -> listOf(Action.FetchLatest())
+            gap == Gap.Fill || again -> listOf(Action.FetchAfter(reducer.covered))
             else -> {
                 finishFill()
                 emptyList()
             }
         }
+        if (actions.isNotEmpty()) asked = heard
         return Result(gap, actions)
     }
 

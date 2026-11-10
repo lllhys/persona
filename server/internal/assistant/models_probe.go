@@ -138,6 +138,22 @@ func (t probeTarget) endpoint(path string) string {
 	return t.base + "/v1/" + path
 }
 
+// modelsEndpoint keeps discovery separate from the inference protocol. DeepSeek documents /models at the
+// official origin, not under its /anthropic Messages base (https://api-docs.deepseek.com/api/list-models/).
+// Only its known HTTPS bases qualify; custom gateway prefixes and authorities stay untouched.
+func (t probeTarget) modelsEndpoint() string {
+	u, err := url.Parse(t.base)
+	if err == nil && u.Scheme == "https" && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
+		(strings.EqualFold(u.Host, "api.deepseek.com") || strings.EqualFold(u.Host, "api.deepseek.com:443")) {
+		switch u.EscapedPath() {
+		case "", "/v1", "/anthropic", "/anthropic/v1":
+			u.Path, u.RawPath = "/models", ""
+			return u.String()
+		}
+	}
+	return t.endpoint("models")
+}
+
 // do sends one request with the custom headers first, then the version and both credential headers.
 func (t probeTarget) do(ctx context.Context, method, endpoint string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
@@ -473,7 +489,7 @@ func chatProbeCompleted(body io.Reader) bool {
 	return hasText && finished
 }
 
-// providerDiscover: GET <base>/v1/models, its models filled in from the catalog.
+// providerDiscover reads the provider's model-list endpoint, its models filled in from the catalog.
 func (s *Service) providerDiscover(ctx context.Context, in probeInput) map[string]any {
 	models := []proto.ProviderModel{}
 	enriched := func() []proto.ProviderModel {
@@ -493,6 +509,9 @@ func (s *Service) providerDiscover(ctx context.Context, in probeInput) map[strin
 	// failed is fail with what failure says, and its code when it has one
 	failed := func(res *http.Response, err error) map[string]any {
 		msg, code := t.failure(ctx, res, err)
+		if err == nil && res != nil && res.StatusCode == http.StatusNotFound {
+			msg = pt(i18n.From(ctx), "models_not_found")
+		}
 		out := fail(msg)
 		if code != "" {
 			out["code"] = code
@@ -503,8 +522,9 @@ func (s *Service) providerDiscover(ctx context.Context, in probeInput) map[strin
 	seenModels := map[string]int{}
 	seenCursors := map[string]bool{}
 	query := url.Values{}
+	modelsEndpoint := t.modelsEndpoint()
 	for page := 0; page < maxPages; page++ {
-		endpoint := t.endpoint("models")
+		endpoint := modelsEndpoint
 		if len(query) > 0 {
 			endpoint += "?" + query.Encode()
 		}
@@ -589,7 +609,7 @@ func (s *Service) providerDiscover(ctx context.Context, in probeInput) map[strin
 		case nextPage != "":
 			query.Set("page", nextPage)
 		case next != "":
-			base, _ := url.Parse(t.endpoint("models"))
+			base, _ := url.Parse(modelsEndpoint)
 			ref, err := url.Parse(next)
 			if err != nil {
 				return fail(pt(i18n.From(ctx), "models_pagination"))

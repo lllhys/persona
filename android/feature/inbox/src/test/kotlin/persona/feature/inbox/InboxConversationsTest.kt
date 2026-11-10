@@ -19,6 +19,37 @@ import persona.core.domain.inbox.InboxItem
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InboxConversationsTest {
+    @Test fun badgeUpdatesAfterReadAndSurvivesRefreshAndRecreation() = runTest {
+        val unread = item("a", "room", "action")
+        val pending = item("b", null, "action").copy(read = true)
+        val completed = item("c", null, "action").let { it.copy(read = true,
+            item = it.item.copy(doneAt = "2026-11-10T00:00:00Z")) }
+        val repository = ConversationRepository(listOf(unread, pending, completed))
+        repository.window("room").value = window(message(1))
+        val controller = InboxConversations(repository, "paired", backgroundScope, ReplyComposers(repository, backgroundScope))
+        runCurrent()
+        fun count() = inboxUnreadCount(repository.snapshot.value.records, controller.state.value)
+        assertEquals(1, count())
+        assertTrue(controller.readConversation(controller.state.value.rows.single().key))
+        runCurrent()
+        assertEquals(0, count())
+        assertEquals(InboxConversationSection.ReadPending, controller.state.value.rows.single().section)
+        assertTrue(repository.done.isEmpty())
+        // The hub item list may lag behind the successful source receipt.
+        repository.snapshot.value = repository.snapshot.value.copy(refreshes = 1)
+        runCurrent()
+        assertEquals(0, count())
+        assertFalse(repository.snapshot.value.records.first().item.isDone)
+        // A new process reconciles from the source's persisted read window.
+        val restarted = ConversationRepository(repository.snapshot.value.records)
+        restarted.window("room").value = window(message(1).copy(isRead = true))
+        val fresh = InboxConversations(restarted, "paired", backgroundScope, ReplyComposers(restarted, backgroundScope))
+        runCurrent()
+        assertEquals(0, inboxUnreadCount(restarted.snapshot.value.records, fresh.state.value))
+        assertEquals(InboxConversationSection.ReadPending, fresh.state.value.rows.single().section)
+        assertTrue(restarted.done.isEmpty())
+    }
+
     @Test fun readFyiLeavesTheUnreadGroupsWithoutBecomingPendingOrCompleted() {
         val fyi = item("f", "room", "fyi")
         val read = setOf(InboxReadVersion("f", "v1"))

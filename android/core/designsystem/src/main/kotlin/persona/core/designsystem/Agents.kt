@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -152,7 +154,7 @@ private fun StateCounts(counts: List<Pair<Status, Int>>) {
 @Composable
 fun HeadingAction(icon: PhIcon, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
-        modifier.size(Action).clip(CircleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = label },
+        modifier.size(Action).minimumInteractiveComponentSize().clip(CircleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) { JIcon(icon, null, size = Tokens.Space.xl, tint = PersonaTheme.palette.ink2) }
 }
@@ -282,8 +284,8 @@ fun AgentIdleRow(hidden: Int, onClick: () -> Unit, modifier: Modifier = Modifier
 // ------------------------------------------------------------------ rows
 
 /**
- * A session: its mark, title and time on the first line, the state and latest message on the second, [facts] only
- * when there are any ([compact] keeps the first line alone). [depth] is that of the heading it sits under, so the
+ * A session: its mark, title and time on the first line, the state and latest message on the second, then metadata
+ * lines for [note] and [facts]. [compact] keeps the first line alone. [depth] is that of the heading it sits under, so the
  * mark lines up with the heading's caret. Glass and brief draw a plain row with a hairline above it unless it is
  * first in its group ([position]); the board keeps its agent strip, compacted, because each strip is the agent itself.
  * Long-pressing (or a secondary click) opens the row's actions ([onLongClick]). [muted] fades the row with
@@ -364,14 +366,10 @@ fun AgentRow(
                 Spacer(Modifier.width(Tokens.Space.s))
                 SourceTag(source)
             } else if (line.isNotEmpty()) lineText()
-            note?.let { RowNoteLine(it) }
-            if (facts.isNotEmpty()) Text(
-                buildAnnotatedString {
-                    facts.forEachIndexed { index, fact ->
-                        if (index > 0) append("   ")
-                        withStyle(SpanStyle(color = if (fact.caution) palette.cautionText else palette.ink3)) { append(fact.text) }
-                    }
-                },
+            val factsLine = rowFactsText(facts)
+            if (note != null) RowNoteLine(note)
+            if (factsLine.isNotEmpty()) Text(
+                factsLine,
                 style = type.caption.copy(fontWeight = FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -414,14 +412,27 @@ fun AgentRow(
     }
 }
 
+@Composable
+private fun rowFactsText(facts: List<RowFact>): AnnotatedString {
+    val palette = PersonaTheme.palette
+    return buildAnnotatedString {
+        facts.forEachIndexed { index, fact ->
+            if (index > 0) append("   ")
+            withStyle(SpanStyle(color = if (fact.caution) palette.cautionText else palette.ink3)) { append(fact.text) }
+        }
+    }
+}
+
 /** The note under a row; its numbers count to new ones when only they change ("169/185+" → "170/186+", #3435). */
 @Composable
 private fun RowNoteLine(note: RowNote) {
     val palette = PersonaTheme.palette
+    val value = rollingText(note.text)
     Row(Modifier.padding(top = Tokens.Space.xxs), verticalAlignment = Alignment.CenterVertically) {
         JIcon(note.icon, null, size = Caret, tint = palette.ai)
         Spacer(Modifier.width(Tokens.Space.xs))
-        JChangingText(note.text, style = PersonaTheme.type.caption.copy(fontWeight = FontWeight.Normal), color = palette.ink2)
+        Text(value, style = PersonaTheme.type.caption.copy(fontWeight = FontWeight.Normal), color = palette.ink2,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -462,7 +473,7 @@ private fun TabToggle(agents: Int, folded: Boolean, onToggle: () -> Unit) {
     val count = pluralStringResource(R.plurals.designsystem_tab_agents, agents, agents)
     val state = stringResource(if (folded) R.string.designsystem_folded else R.string.designsystem_expanded)
     Row(
-        Modifier.heightIn(min = Action).clip(RoundedCornerShape(PersonaTheme.shapes.chip)).clickable(role = Role.Button, onClick = onToggle)
+        Modifier.heightIn(min = Action).minimumInteractiveComponentSize().clip(RoundedCornerShape(PersonaTheme.shapes.chip)).clickable(role = Role.Button, onClick = onToggle)
             .clearAndSetSemantics { contentDescription = count; stateDescription = state }
             .padding(horizontal = Tokens.Space.s),
         verticalAlignment = Alignment.CenterVertically,
@@ -522,7 +533,8 @@ private fun SourceTag(source: RowSource) {
     val shape = RoundedCornerShape(if (PersonaTheme.style == AppStyle.Board) Tokens.Space.xs else Tokens.Space.s - Tokens.Space.xxs)
     val tap = source.onClick?.let { Modifier.clickable(role = Role.Button, onClickLabel = source.clickLabel, onClick = it) } ?: Modifier
     Text(source.label, style = PersonaTheme.type.micro.copy(fontWeight = FontWeight.Medium), color = colors.text, maxLines = 1,
-        modifier = Modifier.clip(shape).then(tap).background(PersonaTheme.palette.statusSurface).padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.xxs / 2))
+        modifier = Modifier.then(if (source.onClick != null) Modifier.minimumInteractiveComponentSize() else Modifier)
+            .clip(shape).then(tap).background(PersonaTheme.palette.statusSurface).padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.xxs / 2))
 }
 
 // ------------------------------------------------------------------ quick filters

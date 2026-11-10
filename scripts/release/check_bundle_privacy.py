@@ -23,6 +23,10 @@ whole word, not inside a longer one (a Go binary carries Unicode tables and mini
 up inside ordinary words); app bundles keep the strict substring match except for short alphabetic fragments inside
 word tokens of the exact SHA-256-pinned, unmodified public Mermaid resource. Complete words, nonalphabetic values,
 long values and generic IP/email checks remain active there; any changed byte falls back to strict app matching.
+--whole-short also reads every gzip member inside a file: a Go build embeds code compressed (the runtime packages,
+server/internal/runtimepkg, are gzipped tars of JavaScript; the web client's hashed assets are stored gzipped), and
+its printable strings are noise until it is inflated. Each member is scanned like the rest of the file, besides the
+file's own bytes.
 Prints the file and the kind of hit, never the value.
 For public Go builds, narrowly scoped dependency constants are classified separately from private data. This requires
 a build with exactly the tags of server/build-tags.txt (the public marker and ts_omit_ feature tags), and unreplaced
@@ -32,11 +36,13 @@ or a complete comma-separated list; that fallback excludes URLs, surrounding con
 """
 import hashlib
 import ipaddress
+import itertools
 import os
 import re
 import struct
 import subprocess
 import sys
+import zlib
 from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -417,6 +423,45 @@ def texts(path: str, data=None, *, private_only=False):
         yield subprocess.run(["plutil", "-convert", "xml1", "-o", "-", path], capture_output=True, text=True).stdout
 
 
+GZIP_MAGIC = b"\x1f\x8b\x08"
+# A member's output bound: far above any package (runtimepkg.MaxSize, 8 MiB) or web asset, and a cap on a bomb.
+GZIP_MEMBER_LIMIT = 64 << 20
+GZIP_CHUNK = 1 << 20
+
+
+def gzip_members(data, limit=GZIP_MEMBER_LIMIT):
+    """The inflated bytes of each gzip member in data, wherever it starts. A magic that starts no valid stream yields
+    nothing; a member cut short, broken off or longer than limit yields what it inflated, so its text is still scanned.
+    The search goes on after a complete member, else from the next byte."""
+    view = memoryview(data)
+    start = data.find(GZIP_MAGIC)
+    while start >= 0:
+        inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        pieces, size, pos, end = [], 0, start, None
+        try:
+            while pos < len(data) and size < limit and not inflater.eof:
+                chunk = view[pos:pos + GZIP_CHUNK]
+                pos += len(chunk)
+                while chunk and size < limit and not inflater.eof:
+                    piece = inflater.decompress(chunk, limit - size)
+                    pieces.append(piece)
+                    size += len(piece)
+                    chunk = inflater.unconsumed_tail
+            if inflater.eof:
+                end = pos - len(inflater.unused_data)
+        except zlib.error:
+            pass
+        if size:
+            yield b"".join(pieces)
+        start = data.find(GZIP_MAGIC, end if end is not None else start + 1)
+
+
+def member_texts(data):
+    """Printable strings of every gzip member in data, read as the file's own bytes are."""
+    for member in gzip_members(data):
+        yield from (m.group(0).decode("ascii") for m in PRINTABLE.finditer(member))
+
+
 def remove_public_relay_url(text, configured_url, path="/relay"):
     """The app intentionally ships this exact public HTTPS endpoint, not its entire host or other URLs. path: the one
     path the endpoint may have (/relay for the push relay, /dl for the hub's update URL in a published personad)."""
@@ -473,7 +518,10 @@ def main():
             # Reference bytes can spell a configured value too; only generic IP/email detection skips them.
             modes = (False, True) if data[:6] == b"bplist" or data[:3] == b"bvx" else (False,)
             for private_only in modes:
-                for t in texts(path, data, private_only=private_only):
+                found = texts(path, data, private_only=private_only)
+                if whole_short and not private_only:
+                    found = itertools.chain(found, member_texts(data))
+                for t in found:
                     original_text = t
                     if not whole_short:
                         t = remove_public_relay_url(t, persona_config.get(cfg, "app.push_relay", ""))

@@ -1,7 +1,7 @@
 // What can be done with one item besides reading it (docs/assistant/inbox.md "Item actions"): "AI draft reply" (a reply in the
 // user's voice, edited and sent from here) and "Hand to AI" (the item as <persona-context> to Persona or a running agent;
 // Persona's main conversation may then write back to the item).
-import { chooseManager, noteConversation, otherManager, ownerHeaders } from "../../lib/manager-choice";
+import { ownerHeaders } from "../../lib/manager-choice";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorText } from "../../lib/api";
 import { startConversation } from "../../lib/assistant-start";
@@ -271,8 +271,8 @@ export function HandOffDialog({ item, onClose }: { item: InboxItem; onClose: () 
           });
           return;
         }
-        // its requests (feed, stop…) go to the item's manager, whose page shows it
-        adoptConversation(item.manager, to.session_id);
+        // its requests (feed, stop…) go to the item's manager; its page opens it there, the current assistant unchanged
+        adoptConversation(item.manager, to.session_id, to.machine_id);
         noteSent(to.machine_id, to.session_id, { text });
         void refreshAssistant().catch(() => {});
         remember();
@@ -292,12 +292,11 @@ export function HandOffDialog({ item, onClose }: { item: InboxItem; onClose: () 
         });
         return;
       }
-      // Persona here is the item's own manager's (docs/assistant/managers.md "Clients"), whatever the assistant page shows now;
-      // the page then shows that manager, where the conversation is
+      // Persona here is the item's own manager's (docs/assistant/managers.md "Clients"), whatever assistant is current;
+      // the conversation opens as itself and the current assistant stays
       const r = await startConversation({ prompt: text }, ownerHeaders(item.manager));
       // its requests (feed, stop…) go to that manager whatever the page shows later
-      noteConversation(r.session.session_id, otherManager(item.manager));
-      if (item.manager) chooseManager(item.manager);
+      adoptConversation(item.manager, r.session.session_id, r.session.machine_id);
       noteSent(r.session.machine_id, r.session.session_id, { text });
       void refreshAssistant().catch(() => {});
       if (markDone) void setDone(item, true);

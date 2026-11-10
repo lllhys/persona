@@ -59,5 +59,7 @@
   "rename": "Rename",
   "rename_label": "Computer name",
   "rename_hint": "Shown in every app and on this computer's Persona Link. Leave it empty to use the id; the id stays the same.",
-  "renamed": "Renamed to “{name}”"
+  "renamed": "Renamed to “{name}”",
+  "screen": "View screen",
+  "screen_hint": "Open this Mac's live screen (Screen Sharing)"
 }

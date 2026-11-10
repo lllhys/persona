@@ -23,12 +23,20 @@ type superviseFingerprint struct {
 func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, string) {
 	// State timestamps and elapsed minutes deliberately do not participate: a new
 	// turn or a periodic sweep is not new information when the last summary is unchanged.
-	key, _ := json.Marshal([]string{g.Todo, g.Machine, e.Machine, g.Session, e.AgentID, g.Kind, g.Report})
+	parts := []string{g.Todo, g.Machine, e.Machine, g.Session, e.AgentID, g.Kind, g.Report}
+	if g.To != "" { // a card's rung (ask_route.go): each conversation hears of it; the others' keys stay as they were
+		parts = append(parts, g.To)
+	}
+	key, _ := json.Marshal(parts)
 	text := e.Last
 	if text == "" {
 		text = g.Detail
 	}
-	payload, _ := json.Marshal([]any{strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(e.Ask), " "), e.Said, e.Evidence, e.Step, e.Steps})
+	fields := []any{strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(e.Ask), " "), e.Said, e.Evidence, e.Step, e.Steps}
+	if len(e.Asks) > 0 { // the cards it lists are what is new about it
+		fields = append(fields, e.Asks)
+	}
+	payload, _ := json.Marshal(fields)
 	sum := sha256.Sum256(payload)
 	return string(key), hex.EncodeToString(sum[:])
 }

@@ -80,5 +80,14 @@
   "deploy_gate_out": "Waiting for deploy: the running hub ({hub}) does not contain merge {merge} yet",
   "deploy_gate_unmerged": "The PR is not merged, so it is not deployed",
   "deploy_gate_unknown": "Deploy not confirmed: cannot tell whether the running hub has this merge",
-  "deploy_gate_not_in": "Waiting for deploy: the running hub ({hub}) does not have this PR's merge yet"
+  "deploy_gate_not_in": "Waiting for deploy: the running hub ({hub}) does not have this PR's merge yet",
+  "leader_reached": "Reached: {task}",
+  "leader_decision": "Needs your decision: {task}",
+  "leader_decision_why": "Needs your decision: {task}. {why}",
+  "leader_stuck_waiting": "Stuck for over a day, waiting on you: {task}",
+  "leader_stuck_stopped": "Stuck for over a day, stopped unfinished: {task}",
+  "leader_plan_waiting": "Plan waiting for your Start: {tasks}",
+  "progress_reached": "Reached: {text}",
+  "progress_doing": "Doing: {text}",
+  "progress_needs_you": "Needs you: {text}"
 }

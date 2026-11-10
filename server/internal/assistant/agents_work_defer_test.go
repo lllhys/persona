@@ -27,7 +27,7 @@ func (s *failingDeferredWorkStore) PutSessionWork(ctx context.Context, w db.Sess
 func deferredCardFixture(t *testing.T, store *failingDeferredWorkStore, options ...proto.QuestionOption) (*Service, *fakeHub, proto.Interaction) {
 	t.Helper()
 	f := newFakeHub()
-	c := stopped("s1", "Choose when to continue")
+	c := stopped("s1", "Continue now?")
 	c.UpdatedAt = time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
 	f.setSessions("box", c)
 	s := newServiceOn(t, f, store)
@@ -81,7 +81,7 @@ func TestWorkCardCancelAndDeferSurviveRestart(t *testing.T) {
 				t.Fatal("old card was accepted again")
 			}
 			// A genuinely new turn still receives its own question, even with the same text.
-			c := stopped("s1", "Choose when to continue")
+			c := stopped("s1", "Continue now?")
 			c.UpdatedAt = time.Now().UTC()
 			f.setSessions("box", c)
 			triage(t, s, "s1")

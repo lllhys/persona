@@ -130,7 +130,7 @@ func stageOf(text string) (stage, pr string) {
 	if prs := prLink.FindAllString(text, -1); len(prs) > 0 {
 		pr = prs[len(prs)-1]
 		stage = "review"
-		if mergedWords.MatchString(text) {
+		if said(mergedWords, text) {
 			stage = "merge"
 		}
 	}
@@ -140,7 +140,60 @@ func stageOf(text string) (stage, pr string) {
 	if stage == "deploy" && said(verifyWords, text) {
 		stage = "verify" // checked on what was deployed
 	}
+	if d, ok := deliveryMark(text); ok {
+		stage = "develop"
+		if st := deliveryStage(d.State); st != "" {
+			stage = st
+		}
+	}
 	return stage, pr
+}
+
+// taskStageKind defaults to code without criteria; a linked change is stronger evidence than a read-only start.
+// Plan permission alone is not read-only: code tasks start in plan mode to get a plan approved first.
+func taskStageKind(readonly bool, doneWhen []string, pr string) string {
+	if pr != "" {
+		return "code"
+	}
+	criteria := strings.TrimSpace(strings.Join(doneWhen, "\n"))
+	if readonly || criteria != "" && generalTaskWords.MatchString(criteria) && !codeTaskWords.MatchString(criteria) {
+		return "general"
+	}
+	return "code"
+}
+
+var codeTaskWords = lazyre.New(`(?i)\b(PR|MR|merge[ds]?|deploy(?:ed|ment)?|release[ds]?|fix(?:ed|es)?|bugs?|implement(?:ed|ation)?|code|tests?|commit(?:ted|s)?|builds?|features?|refactor(?:ed|ing)?)\b|修复|实现|代码|测试|提交|合并|合入|部署|上线|发布|功能|重构|编译`) // i18n-ignore: match what the agent or user wrote, not text shown
+var generalTaskWords = lazyre.New(`(?i)\b(research|investigate|report|plan|triage|cleanup|summary|analysis|doc review)\b|调研|报告|方案|分诊|清理|总结|分析`)                                                                                                   // i18n-ignore: match what the agent or user wrote, not text shown
+
+// advanceTaskReply handles progress and final answers identically, including the running-hub deploy check.
+func (s *Service) advanceTaskReply(ctx context.Context, t Todo, machine, session, text string) bool {
+	stage, pr := stageOf(text)
+	d, marked := deliveryMark(text)
+	if !marked && stageIndex(stage) < stageIndex("merge") && pr == "" && t.PRURL != "" && said(mergedWords, text) {
+		stage = "merge" // later replies need not repeat the link already kept on the task
+	}
+	if stage == "develop" && pr == "" && !marked {
+		return false // most progress messages carry no new stage evidence
+	}
+	stage, deployed := s.gateDeployStage(ctx, t, stage, pr, machine, session, text)
+	if !marked && !deployed {
+		if cur, ok := s.todoNow(t.ID); ok {
+			t = cur
+		}
+		if t.Delivery != nil {
+			if st := deliveryStage(t.Delivery.State); st != "" {
+				stage = st
+			} else if t.Delivery.State == deliveryNone {
+				stage = "develop"
+			}
+		}
+	}
+	if marked && (stage == deliveryStage(d.State) || d.State == deliveryNone) {
+		d.At = time.Now().UTC()
+		s.setTaskDelivery(ctx, t.ID, d) // a held deploy check takes precedence over the agent's mark
+	}
+	s.setTaskStage(ctx, t.ID, stage, pr)
+	return deployed
 }
 
 type reportItem struct {
@@ -157,22 +210,26 @@ type reportItem struct {
 }
 
 type reportBook struct {
-	mu      sync.Mutex
-	sending sync.Mutex             // serializes sendReports: a later timer must not take a batch while a post is still in flight
-	pending map[string]*reportItem // by todo id: the latest change of each
-	timer   *time.Timer
-	stages  map[string]todoStage // by todo id (reportStagesKey)
-	loaded  bool
-	delay   time.Duration  // 0: reportDelay (the tests' is shorter)
-	retry   time.Duration  // 0: reportRetryDelay (the tests' is shorter)
-	cuts    map[string]int // by todo id: interrupted turns in a row (a finished or closed one resets it)
+	stageWriting sync.Mutex // serialize stage/delivery storage through todo publication
+	mu           sync.Mutex
+	sending      sync.Mutex             // serializes sendReports: a later timer must not take a batch while a post is still in flight
+	pending      map[string]*reportItem // by todo id: the latest change of each
+	timer        *time.Timer
+	stages       map[string]todoStage // by todo id (reportStagesKey)
+	loaded       bool
+	delay        time.Duration  // 0: reportDelay (the tests' is shorter)
+	retry        time.Duration  // 0: reportRetryDelay (the tests' is shorter)
+	cuts         map[string]int // by todo id: interrupted turns in a row (a finished or closed one resets it)
 }
 
 type todoStage struct {
 	Stage    string        `json:"stage"`
+	Kind     string        `json:"stage_kind,omitempty"`
 	PR       string        `json:"pr,omitempty"`
 	Delivery *TodoDelivery `json:"delivery,omitempty"` // delivery.go
 	Deploy   *deployWatch  `json:"deploy,omitempty"`   // deploy_check.go: held until the running hub has the work
+	Verified bool          `json:"verified,omitempty"` // explicit acceptance outranks delivery and reply keywords
+	Check    *TodoCheck    `json:"check,omitempty"`    // task_check.go
 }
 
 const reportStagesKey = "assistant.todo_stages"
@@ -213,7 +270,21 @@ func (s *Service) taskReport(t Todo, state, machine string, session [2]string, t
 
 // setTaskStage moves task id to stage (never back) with its PR, kept in the store and on the todo.
 func (s *Service) setTaskStage(ctx context.Context, id, stage, pr string) {
+	s.setTaskStageKind(ctx, id, stage, pr, "", false)
+}
+
+func (s *Service) setTaskStageKind(ctx context.Context, id, stage, pr, kind string, verified bool) {
+	if !verified && stage == "verify" {
+		if t, ok := s.todoNow(id); ok && t.Supervision != nil {
+			v := t.Supervision
+			if v.state(t) == reviewRework || v.state(t) == reviewNeedsUser || userCheckAsked(t) {
+				stage = "deploy" // a keyword cannot pass a check the review left outstanding
+			}
+		}
+	}
 	b := &s.reports
+	b.stageWriting.Lock()
+	defer b.stageWriting.Unlock()
 	b.mu.Lock()
 	if !s.loadStagesLocked(ctx) {
 		b.mu.Unlock()
@@ -222,6 +293,31 @@ func (s *Service) setTaskStage(ctx context.Context, id, stage, pr string) {
 	}
 	cur := b.stages[id]
 	changed := false
+	if verified && !cur.Verified {
+		cur.Verified, changed = true, true
+	}
+	if stage == "unverified" {
+		// A later review requests another check: an older acceptance or keyword match is not a pass.
+		if cur.Verified {
+			cur.Verified, changed = false, true
+		}
+		stage = ""
+		if cur.Stage == "verify" {
+			cur.Stage, changed = "deploy", true
+			if cur.Delivery != nil && deliveryStage(cur.Delivery.State) != "" {
+				cur.Stage = deliveryStage(cur.Delivery.State)
+			}
+		}
+	}
+	if cur.Verified {
+		stage = "verify"
+	}
+	if pr != "" || cur.PR != "" {
+		kind = "code"
+	}
+	if kind != "" && kind != cur.Kind {
+		cur.Kind, changed = kind, true
+	}
 	if stageIndex(stage) > stageIndex(cur.Stage) {
 		cur.Stage, changed = stage, true
 	}
@@ -242,7 +338,7 @@ func (s *Service) setTaskStage(ctx context.Context, id, stage, pr string) {
 	}
 	s.todos.mu.Lock()
 	if t := s.todos.todos[id]; t != nil {
-		t.Stage, t.PRURL = cur.Stage, cur.PR
+		t.Stage, t.PRURL, t.StageKind, t.stageVerified = cur.Stage, cur.PR, cur.Kind, cur.Verified
 	}
 	s.todos.mu.Unlock()
 	s.todosChanged(ctx)
@@ -625,7 +721,13 @@ func (s *Service) reportItemView(l i18n.Lang, web string, stages map[string]todo
 	if it.machine != "" {
 		md.WriteString(" · " + feishubot.EscapeMarkdown(it.machine))
 	}
-	md.WriteString("\n" + stageBar(l, stages[t.ID].Stage))
+	if t.StageKind != "general" {
+		stage := t.Stage
+		if stage == "" {
+			stage = stages[t.ID].Stage
+		}
+		md.WriteString("\n" + stageBar(l, stage))
+	}
 	if text := strings.TrimSpace(it.text); text != "" {
 		md.WriteString("\n" + feishubot.CardMarkdown(clipMarkdown(text, 300)))
 	}

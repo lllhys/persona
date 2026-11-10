@@ -26,6 +26,12 @@ class ChatLinesMemo {
     private var openWork: Set<String> = emptySet()
     /** The part each tool id of the kept parts is in; each is in one only. */
     private val owners = HashMap<String, Int>()
+    /** Old notices may carry only task_id; the launch receipt provides their tool binding across turn cuts. */
+    private var taskCalls: Map<String, String> = emptyMap()
+
+    private val LineItem.toolId: String?
+        get() = if (kind == "tool_use" || kind == "tool_result" || kind == "image") item.toolUseId ?: taskCalls[id]
+            else if (task?.kind == "agent") taskCalls[id] else null
 
     /** How many leading items the last call kept the parts of, for tests. */
     internal var reused = 0
@@ -33,6 +39,7 @@ class ChatLinesMemo {
 
     fun lines(items: List<LineItem>, options: LineOptions = LineOptions()): ChatSnapshot {
         val source = lineSource(items, options)
+        taskCalls = TaskIndex.build(source).calls
         val compacting = hasCompactions(source)
         var kept = if (compacting == this.compacting) unchanged(source) else 0
         // A tool id in the changed items that a kept part has too: that part is not cut from them.
@@ -41,7 +48,7 @@ class ChatLinesMemo {
             val owner = source[i].toolId?.let(owners::get) ?: continue
             if (owner < kept) kept = owner
         }
-        for (k in kept until parts.size) parts[k].items.forEach { item -> item.toolId?.let { owners.remove(it) } }
+        owners.entries.removeAll { it.value >= kept }
         start = parts.subList(0, kept).sumOf { it.items.size }
         val added = split(source.subList(start, source.size)).map { part ->
             Part(part, buildBlocks(buildLineRows(foldCompactions(part, compacting))))
@@ -111,7 +118,3 @@ class ChatLinesMemo {
 
 /** A user message that is not queued: it starts a turn, see [ChatLinesMemo]. */
 private val LineItem.isCut get() = kind == "text" && item.role == "user" && item.queued != true
-
-/** The id [buildLineRows] looks a tool's result and images up by, across the whole chat. */
-private val LineItem.toolId: String?
-    get() = if (kind == "tool_use" || kind == "tool_result" || kind == "image") item.toolUseId else null

@@ -116,6 +116,7 @@ describe("来源：飞书群 / 终端 / 桌面端 (#2526)", () => {
     expect(sessionSource(s("h", "idle", "/", { pane_id: "w1:p1" }))).toBe("terminal");
     expect(sessionSource(s("c", "idle", "/", { pane_id: "herdr-core:7" }))).toBe("terminal");
     expect(sessionSource(s("o", "idle", "/", { pane_id: "orca:1" }))).toBe("terminal");
+    expect(sessionSource(s("t", "idle", "/", { pane_id: "tern:3", host: "tern", space_kind: "tern" }))).toBe("terminal");
     expect(sessionSource(s("x", "idle", "/", { space_kind: "codex_app", source_kind: "codex_history" }))).toBe("desktop");
     expect(sessionSource(s("p", "idle", "/", { host: "paseo", source_kind: "runtime", source_instance_id: "paseo" }))).toBe("desktop");
     expect(sessionSource(s("cy", "idle", "/", { host: "cindy", source_kind: "runtime", source_instance_id: "cindy" }))).toBe("desktop");

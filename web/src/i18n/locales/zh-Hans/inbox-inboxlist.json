@@ -62,5 +62,6 @@
   "pick_group": "选中「{name}」整组",
   "load_older": "加载更早的",
   "loading_older": "正在加载…",
-  "older_failed": "没加载到更早的：{error}"
+  "older_failed": "没加载到更早的：{error}",
+  "subscriptions": "订阅来源"
 }

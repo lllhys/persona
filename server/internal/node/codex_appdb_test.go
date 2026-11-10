@@ -1,0 +1,183 @@
+package node
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+const (
+	appChat     = "019a0000-0000-7000-8000-000000000001" // in a project; its rollout is gone
+	appOld      = "019a0000-0000-7000-8000-000000000002" // without a project; its rollout is older than two weeks
+	appDeleted  = "019a0000-0000-7000-8000-000000000003" // still in the sidebar's list, deleted from the database
+	appArchived = "019a0000-0000-7000-8000-000000000004"
+	appExec     = "019a0000-0000-7000-8000-000000000005" // in the database, not in the sidebar
+)
+
+const codexAppSchema = `CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL, source TEXT NOT NULL, cwd TEXT NOT NULL, title TEXT NOT NULL,
+	archived INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER, name TEXT);`
+
+// writeCodexApp writes the App's sidebar (appChat in project Alpha at project; appOld, appDeleted and appArchived without
+// one) and runs sql against its state database in home.
+func writeCodexApp(t *testing.T, home, project, sql string) {
+	t.Helper()
+	sqlite := sqlite3WithJSON(t)
+	state := fmt.Sprintf(`{"projectless-thread-ids": [%q, %q, %q, "not-an-id"],
+		"thread-project-assignments": {%q: {"projectKind": "local", "projectId": "p1"}},
+		"local-projects": {"p1": {"name": "Alpha", "rootPaths": [%q]}}}`, appOld, appDeleted, appArchived, appChat, project)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(sqlite, filepath.Join(home, "state_5.sqlite"), sql).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3: %v: %s", err, out)
+	}
+	codexAppDBs.Lock()
+	delete(codexAppDBs.byHome, home) // read the database again now, not after codexAppDBRefresh
+	codexAppDBs.Unlock()
+}
+
+func codexAppRow(id, rollout, cwd, name string, updated time.Time, archived int) string {
+	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+	return fmt.Sprintf("INSERT INTO threads VALUES (%s, %s, 0, %d, 'vscode', %s, 'auto title', %d, %d, %s);",
+		q(id), q(rollout), updated.Unix(), q(cwd), archived, updated.UnixMilli(), q(name))
+}
+
+// writeAppRollout writes a Codex App rollout (originator Codex Desktop) under home, last written at written.
+func writeAppRollout(t *testing.T, home, id, cwd string, written time.Time) string {
+	t.Helper()
+	dir := filepath.Join(home, "sessions", written.Format("2006"), written.Format("01"), written.Format("02"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "rollout-"+written.Format("2006-01-02T15-04-05")+"-"+id+".jsonl")
+	meta := fmt.Sprintf(`{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":%q,"cwd":%q,"originator":"Codex Desktop","source":"vscode"}}`, id, cwd)
+	if err := os.WriteFile(p, []byte(meta+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, written, written); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func rowsByThread(rows []proto.Session) map[string]proto.Session {
+	out := map[string]proto.Session{}
+	for _, s := range rows {
+		out[s.SourceThreadID] = s
+	}
+	return out
+}
+
+// The App's sidebar lists chats whose rollout it deleted after moving their history into its database, and chats whose
+// rollout is older than the two weeks rollouts looks at: both are listed, as the sidebar lists them (#3305).
+func TestCodexAppChatsAreListedLikeTheSidebar(t *testing.T) {
+	n := remoteTestNode(t)
+	home := n.codexHome()
+	project := t.TempDir()
+	updated := time.Now().Add(-20 * 24 * time.Hour).Truncate(time.Millisecond)
+	elsewhere := t.TempDir()
+	old := writeAppRollout(t, home, appOld, elsewhere, updated)
+	writeCodexApp(t, home, project, codexAppSchema+
+		codexAppRow(appChat, filepath.Join(home, "sessions", "gone.jsonl"), filepath.Join(project, "sub"), "Alpha chat", updated, 0)+
+		codexAppRow(appOld, old, elsewhere, "Old chat", updated, 0)+
+		codexAppRow(appArchived, "", project, "Archived", updated, 1)+
+		codexAppRow(appExec, "", project, "A run", updated, 0))
+
+	rows := rowsByThread(n.codexSessions(map[string]bool{}))
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want the two chats the sidebar shows", rows)
+	}
+	chat, ok := rows[appChat]
+	if !ok {
+		t.Fatalf("the chat without a rollout is missing: %v", rows)
+	}
+	if chat.Title != "Alpha chat" || chat.Cwd != filepath.Join(project, "sub") || !chat.UpdatedAt.Equal(updated) || chat.Status != proto.StatusOffline {
+		t.Fatalf("chat = %+v", chat)
+	}
+	if chat.AgentName != "Codex App" || chat.SpaceKind != "codex_app" || chat.SpaceID != "codex-project:"+realPath(project) {
+		t.Fatalf("chat placed as %q %q %q, want in its project", chat.AgentName, chat.SpaceKind, chat.SpaceID)
+	}
+	if chat.Capabilities.Send {
+		t.Fatal("without the App running there is no way to send")
+	}
+	if o, ok := rows[appOld]; !ok || o.AgentName != "Codex App" || o.UpdatedAt.Before(updated.Add(-time.Second)) {
+		t.Fatalf("the chat with an old rollout = %+v", o)
+	}
+	if src, _ := n.codexSource(rows[appOld].SessionID); src.path != old {
+		t.Fatalf("the old chat reads %q, want its rollout", src.path)
+	}
+}
+
+// A chat whose rollout is gone is sent to through the App's bus, as one with a rollout.
+func TestCodexAppChatWithoutRolloutSendsThroughTheApp(t *testing.T) {
+	home, bus := startFakeCodexBus(t, appChat)
+	project := t.TempDir()
+	writeCodexApp(t, home, project, codexAppSchema+codexAppRow(appChat, "", project, "Alpha chat", time.Now(), 0))
+	n := remoteTestNode(t)
+	n.configureCodex(proto.CodexConfig{Homes: []string{home}})
+
+	var chat proto.Session
+	for _, s := range n.codexSessions(map[string]bool{}) {
+		if s.SourceThreadID == appChat {
+			chat = s
+		}
+	}
+	if chat.SessionID == "" || !chat.Capabilities.Send || chat.ReadOnlyReason != "" || chat.SpaceKind != "codex_app" {
+		t.Fatalf("chat = %+v", chat)
+	}
+	if err := n.sendCodex(context.Background(), chat.SessionID, "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case params := <-bus.turns:
+		if params["conversationId"] != appChat {
+			t.Fatalf("turn for %v", params["conversationId"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no turn reached the App")
+	}
+}
+
+// Without the database, or with one whose schema has other columns, nothing more is listed than before.
+func TestCodexAppDatabaseItCannotReadListsNothingMore(t *testing.T) {
+	for name, sql := range map[string]string{
+		"no database":  "",
+		"other schema": `CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL); INSERT INTO threads VALUES ('` + appChat + `', '');`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			n := remoteTestNode(t)
+			home := n.codexHome()
+			writeCodexApp(t, home, t.TempDir(), sql)
+			if sql == "" {
+				os.Remove(filepath.Join(home, "state_5.sqlite"))
+			}
+			if rows := n.codexSessions(map[string]bool{}); len(rows) != 0 {
+				t.Fatalf("rows = %v", rows)
+			}
+		})
+	}
+}
+
+func TestCodexAppDBPathTakesTheNewestSchema(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"state_5.sqlite", "state_12.sqlite", "state_x.sqlite", "logs_2.sqlite"} {
+		os.WriteFile(filepath.Join(home, name), nil, 0o600)
+	}
+	if got := codexAppDBPath(home); !strings.HasSuffix(got, "state_12.sqlite") {
+		t.Fatalf("db = %s", got)
+	}
+	if got := codexAppDBPath(t.TempDir()); got != "" {
+		t.Fatalf("db without one = %q", got)
+	}
+}

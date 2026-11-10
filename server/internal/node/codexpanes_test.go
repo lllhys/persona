@@ -83,10 +83,12 @@ func TestCodexPanesAreFoundByTheThreadInTheirTitle(t *testing.T) {
 	}
 	resumed := pane("w:p5", "参考时区替换能力 | repo", proto.StatusWorking)
 	resumed.AgentSession = &host.AgentSession{Kind: "id", Value: staleStart} // a /resume in Codex since
+	n.panes["w:p9"] = staleStart
 	n.setAgents([]host.Agent{
+		pane("w:p9", "Unrecognised current title | repo", proto.StatusBlocked),
 		pane("w:p1", "repo", proto.StatusIdle), // a new thread: no name, guessed after the named ones
-		pane("w:p2", "补测多客户端请求特征 | repo", proto.StatusIdle),
-		pane("w:p3", "一个很长很长的线程名字会... | repo", proto.StatusIdle),
+		pane("w:p2", "[ . ] Action Required | 补测多客户端请求特征 | repo", proto.StatusBlocked),
+		pane("w:p3", "[ ! ] Action Required | 一个很长很长的线程名字会... | repo", proto.StatusBlocked),
 		resumed,
 	})
 	want := map[string]string{"w:p5": oldThread, "w:p2": newThread, "w:p3": longName, "w:p1": otherNew}
@@ -97,6 +99,10 @@ func TestCodexPanesAreFoundByTheThreadInTheirTitle(t *testing.T) {
 	}
 	if len(n.agents) != len(want) {
 		t.Fatalf("%d panes mapped, want %d: %v", len(n.agents), len(want), n.agents)
+	}
+	// A named pane that cannot be identified must not acquire another thread from this directory.
+	if id := n.codexSession(pane("w:p9", "Unknown title | repo", proto.StatusBlocked), nil); id != "" {
+		t.Fatalf("unrecognised named pane was assigned another conversation: %s", id)
 	}
 
 	// The working pane's session is listed working, with the new turn readable.

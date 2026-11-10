@@ -22,6 +22,13 @@ func EnvironmentMap(input map[string]string) map[string]string {
 // AddMCPAliases registers the identical built-in handler under both namespaces.
 // Extension namespaces are not cloned, and their permission scopes never change.
 func AddMCPAliases(servers map[string]any) map[string]any {
+	return MCPRegistrationServers(servers, true)
+}
+
+// MCPRegistrationServers prepares the built-in handler for a new process. Legacy
+// peers and resumed sessions retain the alias; negotiated new sessions use only
+// Persona. Extension namespaces and their permission scopes never change.
+func MCPRegistrationServers(servers map[string]any, legacy bool) map[string]any {
 	builtin := servers["persona"]
 	if builtin == nil {
 		return servers
@@ -31,16 +38,31 @@ func AddMCPAliases(servers map[string]any) map[string]any {
 			config["env"] = EnvironmentMap(env)
 		}
 	}
-	servers[MCPServer] = builtin
+	if legacy {
+		servers[MCPServer] = builtin
+	}
 	return servers
 }
+
+// MCPToolNames recognizes both namespaces in historical transcripts, regardless
+// of which names a newly started process registers or permits.
 func MCPToolNames(tools []string) []string {
+	return MCPAllowedToolNames(tools, true)
+}
+
+// MCPAllowedToolNames returns exactly the tool names permitted by the process's
+// registration policy. Use MCPToolNames instead when reading historical calls.
+func MCPAllowedToolNames(tools []string, legacy bool) []string {
 	out := make([]string, 0, len(tools)*2)
 	for _, name := range tools {
-		out = append(out, "mcp__persona__"+name, "mcp__"+MCPServer+"__"+name)
+		out = append(out, "mcp__persona__"+name)
+		if legacy {
+			out = append(out, "mcp__"+MCPServer+"__"+name)
+		}
 	}
 	return out
 }
+
 func CodexMCPAliases(args []string) []string {
 	out := append([]string(nil), args...)
 	for i := 0; i+1 < len(args); i++ {

@@ -1,0 +1,9 @@
+{
+  "title": "订阅来源",
+  "sidebar": "侧边栏",
+  "redraw": "重新画",
+  "row": "订阅",
+  "counts_on": "{on} 个开着",
+  "counts_failing": "{on} 个开着 · {failing} 个出错",
+  "counts_none": "可以订阅"
+}

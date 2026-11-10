@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/db"
@@ -73,6 +74,9 @@ type pairCodeReply struct {
 	Added   bool              `json:"added,omitempty"`
 	Command string            `json:"command,omitempty"`
 	Install map[string]string `json:"install,omitempty"`
+	// Manager is the manager the computer belongs to now (entryOwner): the one add.manager named, unless it could not
+	// be. A hub from before add.manager leaves it out (and adds every computer to the carrier).
+	Manager string `json:"manager,omitempty"`
 }
 
 type qrImage struct {
@@ -283,6 +287,12 @@ func (h *Hub) serveComputerCode(w http.ResponseWriter, r *http.Request, who prin
 			err: i18n.Err("hub-pairing.tls_required"), extra: map[string]any{"action": "enable_tls"}})
 		return
 	}
+	if add != nil {
+		if err := h.addTarget(r.Context(), strings.TrimSpace(add.Manager)); err != nil {
+			writeAddMachineErr(w, err) // nothing written
+			return
+		}
+	}
 	actor := trustActor(who)
 	h.machineAdd.Lock()
 	id, added, err := h.computerFor(r.Context(), machine, add, fromDevice, actor)
@@ -296,7 +306,7 @@ func (h *Hub) serveComputerCode(w http.ResponseWriter, r *http.Request, who prin
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	reply := pairCodeReply{pairCode: p, Trust: db.TrustConfirmed, Added: added,
+	reply := pairCodeReply{pairCode: p, Trust: db.TrustConfirmed, Added: added, Manager: h.entryOwner(id),
 		Command: "persona-link pair '" + p.PairURL + "'", Install: h.computerInstall(p.PairURL)}
 	if h.machinePending(id) {
 		reply.Trust = trustPending

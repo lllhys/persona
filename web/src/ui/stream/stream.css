@@ -20,6 +20,8 @@
 .prose-j.prose-j code { border-radius: 6px; padding: .12em .4em; }
 .prose-j.prose-j pre { border-radius: 12px; padding: 16px; overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
 .prose-j.prose-j pre code { padding: 0; border-radius: 0; white-space: inherit; }
+.prose-j.prose-j .code-block { border-radius: 12px; }
+.prose-j.prose-j .code-block > pre { margin: 0; border-radius: 0; }
 .prose-j.prose-compact pre { padding: 6px 10px; }
 
 /* highlight.js classes (rehype-highlight). Colors are the page's tokens, so light and dark each have their own set;

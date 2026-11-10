@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,5 +172,167 @@ func TestGitHubRateLimitedDownloads(t *testing.T) {
 	other := sha256.Sum256([]byte("something else"))
 	if _, _, err := mk.Download(context.Background(), &MarketPackage{URL: "dist/x.tar.gz", SHA256: hex.EncodeToString(other[:])}, filepath.Join(t.TempDir(), "d")); !errors.Is(err, ErrChecksum) {
 		t.Fatalf("a package from raw is not checked: %v", err)
+	}
+}
+
+// Committed archives and plain nonofficial catalogs use the same credential and
+// configured ref. A commit ref pins both reads without a new package locator.
+func TestGitHubRepositoryArchiveDistribution(t *testing.T) {
+	archive := tarGz(t, map[string]string{ManifestFile: exampleManifest, "bin/notes-linux": "#!/bin/sh\n"})
+	pkg := MarketPackage{URL: "packages/example-notes/1.2.0/example-notes-1.2.0.tar.gz", SHA256: ociSum(archive), Size: int64(len(archive))}
+	catalog, err := json.Marshal(MarketIndex{MarketVersion: 1, Name: "Example market", Extensions: []MarketEntry{{Manifest: json.RawMessage(exampleManifest), Packages: []MarketPackage{pkg}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"", "main", strings.Repeat("a", 40)} {
+		t.Run("ref="+ref, func(t *testing.T) {
+			var catalogs, archives atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer fixture-token" || r.Header.Get("Accept") != "application/vnd.github.raw" || r.Header.Get("X-GitHub-Api-Version") != "2022-11-28" || r.URL.Query().Get("ref") != ref {
+					t.Error("repository read did not preserve credential, raw media type or ref")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				switch r.URL.Path {
+				case "/repos/example/market/contents/" + IndexFile:
+					catalogs.Add(1)
+					_, _ = w.Write(catalog)
+				case "/repos/example/market/contents/" + pkg.URL:
+					archives.Add(1)
+					_, _ = w.Write(archive)
+				default:
+					t.Error("unexpected repository request")
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			market := &Market{Spec: MarketSpec{Kind: "github", Owner: "example", Repo: "market", Ref: ref}, Token: "fixture-token", Client: server.Client(), GitHubAPI: server.URL}
+			f, err := market.FetchSigned(t.Context())
+			if err != nil || len(f.Warnings) != 0 || len(f.Index.Extensions) != 1 {
+				t.Fatalf("plain nonofficial catalog: %v", err)
+			}
+			if f.Index.Extensions[0].verifiedKey != "" {
+				t.Fatal("unsigned catalog acquired verified provenance")
+			}
+			// Installation creates a new Market; no fetch-time state is needed.
+			installer := *market
+			file, name, err := installer.Download(t.Context(), f.Index.Extensions[0].PackageFor("linux-amd64"), t.TempDir())
+			if err != nil || name != pkg.URL {
+				t.Fatalf("repository archive: name=%q, error=%v", name, err)
+			}
+			if got, err := fileSum(file); err != nil || got != pkg.SHA256 || catalogs.Load() != 1 || archives.Load() != 1 {
+				t.Fatal("archive was not read and checksum-verified through the API")
+			}
+		})
+	}
+}
+
+func TestGitHubRepositoryArchiveFailures(t *testing.T) {
+	data := []byte("repository archive fixture")
+	var calls atomic.Int32
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Error("repository archive missing its market credential")
+		}
+		_, _ = w.Write(data)
+	}))
+	defer api.Close()
+	market := &Market{Spec: MarketSpec{Kind: "github", Owner: "example", Repo: "market"}, Token: "fixture-token", Client: api.Client(), GitHubAPI: api.URL}
+	for _, path := range []string{"../archive.tar.gz", "packages/../archive.tar.gz", "/archive.tar.gz", "//other.example.com/archive.tar.gz", "packages//archive.tar.gz", "packages/./archive.tar.gz"} {
+		if _, _, err := market.Download(t.Context(), &MarketPackage{URL: path, SHA256: ociSum(data)}, t.TempDir()); err == nil {
+			t.Fatalf("unsafe relative path accepted: %q", path)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatal("unsafe relative path reached the repository API")
+	}
+	for _, tc := range []struct {
+		name string
+		pkg  MarketPackage
+	}{
+		{"checksum", MarketPackage{URL: "packages/archive.tar.gz", SHA256: strings.Repeat("0", 64)}},
+		{"size", MarketPackage{URL: "packages/archive.tar.gz", SHA256: ociSum(data), Size: int64(len(data) + 1)}},
+		{"declared-limit", MarketPackage{URL: "packages/archive.tar.gz", SHA256: ociSum(data), Size: PackageMost + 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			_, _, err := market.Download(t.Context(), &tc.pkg, dir)
+			if err == nil || tc.name == "checksum" && !errors.Is(err, ErrChecksum) {
+				t.Fatalf("invalid repository archive accepted: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "download")); !os.IsNotExist(err) {
+				t.Fatal("failed archive left a staging download")
+			}
+		})
+	}
+	if calls.Load() != 2 {
+		t.Fatal("declared oversize archive should fail before the API request")
+	}
+	var bounded strings.Builder
+	if err := market.getRepoFile(t.Context(), "packages/archive.tar.gz", &bounded, 8); err == nil || bounded.Len() != 9 {
+		t.Fatal("repository read did not stop at limit plus one")
+	}
+}
+
+// Tokens survive same-origin redirects, but not an external hop or its return
+// to the API. Unsafe redirects fail before reaching their destination.
+func TestGitHubRepositoryArchiveRedirectIsolation(t *testing.T) {
+	data := []byte("redirected repository archive")
+	for _, mode := range []string{"same-origin", "external-return", "downgrade", "userinfo"} {
+		t.Run(mode, func(t *testing.T) {
+			var apiCalls, anonymousCalls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/repos/") {
+					apiCalls.Add(1)
+					if r.Host != "api.example.com" || r.Header.Get("Authorization") != "Bearer fixture-token" {
+						t.Error("initial API read missing its origin-bound token")
+					}
+					target := "https://api.example.com/archive"
+					switch mode {
+					case "external-return":
+						target = "https://cdn.example.com/archive"
+					case "downgrade":
+						target = "http://api.example.com/archive"
+					case "userinfo":
+						target = "https://user:pass@cdn.example.com/archive"
+					}
+					http.Redirect(w, r, target, http.StatusFound)
+					return
+				}
+				if mode == "same-origin" {
+					if r.Header.Get("Authorization") != "Bearer fixture-token" {
+						t.Error("same-origin redirect dropped the token")
+					}
+				} else {
+					anonymousCalls.Add(1)
+					if r.Header.Get("Authorization") != "" {
+						t.Error("redirect leaked or restored the token")
+					}
+				}
+				if r.Host == "cdn.example.com" {
+					http.Redirect(w, r, "https://api.example.com/archive", http.StatusFound)
+					return
+				}
+				_, _ = w.Write(data)
+			}))
+			defer server.Close()
+			target, _ := url.Parse(server.URL)
+			client := &http.Client{Transport: mappedRegistryTransport{target, server.Client().Transport}}
+			market := &Market{Spec: MarketSpec{Kind: "github", Owner: "example", Repo: "market"}, Token: "fixture-token", Client: client, GitHubAPI: "https://api.example.com"}
+			pkg := &MarketPackage{URL: "packages/archive.tar.gz", SHA256: ociSum(data), Size: int64(len(data))}
+			_, _, err := market.Download(t.Context(), pkg, t.TempDir())
+			blocked := mode == "downgrade" || mode == "userinfo"
+			if (err != nil) != blocked || apiCalls.Load() != 1 {
+				t.Fatalf("redirect outcome: %v", err)
+			}
+			wantAnonymous := int32(0)
+			if mode == "external-return" {
+				wantAnonymous = 2
+			}
+			if anonymousCalls.Load() != wantAnonymous {
+				t.Fatal("unexpected redirect reached a destination")
+			}
+		})
 	}
 }

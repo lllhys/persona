@@ -350,6 +350,9 @@ func styleChoice(line string) string {
 // These wait for a person, so the caller reports them at once instead of polling until the timeout.
 func firstRunScreen(screen string) string {
 	switch {
+	case strings.Contains(screen, "WARNING: Claude Code running in Bypass Permissions mode") && strings.Contains(screen, "Yes, I accept"):
+		return "Claude Code is waiting for its first Bypass Permissions confirmation: choose default permission mode, " +
+			"or review and confirm that mode in a terminal on this machine before retrying"
 	case strings.Contains(screen, "Select login method:"):
 		return "this machine's Claude Code has not been set up yet: it is showing the sign-in screen, run claude once in a terminal there"
 	case strings.Contains(screen, "Welcome to Claude Code") && strings.Contains(screen, "Select"):

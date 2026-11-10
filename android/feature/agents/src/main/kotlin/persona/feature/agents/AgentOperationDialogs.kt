@@ -2,6 +2,7 @@ package persona.feature.agents
 
 import persona.core.designsystem.text
 import persona.core.designsystem.*
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import persona.core.designsystem.icons.PhIcons
@@ -14,6 +15,7 @@ import persona.core.contracts.Session
 import persona.core.domain.sort.SessionRename
 import persona.core.domain.sort.closeConfirmation
 import persona.core.domain.sort.deleteConfirmation
+import persona.core.domain.sort.isTern
 
 internal sealed interface AgentOperationDialog {
     val session: Session
@@ -60,14 +62,14 @@ internal fun AgentOperationDialog(dialog: AgentOperationDialog, model: AgentsVie
             val newTab = SessionRename.changes(session, name, tab).tabName
             JDialog(
                 onDismiss = dismiss, title = stringResource(if (space) R.string.agents_dialog_rename_space else R.string.agents_action_rename),
-                text = stringResource(if (space) R.string.agents_dialog_rename_space_text else R.string.agents_dialog_rename_text),
+                text = stringResource(renameNote(session, space)),
                 confirmEnabled = newName != null || newTab != null,
                 confirm = stringResource(R.string.agents_dialog_save) to {
                     if (space) model.renameSpace(session, requireNotNull(newName)) else model.rename(session, newName, newTab)
                     dismiss()
                 }, content = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (hasTab) JTextField(tab, { tab = it }, singleLine = true, label = stringResource(R.string.agents_dialog_tab_name))
+                        if (hasTab) JTextField(tab, { tab = it }, singleLine = true, label = stringResource(tabNameLabel(session)))
                         JTextField(name, { name = it }, singleLine = true, label = stringResource(if (space) R.string.agents_dialog_space_name else R.string.agents_dialog_session_name))
                     }
                 },
@@ -75,6 +77,22 @@ internal fun AgentOperationDialog(dialog: AgentOperationDialog, model: AgentsVie
         }
     }
 }
+
+/**
+ * The note of a rename dialog: what else the new name renames (iOS `SpaceRenameForm.note`, `SessionRenameForm.tabNote`). A
+ * space is a herdr workspace, or in Tern one of its sessions (Tern's spaces are its sessions); a pane's tab is herdr's or
+ * Tern's.
+ */
+@StringRes
+internal fun renameNote(session: Session, space: Boolean): Int = when {
+    space -> if (session.spaceKind == "tern") R.string.agents_dialog_rename_space_text_tern else R.string.agents_dialog_rename_space_text
+    session.isTern -> R.string.agents_dialog_rename_text_tern
+    else -> R.string.agents_dialog_rename_text
+}
+
+/** The tab field of a session's rename: a Tern pane's tab is a Tern tab. */
+@StringRes
+internal fun tabNameLabel(session: Session): Int = if (session.isTern) R.string.agents_dialog_tab_name_tern else R.string.agents_dialog_tab_name
 
 /** "Link to to-do…" / "Move to another to-do…" / "Unlink from to-do" of a project (iOS SpaceTodoMenu); [linked] when it is on a to-do. */
 internal class SpaceTodoActions(val linked: Boolean, val onLink: () -> Unit, val onUnlink: (() -> Unit)?)

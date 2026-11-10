@@ -4,7 +4,7 @@ import Network
 import UIKit
 #endif
 
-/// `phone_device_info`: model, OS, battery, storage, network, locale.
+/// `phone_device_info`: model, OS, battery, storage, network, locale, the app's version.
 enum DeviceTool {
     static var tools: [PhoneTool] {
         [
@@ -14,8 +14,9 @@ enum DeviceTool {
                     description: """
                     Describe the phone: model identifier and name, iOS version, battery percentage and \
                     charging state, low power mode, free and total storage in bytes, current network \
-                    type (wifi/cellular/wired/offline), timezone and locale. Cheap and safe to call \
-                    when you need context about the device.
+                    type (wifi/cellular/wired/offline), timezone and locale, and the Persona app's version, \
+                    build number and build channel (debug/release). Cheap and safe to call when you need \
+                    context about the device.
                     """,
                     inputSchema: Schema.object([:])
                 ),
@@ -48,6 +49,7 @@ enum DeviceTool {
         }
 
         let storage = Self.storage()
+        let app = AppVersion.current
         let network = await NetworkProbe.currentType()
 
         return Output.json(Output.object([
@@ -66,6 +68,9 @@ enum DeviceTool {
             ("locale", .string(Locale.current.identifier)),
             ("preferred_languages", .array(Locale.preferredLanguages.map { .string($0) })),
             ("thermal_state", .string(thermalName(ProcessInfo.processInfo.thermalState))),
+            ("app_version", .string(app.version)),
+            ("app_build", .string(app.build)),
+            ("app_channel", .string(app.channel)),
         ]))
     }
 

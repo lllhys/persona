@@ -32,7 +32,7 @@ import Testing
         #expect(!EngineSelectionModel.canSelect(future, on: m))
         m.engines = []
         #expect(!EngineSelectionModel.canSelect(future, on: m))
-        #expect(EngineSelectionModel.options(m).map(\.id) == ["herdr", "herdr-core", "herdr-both", "orca", "paseo", "cindy"])
+        #expect(EngineSelectionModel.options(m).map(\.id) == ["herdr", "herdr-core", "herdr-both", "orca", "tern", "paseo", "cindy"])
     }
 
     @Test func combinedEngineIsAKnownChoice() throws {
@@ -55,6 +55,20 @@ import Testing
         #expect(m.engine == .paseo && m.engines.first?.version == "0.14.0")
     }
 
+    /// Tern (#2154): a terminal engine between Orca and Paseo, chosen like the others, also offline.
+    @Test func ternIsAKnownChoice() throws {
+        let tern = MachineEngine.tern
+        #expect(tern.rawValue == "tern" && tern.name == "Tern")
+        #expect(tern.detail == "Tern 里的终端")
+        #expect(EngineSelectionModel.canSelect(tern, on: try machine()), "selectable offline, as the other engines")
+        #expect(MachineEngine.allCases.firstIndex(of: .tern) == MachineEngine.allCases.firstIndex(of: .orca).map { $0 + 1 })
+        let m = try machine(",\"engine\":\"tern\",\"engines\":[{\"id\":\"herdr\",\"name\":\"herdr\",\"available\":false},{\"id\":\"tern\",\"name\":\"Tern\",\"available\":true,\"version\":\"0.4.1\"}]")
+        #expect(m.engine == .tern && m.engineName == "Tern")
+        #expect(EngineSelectionModel.initialChoice(m, pairing: true) == .tern)
+        #expect(EngineSelectionModel.options(m).map(\.id) == ["herdr", "tern"], "the node's list as it reports it")
+        #expect(try JSON.decoder.decode(Machine.self, from: JSON.encoder.encode(m)) == m)
+    }
+
     @Test func cindyIsAKnownChoice() throws {
         let cindy = MachineEngine.cindy
         #expect(cindy.rawValue == "cindy" && cindy.name == "Cindy")
@@ -62,6 +76,53 @@ import Testing
         #expect(EngineSelectionModel.canSelect(cindy, on: try machine()), "selectable offline, as the other engines")
         let m = try machine(",\"engine\":\"cindy\",\"engines\":[{\"id\":\"cindy\",\"name\":\"Cindy\",\"available\":true,\"version\":\"0.1.128\"}]")
         #expect(m.engine == .cindy && m.engines.first?.version == "0.1.128")
+    }
+
+    @Test func noTerminalEngineIsTheEmptyHostSet() throws {
+        // A hub before host sets reports no engine_hosts: nothing new is offered.
+        let old = try machine()
+        #expect(old.engineHosts == nil)
+        #expect(!EngineSelectionModel.options(old).contains { $0.id == MachineEngine.noEngine.rawValue })
+        #expect(!EngineSelectionModel.canSelect(.noEngine, on: old))
+        #expect(!MachineEngine.allCases.contains(.noEngine), "never sent as an engine id")
+        // A hub with host sets: offered last; herdr stays the choice of a computer that never picked.
+        var sets = try machine(",\"engine\":\"herdr\",\"engine_hosts\":[\"herdr\"]")
+        #expect(sets.engineHosts == ["herdr"])
+        #expect(EngineSelectionModel.options(sets).last?.id == MachineEngine.noEngine.rawValue)
+        #expect(EngineSelectionModel.canSelect(.noEngine, on: sets))
+        #expect(EngineSelectionModel.initialChoice(sets, pairing: true) == .herdr)
+        sets.engines = [.init(id: "herdr", name: "herdr", available: true)]
+        #expect(EngineSelectionModel.options(sets).map(\.id) == ["herdr", "none"])
+        // The empty set reads as no terminal engine, though `engine` still says herdr for older clients.
+        let none = try machine(",\"engine\":\"herdr\",\"engine_hosts\":[]")
+        #expect(none.engineHosts == [] && none.engine == .herdr)
+        #expect(EngineSelectionModel.initialChoice(none, pairing: false) == .noEngine)
+        #expect(none.engineName == "不用终端引擎")
+        #expect(MachineEngine.noEngine.detail == "只显示桌面 App 的会话")
+        #expect(try JSON.decoder.decode(Machine.self, from: JSON.encoder.encode(none)) == none)
+    }
+
+    @Test func noTerminalEngineSavesTheEmptyHostSet() async throws {
+        let hub = FakeHub()
+        let current = try machine(",\"engine\":\"herdr\",\"engine_hosts\":[\"herdr\"]")
+        let saved = try machine(",\"engine\":\"herdr\",\"engine_hosts\":[]")
+        let response = try JSON.encoder.encode(saved)
+        hub.on("PUT", "/api/v1/machines/computer/engine") { req in
+            let raw = try #require(req.body)
+            let body = try #require(try JSONSerialization.jsonObject(with: raw) as? [String: Any])
+            #expect(body.keys.sorted() == ["hosts"])
+            #expect((body["hosts"] as? [Any])?.isEmpty == true)
+            return response
+        }
+        var updated: Machine?
+        let model = EngineSelectionModel(machine: current, pairing: true, deps: .init(api: { hub.client }, updated: { updated = $0 }))
+        #expect(model.selected == .herdr)
+        model.choose(.noEngine)
+        #expect(await model.save(machineID: "computer"))
+        // The hub answers engine herdr with an empty set: the picker stays on no terminal engine.
+        #expect(updated == saved && model.selected == .noEngine && model.error == nil && !model.saving)
+        model.synchronize(saved, pairing: true)
+        #expect(model.selected == .noEngine)
     }
 
     @Test func pairingTargetAndPreselection() throws {

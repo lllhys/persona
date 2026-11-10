@@ -97,10 +97,11 @@ func runPassive(ctx context.Context, o Options, rep *reporter) {
 	}
 	var b backoff
 	for ctx.Err() == nil {
+		was := stampOf(o.Path) // a change from here on (another port, say) cuts the waits below short
 		c, err := Read(o.Path)
 		if err != nil {
 			rep.set(func(s *Status) { *s = Status{State: "waiting", Error: err.Error()} })
-			o.wait(ctx, b.next())
+			o.wait(ctx, b.next(), was)
 			continue
 		}
 		p := Passive{}
@@ -113,7 +114,7 @@ func runPassive(ctx context.Context, o Options, rep *reporter) {
 			rep.set(func(s *Status) {
 				*s = Status{State: "waiting", Listen: listen, Error: "连接器的 TLS 身份：" + err.Error()}
 			})
-			o.wait(ctx, b.next())
+			o.wait(ctx, b.next(), was)
 			continue
 		}
 		ln, err := net.Listen("tcp", listen)
@@ -125,7 +126,7 @@ func runPassive(ctx context.Context, o Options, rep *reporter) {
 				*s = Status{State: "waiting", Listen: listen, Machine: p.Machine, HubName: p.HubName, MachineName: p.MachineName, Retry: &retry,
 					Error: listen + "：" + describeListen(err)}
 			})
-			o.wait(ctx, wait)
+			o.wait(ctx, wait, was)
 			continue
 		}
 		b = backoff{}
@@ -194,13 +195,7 @@ func (s *passive) serve(ctx context.Context, ln net.Listener) {
 	s.mu.Unlock()
 	o.Logf("passive: listening on %s (connector %s)", s.listen, s.id.fp)
 	s.report()
-	stamp := func() time.Time {
-		if fi, err := os.Stat(o.Path); err == nil {
-			return fi.ModTime()
-		}
-		return time.Time{}
-	}
-	was := stamp()
+	was := stampOf(o.Path)
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for running := true; running; {
@@ -215,7 +210,7 @@ func (s *passive) serve(ctx context.Context, ln net.Listener) {
 			s.report()
 		case <-tick.C:
 			s.dropStaleAttention(time.Now())
-			now := stamp()
+			now := stampOf(o.Path)
 			if now.Equal(was) {
 				continue
 			}
@@ -665,9 +660,10 @@ func (s *passive) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer node.Close()
-	// Compressed like active mode's streams and the ssh connections before them: node traffic is JSON. No Origin check
-	// (InsecureSkipVerify): the credential is a header no browser page can set, as on the hub's own link endpoints.
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: websocket.CompressionContextTakeover})
+	// Compressed like active mode's streams and the ssh connections before them: node traffic is JSON, each message on
+	// its own (StreamCompression). No Origin check (InsecureSkipVerify): the credential is a header no browser page can
+	// set, as on the hub's own link endpoints.
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, CompressionMode: StreamCompression})
 	if err != nil {
 		return
 	}

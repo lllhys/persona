@@ -25,6 +25,7 @@
   "filter_empty": "「{filter}」のエージェントはありません",
   "show_all": "すべて表示",
   "pinned_section": "ピン留め",
+  "leader": "リーダー",
   "launching": "起動中",
   "launch_untitled": "新しいエージェント",
   "launch_failed": "起動に失敗",
@@ -127,7 +128,7 @@
   "pane_count": "{count}個のペイン",
   "folded_states": "折りたたんだエージェント：{list}",
   "unread_messages_count": "未読メッセージ{count}件",
-  "inbox_badge_title": "受信トレイ：要対応のメッセージ{count}件のみ。待機中のエージェントは「概要」へ",
+  "inbox_badge_title": "受信トレイ：未読の項目{count}件。待機中のエージェントは「概要」へ",
   "auto_chats": "自動のチャット",
   "auto_chats_label": "自動のチャット {count} 件",
   "auto_working": "{count} 件実行中",
@@ -140,5 +141,12 @@
   "arrange_pages": "サイドバーを整理…",
   "draft": "下書き",
   "resize_label": "ドラッグしてサイドバーの幅を調整",
-  "resize_title": "ドラッグで幅を調整、ダブルクリックで元に戻す"
+  "resize_title": "ドラッグで幅を調整、ダブルクリックで元に戻す",
+  "assistants": "アシスタント",
+  "new_assistant": "新しいアシスタント",
+  "manage_assistants": "アシスタントを管理…",
+  "switched_to": "{name}に切り替えました",
+  "switcher_label": "{name}、アシスタントを切り替え",
+  "switcher_label_waiting": "{name}、アシスタントを切り替え。ほかのアシスタントに対応待ちがあります",
+  "switcher_count": "対応待ち {count} 件"
 }

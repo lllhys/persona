@@ -164,13 +164,18 @@ final class PersonalAgentPrefsStore {
 
     private(set) var prefs: PersonalAgentPrefs
     private let defaults: UserDefaults
+    private var lastConfirmed: PersonalAgentPrefs
     private var hubBacked = true
     private var seq = 0
+    private var pendingSaves = 0
+    private var saveTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         _ = NativeStateMigration.defaults(defaults)
-        prefs = NativeStateMigration.readPrefs(PersonalAgentPrefs.self, defaults: defaults) ?? PersonalAgentPrefs()
+        let cached = NativeStateMigration.readPrefs(PersonalAgentPrefs.self, defaults: defaults) ?? PersonalAgentPrefs()
+        prefs = cached
+        lastConfirmed = cached
     }
 
     private func cache(_ p: PersonalAgentPrefs) {
@@ -180,29 +185,53 @@ final class PersonalAgentPrefsStore {
 
     func load(_ api: APIClient?) async {
         guard let api else { return }
+        let mine = seq
+        if pendingSaves > 0 {
+            await saveTask?.value // a read started during a save must not fetch the hub's older snapshot
+            guard mine == seq else { return }
+        }
         do {
             let p = try await api.personalAgentPrefs()
+            guard mine == seq, pendingSaves == 0 else { return } // a read that began before an edit must not erase it
+            lastConfirmed = p
             hubBacked = true
             cache(p)
         } catch let e as APIError where e.status == 404 || e.status == 405 {
+            guard mine == seq, pendingSaves == 0 else { return }
             hubBacked = false
         } catch {}
     }
 
-    func update(_ api: APIClient?, _ change: (inout PersonalAgentPrefs) -> Void) {
+    func update(_ api: APIClient?, _ change: (inout PersonalAgentPrefs) -> Void, onFailure: @escaping (String) -> Void = { _ in }) {
         var p = prefs
         change(&p)
         cache(p)
         guard hubBacked, let api else { return }
         seq += 1
         let mine = seq
-        Task {
+        pendingSaves += 1
+        let previous = saveTask
+        saveTask = Task {
+            await previous?.value // full snapshots must reach the hub in edit order, not merely update the UI in that order
+            var reload = false
             do {
                 let saved = try await api.putPersonalAgentPrefs(p)
+                lastConfirmed = saved
                 if mine == seq { cache(saved) }
             } catch let e as APIError where e.status == 404 || e.status == 405 {
-                hubBacked = false
-            } catch {}
+                if mine == seq { hubBacked = false }
+            } catch {
+                if mine == seq {
+                    cache(lastConfirmed) // also clears an earlier unsaved edit; it does not depend on the recovery GET
+                    if !error.isCancellation { onFailure(error.localizedDescription) }
+                    reload = true
+                }
+            }
+            pendingSaves -= 1
+            if reload {
+                await load(api) // no pending save here, so the read does not wait for this task itself
+            }
+            if mine == seq { saveTask = nil }
         }
     }
 }

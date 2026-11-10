@@ -19,6 +19,7 @@ import {
   resolveLinkCurrentTodoId,
   runningSubagents,
   sortTodos,
+  stoppedReason,
   taskNow,
   todoDueBy,
   todoStatus,
@@ -685,6 +686,31 @@ describe("自动完成 (docs/assistant/todos.md「Automatic completion」)", () 
     const reopened = { ...base, done_at: null, done_by: "auto", reopened_at: "2026-11-04T09:00:00Z" };
     expect(isAutoDone(reopened)).toBe(false);
     expect(todoStatusLabel(reopened, todoStatus(reopened))).toBe("未开始");
+  });
+});
+
+describe("completion check on a stopped task (#3180)", () => {
+  const at = "2026-11-10T08:00:00Z";
+  const base = { id: "t", title: "Fix login", created_at: at, updated_at: at };
+  const check = (verdict: string, reason?: string) => ({ verdict, reason, at, work_since: at });
+  it("says why a stopped, open task is not done", () => {
+    for (const verdict of ["not_done", "waiting", "needs_user", "undelivered", "a_later_verdict"]) {
+      expect(stoppedReason({ ...base, check: check(verdict, " Waiting for CI ") }, "follow_up")).toBe("Waiting for CI");
+    }
+    expect(stoppedReason({ ...base, check: check("waiting") }, "unread")).toBe("");
+    expect(stoppedReason({ ...base, check: check("not_done", "Two files left") }, "interrupted")).toBe("Two files left");
+  });
+  it("says nothing while it works, once it is done, for done or unsure, or for a check from before a reopen", () => {
+    const waiting = { ...base, check: check("waiting", "Waiting for CI") };
+    expect(stoppedReason(waiting, "working")).toBeUndefined();
+    expect(stoppedReason({ ...waiting, done_at: at }, "follow_up")).toBeUndefined();
+    for (const state of ["done", "accepted", "cancelled"]) expect(stoppedReason(waiting, state)).toBeUndefined();
+    expect(stoppedReason({ ...base, check: check("done", "Merged") }, "follow_up")).toBeUndefined();
+    expect(stoppedReason({ ...base, check: check("unsure", "Can't tell") }, "follow_up")).toBeUndefined();
+    expect(stoppedReason({ ...waiting, reopened_at: "2026-11-10T09:00:00Z" }, "follow_up")).toBeUndefined();
+    expect(stoppedReason({ ...waiting, reopened_at: "2026-11-10T07:00:00Z" }, "follow_up")).toBe("Waiting for CI");
+    expect(stoppedReason({ ...base, check: undefined }, "follow_up")).toBeUndefined();
+    expect(stoppedReason(undefined, "follow_up")).toBeUndefined();
   });
 });
 

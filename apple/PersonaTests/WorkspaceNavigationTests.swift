@@ -5,10 +5,10 @@ import Testing
 struct WorkspaceNavigationTests {
     @Test func compactActivityAgesReserveRoomForTheModel() {
         let now = Date(timeIntervalSince1970: 1000000)
-        #expect(WorkspaceList.age(now.addingTimeInterval(10), now: now) == "now")
-        #expect(WorkspaceList.age(now.addingTimeInterval(-3599), now: now) == "59m")
-        #expect(WorkspaceList.age(now.addingTimeInterval(-3600), now: now) == "1h")
-        #expect(WorkspaceList.age(now.addingTimeInterval(-86400), now: now) == "1d")
+        #expect(WorkspaceList.age(now.addingTimeInterval(10), now: now) == "刚刚")
+        #expect(WorkspaceList.age(now.addingTimeInterval(-3599), now: now) == "59分钟")
+        #expect(WorkspaceList.age(now.addingTimeInterval(-3600), now: now) == "1小时")
+        #expect(WorkspaceList.age(now.addingTimeInterval(-86400), now: now) == "1天")
     }
     private func workspace(_ id: String, parent: String? = nil, group: String = "") -> HostWorkspace {
         HostWorkspace(machineID: "m", source: "orca", sourceID: id, title: id, cwd: "/work/shared", parentSourceID: parent, group: group)
@@ -30,6 +30,7 @@ struct WorkspaceNavigationTests {
         #expect(!w.contains(s, catalog: []), "an incomplete catalog cannot assign provider history by directory")
         #expect(!workspace("chosen", group: "other").contains(s, catalog: [w]))
         #expect(!w.contains(try session(kind: "herdr"), catalog: [w]))
+        #expect(!w.contains(try session(kind: "tern"), catalog: [w]), "a Tern session is placed by Tern, not by its directory")
         #expect(!w.contains(try session(kind: "cindy"), catalog: [w]))
     }
 

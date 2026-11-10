@@ -58,8 +58,13 @@ function Field({ label, children }: { label: React.ReactNode; children: React.Re
   );
 }
 
-/** Tagging set by hand: the hub keeps it over the automatic one (it is locked). */
-export function TagEditor({ entry, open, onClose, onSaved }: { entry: KBEntry; open: boolean; onClose: () => void; onSaved: () => void }) {
+/** How an entry's page reads and writes (KBDetail): its credential and the assistant it names, the same for every
+ *  request it makes. */
+export type KBAuth = { token: string; tokenOwner: string; headers: Record<string, string> };
+
+/** Tagging set by hand: the hub keeps it over the automatic one (it is locked). Saved to the assistant the entry was read
+ *  from (`auth`). */
+export function TagEditor({ entry, auth, open, onClose, onSaved }: { entry: KBEntry; auth?: KBAuth; open: boolean; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<TagForm>(() => tagForm(entry));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -77,7 +82,7 @@ export function TagEditor({ entry, open, onClose, onSaved }: { entry: KBEntry; o
     setSaving(true);
     setError("");
     try {
-      await api(`/kb/${enc(entry.kind)}/${enc(entry.id)}`, { method: "PUT", json: tagUpdate(entry.kind, f) });
+      await api(`/kb/${enc(entry.kind)}/${enc(entry.id)}`, { method: "PUT", json: tagUpdate(entry.kind, f), ...auth });
       toast(t("knowledge-kbdialogs.tags_saved"), "ok");
       onSaved();
       onClose();
@@ -162,7 +167,7 @@ export function MessageView({ m, query = "", clamp }: { m: MessageLine; query?: 
 }
 
 /** One day of a chat's archive, opened at a found message (marked and scrolled to), with the days around it. */
-export function DayDialog({ chat, chatName, day, focus, query, onClose }: { chat: string; chatName: string; day: string | null; focus?: number; query?: string; onClose: () => void }) {
+export function DayDialog({ chat, chatName, auth, day, focus, query, onClose }: { chat: string; chatName: string; auth?: KBAuth; day: string | null; focus?: number; query?: string; onClose: () => void }) {
   const [shown, setShown] = useState(day);
   const [page, setPage] = useState<KBDay | null>(null);
   const [error, setError] = useState("");
@@ -173,11 +178,11 @@ export function DayDialog({ chat, chatName, day, focus, query, onClose }: { chat
     setPage(null);
     setError("");
     const ac = new AbortController();
-    api<KBDay>(`/kb/chats/${enc(chat)}/days/${enc(shown)}`, { signal: ac.signal })
+    api<KBDay>(`/kb/chats/${enc(chat)}/days/${enc(shown)}`, { ...auth, signal: ac.signal })
       .then(setPage)
       .catch((e) => !isAbort(e) && setError(errorText(e)));
     return () => ac.abort();
-  }, [chat, shown]);
+  }, [chat, shown, auth]);
   const msgs = page?.messages ?? [];
   // The found line may be a continuation of a longer message: the last one starting at or before it.
   const target = shown === day && focus !== undefined ? msgs.filter((m) => m.n <= focus).pop()?.n : undefined;
@@ -236,7 +241,7 @@ export function DayDialog({ chat, chatName, day, focus, query, onClose }: { chat
 }
 
 /** One archived post (Moments, or the feed it names): its text and every comment as they were archived. */
-export function MomentDialog({ moment, onClose }: { moment: KBMomentRef | null; onClose: () => void }) {
+export function MomentDialog({ moment, auth, onClose }: { moment: KBMomentRef | null; auth?: KBAuth; onClose: () => void }) {
   const [md, setMd] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -244,11 +249,11 @@ export function MomentDialog({ moment, onClose }: { moment: KBMomentRef | null; 
     setMd(null);
     setError("");
     const ac = new AbortController();
-    api<{ markdown: string }>(`/kb/moments/${enc(moment.id)}`, { signal: ac.signal })
+    api<{ markdown: string }>(`/kb/moments/${enc(moment.id)}`, { ...auth, signal: ac.signal })
       .then((r) => setMd(dropTitle(r.markdown ?? "").trim()))
       .catch((e) => !isAbort(e) && setError(errorText(e)));
     return () => ac.abort();
-  }, [moment]);
+  }, [moment, auth]);
   return (
     <Dialog open={Boolean(moment)} onClose={onClose} width={600} title={moment ? momentFeed(moment) : t("knowledge-kbdialogs.moments")}>
       <div className="-mx-4 max-h-[65vh] overflow-y-auto px-4 pb-1">

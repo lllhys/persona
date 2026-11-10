@@ -106,6 +106,45 @@ test('interrupt withdraws the permission card, answers agy cancelled and ends th
   await until('the turn ends', () => status(pid) === 'done', SLOW)
 })
 
+test('close cancels the active turn and withdraws its permission card even without native session/close', async (t) => {
+  const { n, record, start, status } = await agyRuntime(t)
+  const pid = await start('ask')
+  await until('the card is on the phone', () => n.asked.length === 1, SLOW)
+  await n.peer.call('session.close', { session_id: pid })
+  await until('the card is withdrawn', () => n.last('interaction.cancel')?.id === n.asked[0].id, SLOW)
+  await until('the native prompt ended', () => received(record).some((m) => m.ended === SESSION), SLOW)
+  assert.deepEqual(permissionAnswers(record)[0].result, cancelled)
+  await until('the session is no longer live', () => status(pid) === undefined, SLOW)
+  await assert.rejects(n.peer.call('session.send', { session_id: pid, text: 'Continue' }), /session is closed/)
+  const hellos = n.hellos
+  const inventories = n.all('runtime.sessions').length
+  n.peer.close()
+  await until('the runtime reconnects', () => n.hellos > hellos, SLOW)
+  await until('the closed inventory is republished', () => n.all('runtime.sessions').length > inventories && n.last('runtime.sessions')?.sessions.length === 0, SLOW)
+})
+
+test('close prevents queued prompts from starting after cancellation', async (t) => {
+  const { n, record, start, status } = await agyRuntime(t)
+  const pid = await start('hold')
+  await until('the first prompt is running', () => received(record).some((m) => m.method === 'session/prompt'), SLOW)
+  await n.peer.call('session.send', { session_id: pid, text: 'Queued' })
+  await n.peer.call('session.close', { session_id: pid })
+  await until('the native prompt ended', () => received(record).some((m) => m.ended === SESSION), SLOW)
+  await until('the session is no longer live', () => status(pid) === undefined, SLOW)
+  assert.equal(received(record).filter((m) => m.method === 'session/prompt').length, 1)
+})
+
+test('a permission request crossing close is cancelled without a new card', async (t) => {
+  const { n, record, start, status } = await agyRuntime(t)
+  const pid = await start('ask-on-cancel')
+  await until('the prompt is running', () => received(record).some((m) => m.method === 'session/prompt'), SLOW)
+  await n.peer.call('session.close', { session_id: pid })
+  await until('the native prompt ended', () => received(record).some((m) => m.ended === SESSION), SLOW)
+  await until('the session is no longer live', () => status(pid) === undefined, SLOW)
+  assert.equal(n.asked.length, 0)
+  assert.deepEqual(permissionAnswers(record)[0].result, cancelled)
+})
+
 test('a permission request that crosses the interrupt is answered cancelled without a card', async (t) => {
   const { n, record, start, status } = await agyRuntime(t)
   const pid = await start('ask-on-cancel')

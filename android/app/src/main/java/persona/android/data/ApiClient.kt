@@ -43,8 +43,9 @@ class ApiClient(
         val request = chain.request().newBuilder()
             .header("Accept-Language", persona.core.contracts.ClientLanguage.tag).build()
         chain.proceed(request).also { response ->
-            // Only 401 means the credential is gone; a 403 refuses one request (#4692).
-            if (response.code == 401) onUnauthorized()
+            // Only 401 means the credential is gone; a 403 refuses one request (#4692). A 401 from Cloudflare Access is
+            // about the service token, not the pairing: the hub client names it (#3502), so the pairing stays.
+            if (response.code == 401 && !persona.core.hub.isCloudflareAccessBlock(response)) onUnauthorized()
         }
     }.build()
 

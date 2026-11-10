@@ -135,7 +135,7 @@ func (n *Node) serveSock(ctx context.Context, c net.Conn) {
 	}()
 
 	switch req.Kind {
-	case "hook", "ask", "notify": // after what standby took while the manager was away (spool.go)
+	case "hook", "ask", "notify": // after what standby took while the manager was away (spool_replay.go)
 		if n.replayed != nil {
 			// Not for ever: a report-only hook gives up after 3 s (nodeclient.ReportHook), and a replay that takes long
 			// (a manager slow to answer) must not hold the others past what they wait for. Out of order beats lost.
@@ -151,7 +151,7 @@ func (n *Node) serveSock(ctx context.Context, c net.Conn) {
 				return
 			}
 			if req.Kind == "hook" {
-				n.ahead.note(req) // before the replay is done: it leaves what this one moved on alone (spool.go)
+				n.ahead.note(req) // before the replay is done: it leaves what this one moved on alone (spool_replay.go)
 			}
 		}
 	}
@@ -327,6 +327,9 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 	n.ultracodeHook(req, in)
 	if repair := n.assistantViewStop(ctx, req, in); repair != nil {
 		return repair, nil
+	}
+	if hold := n.closeoutStop(ctx, req, in); hold != nil {
+		return hold, nil
 	}
 	stopSig := n.recordHookTurn(req, in, time.Now())
 	if !req.ReportOnly && !req.Resume {
@@ -581,9 +584,16 @@ func (n *Node) notifyHookEvent(in hookInput, stopSig string, reportOnly bool) {
 	_ = n.peer.Notify("hook.event", hookEventParams(in, stopSig, reportOnly))
 }
 
-// paneKindOK: a hook's pane is one this machine's hosts can drive (an Orca pane only where the set enables Orca).
+// paneKindOK: a hook's pane is one this machine's hosts can drive (an Orca or Tern pane only where the set enables
+// that host: both name the pane in every terminal of theirs, driven or not).
 func paneKindOK(n *Node, pane string) bool {
-	return host.ParsePane(pane).Kind != host.Orca || n.hostEnabled(proto.EngineOrca)
+	switch host.ParsePane(pane).Kind {
+	case host.Orca:
+		return n.hostEnabled(proto.EngineOrca)
+	case host.Tern:
+		return n.hostEnabled(proto.EngineTern)
+	}
+	return true
 }
 
 // hookEventParams is hook.event's params for what a hook saw.
@@ -596,7 +606,23 @@ func hookEventParams(in hookInput, stopSig string, reportOnly bool) map[string]a
 	if reportOnly {
 		p["report_only"] = true
 	}
+	if in.HookEventName == "UserPromptSubmit" {
+		p["prompt_source"] = promptSource(in.Prompt) // never the prompt itself: the apps see the event too
+	}
 	return p
+}
+
+// promptSource says who a UserPromptSubmit's prompt is from, for the manager (a meeting's batch is not the user's own
+// message: docs/assistant/meeting-minutes.md "Feeding the attending session"): the kind of message source it carries
+// (meeting, conversation, task…), "notification" for a background task reporting back, else "user".
+func promptSource(prompt string) string {
+	if src := prompts.ItemSource(proto.Item{Role: "user", Kind: proto.KindText, Text: prompt}); src != nil && src.Kind != "" {
+		return src.Kind
+	}
+	if strings.Contains(prompt, "<task-notification>") {
+		return "notification"
+	}
+	return "user"
 }
 
 // reportedEvent: what a global report-only hook (globalhooks.go) may tell the hub; the tools are the cards.

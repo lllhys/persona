@@ -17,13 +17,15 @@ import (
 //   - pushEvery (""): every run's answer is pushed, as before;
 //   - pushAsked: only what the run pushes itself (notify_user); a run with nothing new is not pushed at all.
 //
-// Such a task always runs in its own conversation (ownConversationIfQuiet: a follow-up would run in the conversation it
-// came from, often the main one), and that conversation's finished turns are not pushed when they end normally: the
-// hub's finished push (quietTaskFinish in fleet_push.go, by the tasks of the last snapshot) and the channels' mirror
-// (quietTaskTurn) leave them out. Errors, cut-offs and a stuck turn are told as ever, and so is what the run sends with
-// notify_user. A turn the user starts in that conversation is not pushed either: the price of judging by the
-// conversation, not by the turn — which, across queued messages, background turns and compactions, the node can not
-// tell for sure (three rounds of review on #2396).
+// Such a task runs in its own conversation unless it goes on in one it came from (SessionID), and never in the main
+// one (ownConversationIfQuiet). In its own conversation, that conversation's finished turns are not pushed when they
+// end normally: the hub's finished push (quietTaskFinish in fleet_push.go, by the tasks of the last snapshot) and the
+// channels' mirror (quietTaskTurn) leave them out. A turn the user starts in that conversation is not pushed either:
+// the price of judging by the conversation, not by the turn — which, across queued messages, background turns and
+// compactions, the node can not tell for sure (three rounds of review on #2396). In a conversation it came from (a
+// leader's patrol, #3673), the run holds that conversation's pushes as a supervision message does (holdPushes) until
+// the user or anything else speaks there: the conversation stays the user's. Errors, cut-offs and a stuck turn are
+// told as ever, and so is what the run sends with notify_user.
 const (
 	pushEvery = ""
 	pushAsked = assistantwire.PushAsked
@@ -54,6 +56,9 @@ func pushArg(a string) (string, error) {
 
 // pushText is how list_followups and the tools' answers say a task's push.
 func pushText(t Task) string {
+	if t.pushesOnlyAsked() && t.SessionID != "" {
+		return "pushes only what a run sends with notify_user (nothing new: no push); it runs in the conversation it came from"
+	}
 	if t.pushesOnlyAsked() {
 		return "pushes only what a run sends with notify_user (nothing new: no push); it runs in its own conversation"
 	}
@@ -76,10 +81,11 @@ func pushIn(raw map[string]json.RawMessage) (push string, has bool, err error) {
 	return push, true, checkPush(push)
 }
 
-// ownConversationIfQuiet: a task that pushes only what its runs send runs in its own conversation, never in the one it
-// came from (the main one's turns would go unpushed with it).
-func ownConversationIfQuiet(t *Task) {
-	if t.pushesOnlyAsked() {
+// ownConversationIfQuiet: a task that pushes only what its runs send does not go on in the main conversation, or one
+// that may be it (mayBeMain): the main one is never quiet, so the task runs in its own. Another conversation it came
+// from it keeps: its runs there hold that conversation's pushes (runTask), not the conversation's own turns.
+func ownConversationIfQuiet(t *Task, mayBeMain func(string) bool) {
+	if t.pushesOnlyAsked() && t.SessionID != "" && mayBeMain(t.SessionID) {
 		t.SessionID = ""
 	}
 }
@@ -106,6 +112,9 @@ func (s *Service) quietConversation(ctx context.Context, session string) bool {
 // quietTaskTurn: session is a quiet task's own conversation whose turn may go unpushed now
 // (assistantwire.QuietTaskFinish): the channels' mirror leaves it out, as the hub's finished push does.
 func (s *Service) quietTaskTurn(ctx context.Context, machine, session string) bool {
+	if s.meetingTurnNow(machine, session) { // a meeting's batch started it: a side exchange, mirrored nowhere (meeting_turns.go)
+		return true
+	}
 	if s.supervising(session) { // a supervision message started its turn (supervise_digest.go): as the hub's finished push leaves it out
 		sess, ok := s.session(ctx, machine, session)
 		return ok && assistantwire.SupervisedFinish(sess, true)
@@ -134,6 +143,11 @@ func (s *Service) knownMain(ctx context.Context) (string, bool) {
 // mayBeMain: session is the main conversation, or the settings could not be read to tell. A quiet task does not go on
 // in such a conversation: the main one is never quiet.
 func (s *Service) mayBeMain(ctx context.Context, session string) bool {
+	return s.mayBeMainNow(ctx)(session)
+}
+
+// mayBeMainNow is mayBeMain with the settings read once, for a caller about to hold the schedule's lock.
+func (s *Service) mayBeMainNow(ctx context.Context) func(string) bool {
 	main, known := s.knownMain(ctx)
-	return !known || session == main
+	return func(session string) bool { return !known || session == main }
 }

@@ -12,6 +12,7 @@ import { conversationRoute, docChangeLine, isDone, itemKey, itemRoute, suggestio
 import { otherManager } from "../../lib/manager-choice";
 import { openLink } from "../../lib/links";
 import { navigate, type Route } from "../../lib/router";
+import { openFromInbox } from "../../lib/inbox-nav";
 import { useStore } from "../../lib/store";
 import { t } from "../../i18n";
 import { Button, cx, Shimmer, Spinner } from "../../ui/atoms";
@@ -294,7 +295,7 @@ export function Chain({ item, onSource }: { item: InboxItem; onSource: (at: Sour
         return;
       }
       onSource({ position: x.position, uid: x.uid });
-    } else if (x.kind === "route") navigate(x.route);
+    } else if (x.kind === "route") openFromInbox(x.route);
   };
   return (
     <section data-event-chain>
@@ -367,7 +368,7 @@ function Related({ item }: { item: InboxItem }) {
       <ul className="flex flex-col gap-0.5">
         {list.map((r) => (
           <li key={r.id}>
-            <button type="button" onClick={() => navigate(itemRoute({ id: r.id, manager: item.manager }))} className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] whitespace-nowrap text-ink hover:bg-field">
+            <button type="button" onClick={() => openFromInbox(itemRoute({ id: r.id, manager: item.manager }))} className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] whitespace-nowrap text-ink hover:bg-field">
               <Icon name={r.source === "mail" ? "mail" : "link"} size={12} className="shrink-0 text-ink-3" />
               <span className="truncate">{r.title}</span>
             </button>

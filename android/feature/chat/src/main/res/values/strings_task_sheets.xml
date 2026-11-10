@@ -13,6 +13,7 @@
     <string name="chat_task_detail_own_agent">Agent · not opened from a chat</string>
     <string name="chat_task_detail_agent_gone">This agent is gone</string>
     <string name="chat_task_detail_agent_gone_body">It may have been closed.</string>
+    <string name="chat_task_detail_report">Latest report</string>
     <string name="chat_task_detail_open_chat">Open chat</string>
     <string name="chat_task_board_title">Tasks</string>
     <string name="chat_task_board_empty">No tasks yet</string>

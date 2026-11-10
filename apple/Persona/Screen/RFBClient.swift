@@ -19,10 +19,11 @@ nonisolated final class RFBWebSocket: RFBTransport, @unchecked Sendable {
         var comps = URLComponents(url: api.url("/api/v1/machines/\(machine)/ports/5900/connect"), resolvingAgainstBaseURL: false)!
         comps.scheme = comps.scheme == "https" ? "wss" : "ws"
         var req = URLRequest(url: comps.url!)
-        req.setValue("Bearer \(api.config.token)", forHTTPHeaderField: "Authorization")
+        api.config.authorize(&req)
         req.setValue(LanguageStore.shared.launched, forHTTPHeaderField: "Accept-Language")
         req.timeoutInterval = 15
         task = api.session.webSocketTask(with: req)
+        task.delegate = HubRedirects.shared
         task.maximumMessageSize = 64 << 20
         task.resume()
     }

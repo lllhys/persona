@@ -1,0 +1,21 @@
+{
+  "bad_default_role": "meeting_attendance_default は off、listener、participant のいずれかにしてください。",
+  "forbidden": "このデバイスではこの操作はできません。フルアクセスのデバイスを使ってください。",
+  "too_large": "リクエストが大きすぎます（最大 {size}）。",
+  "no_recording": "この録音はまだアップロードされていません。アップロードしてから、もう一度送ってください。",
+  "deleted": "この録音は削除されました。",
+  "bad_json": "リクエストが正しい JSON ではありません：{error}",
+  "bad_from": "from は 0 以上の整数にしてください。",
+  "too_many_segments": "1 回のリクエストは最大 {max} 文です。",
+  "bad_time": "各文の start と end は数値にしてください。",
+  "not_attending": "Persona はこの録音の会議に出席していません。",
+  "live_gap": "前の文が足りません。{next} からもう一度送ってください。",
+  "live_full": "この録音のライブ文はもう保存できません。これ以上送らないでください。",
+  "bad_ask_id": "id は UUID にしてください。",
+  "bad_ask_field": "{field} の型が正しくありません。",
+  "question_too_long": "質問が {max} 文字を超えています。",
+  "no_question": "質問か、タップした時刻（at）を送ってください。",
+  "op_id_reused": "この id は別の質問ですでに使われています。",
+  "asks_full": "この会議の質問はすでに {max} 件あります。",
+  "ask_busy": "いま 2 件の質問に回答中です。どちらかの回答が終わってから聞いてください。"
+}

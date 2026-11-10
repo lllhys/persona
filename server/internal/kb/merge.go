@@ -96,7 +96,7 @@ func (s *Store) mergeMessages(c *Chat, ruled []ingestLine, selected bool, usual 
 			return 0, err
 		}
 		if raw != nil {
-			if err := writeFile(s.ledgerPath(c.ID), raw); err != nil {
+			if err := archiveWrite(s.ledgerPath(c.ID), raw); err != nil {
 				return 0, err
 			}
 		}
@@ -107,7 +107,7 @@ func (s *Store) mergeMessages(c *Chat, ruled []ingestLine, selected bool, usual 
 		if n == 0 {
 			continue
 		}
-		if err := writeFile(p, []byte(out)); err != nil {
+		if err := archiveWrite(p, []byte(out)); err != nil {
 			return added, err
 		}
 		added += n
@@ -131,18 +131,7 @@ func mergeDayLines(text string, lines []Line, zone *time.Location, dedupe bool) 
 	if endsNL {
 		rows = rows[:len(rows)-1] // the empty string after the last "\n"
 	}
-	// What the file holds already: every message with its continuation lines, as Line.Format would write it.
-	have := map[string]bool{}
-	for i := 0; i < len(rows); i++ {
-		if !strings.HasPrefix(rows[i], "- ") {
-			continue
-		}
-		msg := rows[i]
-		for j := i + 1; j < len(rows) && strings.HasPrefix(rows[j], "  "); j++ {
-			msg += "\n" + rows[j]
-		}
-		have[dupKey(msg)] = true
-	}
+	have := dayKeys(rows)
 	// The minute of every message line that has one ("" for the others): where new lines may go.
 	clock := make([]string, len(rows))
 	for i, r := range rows {
@@ -198,6 +187,25 @@ func mergeDayLines(text string, lines []Line, zone *time.Location, dedupe bool) 
 		b.WriteByte('\n')
 	}
 	return b.String(), len(ins)
+}
+
+// dayKeys is what a day file's rows hold already: the dupKey of every message with its continuation lines, as
+// Line.Format would write it. Each message is joined once, so a pasted log of many lines costs its size rather than
+// its size times its lines.
+func dayKeys(rows []string) map[string]bool {
+	have := map[string]bool{}
+	for i := 0; i < len(rows); i++ {
+		if !strings.HasPrefix(rows[i], "- ") {
+			continue
+		}
+		j := i
+		for j+1 < len(rows) && strings.HasPrefix(rows[j+1], "  ") {
+			j++
+		}
+		have[dupKey(strings.Join(rows[i:j+1], "\n"))] = true
+		i = j // a continuation line starts no message
+	}
+	return have
 }
 
 // clockOf is the minute ("15:04") of a message line as Line.Format writes it, "" for any other line.

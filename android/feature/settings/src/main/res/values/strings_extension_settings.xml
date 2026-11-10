@@ -22,13 +22,13 @@
     <string name="settings_extension_external_updates">This extension is not managed by an extension market. Update it at its source.</string>
     <string name="settings_extension_external_uninstall">This extension is managed outside the app. Remove it at its source.</string>
     <string name="settings_extension_external_enabled">Enablement is managed at this extension’s source.</string>
-    <string name="settings_extension_unknown">This manager does not provide this action.</string>
+    <string name="settings_extension_unknown">This assistant does not provide this action.</string>
     <string name="settings_extension_market_unavailable">The extension market is unavailable. Restore it and try again.</string>
     <string name="settings_extension_market_missing">This extension is no longer listed in its market.</string>
     <string name="settings_extension_market_removed">Auto-upgrade is paused because the extension market was removed. The saved preference is kept.</string>
-    <string name="settings_extension_global_off">Auto-upgrade is off for this manager. The saved preference for this extension is kept.</string>
-    <string name="settings_extension_global_unknown">This manager’s global auto-upgrade setting could not be read.</string>
+    <string name="settings_extension_global_off">Auto-upgrade is off for this assistant. The saved preference for this extension is kept.</string>
+    <string name="settings_extension_global_unknown">This assistant’s global auto-upgrade setting could not be read.</string>
     <string name="settings_extension_rollback">Roll back</string>
-    <string name="settings_extension_rollback_unavailable">This manager does not provide a rollback consent preview. No rollback is sent from this page.</string>
+    <string name="settings_extension_rollback_unavailable">This assistant does not provide a rollback consent preview. No rollback is sent from this page.</string>
     <string name="settings_extension_remove_version">Installed version: %1$s</string>
 </resources>

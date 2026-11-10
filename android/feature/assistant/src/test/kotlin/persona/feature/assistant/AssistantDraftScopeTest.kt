@@ -119,8 +119,9 @@ class AssistantDraftScopeTest {
         rule.waitForIdle()
         return hub
     }
+    // The page draws no manager chips any more: the sidebar's switcher calls AssistantManagerChoice.pick(id), so this does the same.
     private fun pick(name: String) {
-        rule.onNode(hasText(name) and hasClickAction()).performClick()
+        AssistantManagerChoice.pick(mapOf("助手" to "assistant", "工作" to "work").getValue(name))
         rule.waitForIdle()
     }
     private fun text(text: String) { rule.onNode(hasSetTextAction()).performTextReplacement(text); rule.waitForIdle() }

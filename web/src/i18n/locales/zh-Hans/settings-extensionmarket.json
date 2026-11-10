@@ -115,7 +115,7 @@
   "op_title_uninstall": "卸载进度",
   "op_retry": "重试",
   "op_dismiss": "关闭",
-  "op_gone": "它已不在进行：管理器那边已经没有它了（可能重启过），可以重新开始。",
+  "op_gone": "它已不在进行：助手那边已经没有它了（可能重启过），可以重新开始。",
   "op_cancel": "取消",
   "op_review": "查看权限",
   "op_error": "原因：{error}",
@@ -126,5 +126,5 @@
   "market_unread": "读到以后，扩展会显示在这里。",
   "token_create_hint": "没有 token？在 GitHub 上生成一个：名字、用途和一年的有效期已经填好，不用勾任何权限，点 Generate token 后复制回来粘贴到上面。",
   "token_create": "去 GitHub 生成",
-  "for_manager": "只改管理者「{name}」的这一份（每个管理者都有自己的扩展）。"
+  "for_manager": "只改助手「{name}」的这一份（每个助手都有自己的扩展）。"
 }

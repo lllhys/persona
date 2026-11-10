@@ -475,7 +475,8 @@ fun JSelectableText(
 fun JCodeBlock(code: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE, small: Boolean = false) =
     JCodeBlock(androidx.compose.ui.text.AnnotatedString(code), modifier, maxLines, small)
 
-/** Rich code text (links, search highlights); [onTextLayout] lets readers locate matches. */
+/** Rich code text (links, search highlights); [onTextLayout] lets readers locate matches. [header]: a title bar drawn
+ *  inside the block, above the code (a reply's code block: its language and Copy, #2984). */
 @Composable
 fun JCodeBlock(
     code: androidx.compose.ui.text.AnnotatedString,
@@ -483,15 +484,24 @@ fun JCodeBlock(
     maxLines: Int = Int.MAX_VALUE,
     small: Boolean = false,
     onTextLayout: (androidx.compose.ui.text.TextLayoutResult) -> Unit = {},
+    header: (@Composable () -> Unit)? = null,
 ) {
     val palette = PersonaTheme.palette
     val shape = RoundedCornerShape(if (PersonaTheme.style == AppStyle.Board) 6.dp else 14.dp)
-    SelectionContainer {
-        Text(
-            code, style = if (small) PersonaTheme.type.codeSmall else PersonaTheme.type.code, color = palette.ink, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
-            onTextLayout = onTextLayout,
-            modifier = modifier.fillMaxWidth().clip(shape).background(if (PersonaTheme.style == AppStyle.Brief) palette.background else palette.sunken)
-                .then(if (PersonaTheme.style == AppStyle.Brief) Modifier.border(1.dp, palette.line, shape) else Modifier).padding(14.dp),
-        )
+    val box = Modifier.fillMaxWidth().clip(shape).background(if (PersonaTheme.style == AppStyle.Brief) palette.background else palette.sunken)
+        .then(if (PersonaTheme.style == AppStyle.Brief) Modifier.border(1.dp, palette.line, shape) else Modifier)
+    val inset = 14.dp
+    val text: @Composable (Modifier) -> Unit = { m ->
+        SelectionContainer {
+            Text(
+                code, style = if (small) PersonaTheme.type.codeSmall else PersonaTheme.type.code, color = palette.ink, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
+                onTextLayout = onTextLayout, modifier = m.padding(inset),
+            )
+        }
+    }
+    if (header == null) text(modifier.then(box))
+    else Column(modifier.then(box)) {
+        header()
+        text(Modifier.fillMaxWidth())
     }
 }

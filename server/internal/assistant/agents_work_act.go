@@ -62,11 +62,7 @@ func (s *Service) actOn(ctx context.Context, v *workView, machine string, c prot
 		a, approved := s.work.approved[k]
 		s.work.mu.Unlock()
 		if risky(w.Then) && !(approved && a.covers(w)) {
-			*w = proto.WorkState{Phase: proto.WorkBlocked, On: proto.WaitUser, TurnAt: w.TurnAt, At: w.At, By: w.By, Wait: w.Wait, Then: w.Then,
-				Line: clip(oneLine(workT(l, "risky_line", i18n.Args{"wait": w.Wait, "then": w.Then})), 60),
-				Questions: []proto.Question{{Question: workT(l, "risky_ask", i18n.Args{"wait": w.Wait, "then": w.Then}), Header: workT(l, "header_risky"),
-					Options: []proto.QuestionOption{{Label: answerLabel(l, answerGo), Description: workT(l, "answer_go_about")}, {Label: answerLabel(l, answerHold)}}}}}
-			break
+			return // no automatic external action, and no card for a step the agent did not ask about
 		}
 		if !sw.Wake {
 			return
@@ -80,6 +76,11 @@ func (s *Service) actOn(ctx context.Context, v *workView, machine string, c prot
 		}
 		at := now.Add(wakeAfter(w.Every, e.Wakes)).UTC()
 		e.WakeAt, w.WakeAt, w.Attempts, w.Max = &at, &at, e.Wakes, maxWakes(cfg)
+		return
+	}
+	// Missing evidence is not a user decision. Authorization links have their own relay and manual card path.
+	if w.On == proto.WaitUser && w.By == "model" && len(w.Questions) == 0 && w.Link == nil {
+		*w = proto.WorkState{TurnAt: w.TurnAt, At: w.At, By: w.By, Artifacts: w.Artifacts}
 		return
 	}
 	// On the user: a card. Without the triage none: the session shows its error and the apps' Retry as before.

@@ -68,7 +68,7 @@
     <string name="settings_src_mail_google_failed">Google 登录失败</string>
     <string name="settings_src_mail_connect_failed">没连上</string>
     <string name="settings_src_mail_google_unsupported">这个安卓版本没有登记 hub 的 Google 回调地址，没法在手机上完成 Google 登录。可以先用 Gmail 的「应用专用密码」添加（Google 账号 › 安全性 › 两步验证 › 应用专用密码），或者在 iPhone 上用 Google 账号登录。</string>
-    <string name="settings_src_mail_google_not_configured">hub 还没有配置 Google 登录（管理者的 manager.json 里的 google.client_id）。可以先用 Gmail 的「应用专用密码」添加。</string>
+    <string name="settings_src_mail_google_not_configured">hub 还没有配置 Google 登录（助手的 manager.json 里的 google.client_id）。可以先用 Gmail 的「应用专用密码」添加。</string>
     <string name="settings_src_mail_google_start_failed">没能开始 Google 登录</string>
     <string name="settings_src_mail_connect">连接</string>
     <string name="settings_src_mail_google_connecting">正在连接 Gmail…</string>
@@ -98,7 +98,7 @@
     <string name="settings_src_lark_title">飞书</string>
     <string name="settings_src_lark_status_header">连接状态</string>
     <string name="settings_src_lark_last_event">最近一条实时消息</string>
-    <string name="settings_src_lark_not_configured_caption">hub 还没接飞书：在 hub 所在的机器上运行飞书网关，并在管理者的 manager.json 的 lark 里填上它（docs/extensions/feishu.md）。</string>
+    <string name="settings_src_lark_not_configured_caption">hub 还没接飞书：在 hub 所在的机器上运行飞书网关，并在助手的 manager.json 的 lark 里填上它（docs/extensions/feishu.md）。</string>
     <string name="settings_src_lark_caption">飞书账号在 hub 所在机器的飞书网关里登录，会话与收件箱共用这个账号，无需再次登录。</string>
     <string name="settings_src_lark_accounts_header">账号</string>
     <string name="settings_src_lark_quarantined">无法打开，请在飞书网关里重试或移除</string>

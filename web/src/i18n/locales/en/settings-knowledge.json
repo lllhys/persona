@@ -37,7 +37,7 @@
   "choose_source": "Choose a source",
   "search": "Find by name or ID",
   "cached": "Showing the history import plan while the import is running or stopped.",
-  "no_sources": "No chat-history sources for this manager.",
+  "no_sources": "No chat-history sources for this assistant.",
   "no_candidates": "No items available.",
   "missing_identity": "This document has no source identity. Its override cannot be added safely.",
   "unsupported": "This selection document is unsupported or invalid. Nothing has been replaced. Reload after checking the hub version.",

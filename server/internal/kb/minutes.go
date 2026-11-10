@@ -104,11 +104,14 @@ func (r *Recording) isMeeting() bool {
 
 // planMinutes sets MinutesState from the rest: pending until minutes of the current revision are written, failed after
 // minutesTries unusable answers for it or minutesTimeoutTries tries that ran out of time; minutes of an older revision
-// keep showing meanwhile.
+// keep showing meanwhile. A meeting that completed with no text gets none ("", docs/assistant/meeting-minutes.md
+// "Attendance fields"): an attended one is uploaded before anything was said, and may end so.
 func (r *Recording) planMinutes() {
 	switch {
 	case !r.isMeeting():
 		r.MinutesState = "" // minutes made while it was one stay readable; nothing more is made
+	case r.Complete && r.Chars == 0:
+		r.MinutesState = ""
 	case r.MinutesRev > 0 && r.MinutesRev >= r.Revision:
 		r.MinutesState = MinutesReady
 	case r.MinutesFailRev == r.Revision && (r.MinutesFails >= minutesTries || r.MinutesTimeouts >= minutesTimeoutTries):
@@ -166,7 +169,8 @@ func (s *Store) putMinutes(id string, m *Minutes) (bool, error) {
 }
 
 // AskMinutes has recording id's minutes made (again) at the next round, whatever its kind: ErrNotFound when there is
-// no such recording, ErrRecordingIncomplete before its transcript is complete.
+// no such recording, ErrRecordingIncomplete before its transcript is complete, and also for a complete one with no
+// text (409 as well: there is nothing to make minutes of, and its minutes_state stays absent).
 func (e *Engine) AskMinutes(rawID string) error {
 	if e.Store.ReadOnly() {
 		return ErrReadOnly

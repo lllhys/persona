@@ -499,6 +499,11 @@ func (h *Hub) machineConnected(ctx context.Context, m *Machine, at time.Time) de
 	m.hookedAt = at
 	m.mu.Unlock()
 	out := devicewire.ConnectedReply{Configure: map[string]json.RawMessage{}}
+	// Nodes use the same explicit capability announcement as the app hello. The
+	// manager forwards this authenticated response in node.configure on reconnect.
+	if b, err := json.Marshal(h.features()); err == nil {
+		out.Configure["hub_features"] = b
+	}
 	if b, err := json.Marshal(m.codexConfig(ctx)); err == nil {
 		out.Configure["codex"] = b
 	}

@@ -82,7 +82,16 @@ internal fun ProvidersPage(
                 if (query.isBlank() || groups.managed.isNotEmpty()) {
                     item("managed") { JSectionHeader(stringResource(R.string.settings_providers_managed), count = groups.managed.size) }
                     if (groups.managed.isEmpty()) item("managed-empty") { SettingsCaption(stringResource(R.string.settings_providers_managed_empty), Modifier.padding(horizontal = Tokens.Space.xs)) }
-                    launcherRows("managed", groups.managed, name, selected, onOpen) { menu = it }
+                    // By harness (Claude Code, Codex, …, direct API) once there is more than one; one alone needs no labels.
+                    val harnesses = harnessGroups(groups.managed)
+                    if (harnesses.size > 1) harnesses.forEach { (harness, list) ->
+                        item("managed-h-$harness") {
+                            Text(harnessName(harness) ?: stringResource(R.string.settings_pscope_harness_api),
+                                Modifier.padding(start = rowPadding, end = rowPadding, top = Tokens.Space.m, bottom = Tokens.Space.xs),
+                                style = PersonaTheme.type.labelSmall, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        launcherRows("managed-$harness", list, name, selected, onOpen) { menu = it }
+                    } else launcherRows("managed", groups.managed, name, selected, onOpen) { menu = it }
                     if (groups.managed.isNotEmpty()) item("managed-note") {
                         SettingsCaption(stringResource(R.string.settings_providers_managed_note), Modifier.padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.s))
                     }
@@ -175,11 +184,21 @@ internal fun ProviderDetailPage(providers: ProviderSetup?, name: String, machine
     val state by model.state.collectAsState()
     val scope = rememberCoroutineScope()
     var confirm by remember { mutableStateOf(false) }
+    // Editing in place: the form ("form"), or its "Computers" page by itself ("computers").
+    var editing by rememberSaveable(name) { mutableStateOf<String?>(ProviderEditPreview.take()) }
     LaunchedEffect(model) { model.load() }
     LaunchedEffect(state.gone) { if (state.gone) onBack() }
     val label = { id: String -> machineLabel(machines, id) }
+    val stored = state.launcher
+    if (editing != null && stored != null && stored.managed) {
+        NewProviderPage(providers, onBack = { editing = null }, onSaved = { editing = null; scope.launch { model.load() } },
+            existing = stored, machines = machines, startAtComputers = editing == "computers")
+        return
+    }
     val facts = state.launcher?.let { providerFacts(it, label) }.orEmpty()
-    JListPage(title = name, onBack = onBack) {
+    JListPage(title = name, onBack = onBack, actions = {
+        if (stored?.managed == true) JIconButton(PhIcons.PencilSimple, stringResource(R.string.settings_pedit_edit), { editing = "form" })
+    }) {
         val l = state.launcher
         when {
             l == null && state.error != null -> item("error") {
@@ -196,6 +215,26 @@ internal fun ProviderDetailPage(providers: ProviderSetup?, name: String, machine
                                 Text(value, Modifier.widthIn(max = Tokens.Space.xxxl * 6), style = if (mono) PersonaTheme.type.code else PersonaTheme.type.callout,
                                     color = PersonaTheme.palette.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             })
+                        }
+                    }
+                }
+                if (l.hasScope) {
+                    // Where it runs and which computers have a key of their own (docs/integrations/launchers.md "Device scope and on-demand delivery").
+                    val keyed = l.keyMachines
+                    val rows = if (keyed.isEmpty()) 1 else 2
+                    item("scope-header") { JSectionHeader(stringResource(R.string.settings_pscope_title)) }
+                    item("scope") {
+                        JGroupItem(GroupPosition.of(0, rows)) {
+                            JRow(stringResource(R.string.settings_pscope_share), leadingIcon = PhIcons.Laptop, subtitle = scopeSummaryText(l, machines),
+                                subtitleLines = 3, onClick = { editing = "computers" })
+                        }
+                    }
+                    if (keyed.isNotEmpty()) item("scope-keys") {
+                        JGroupItem(GroupPosition.of(1, rows)) {
+                            JRow(stringResource(R.string.settings_pscope_machine_keys), leadingIcon = PhIcons.Key,
+                                subtitle = keyed.joinToString(stringResource(R.string.settings_providers_list_sep), transform = label),
+                                value = pluralStringResource(R.plurals.settings_pscope_machine_keys_count, keyed.size, keyed.size),
+                                onClick = { editing = "computers" })
                         }
                     }
                 }

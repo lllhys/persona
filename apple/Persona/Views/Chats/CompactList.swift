@@ -120,6 +120,8 @@ struct CompactQuietSpaceRow: View {
 struct CompactInteractionRow: View {
     var interaction: Interaction
     var machine: String?
+    /// Its session's other cards (`AgentsNeedsYou`): one line per session, "+N" for the rest, which its chat answers.
+    var more = 0
 
     var body: some View {
         HStack(spacing: CompactList.gap) {
@@ -133,6 +135,10 @@ struct CompactInteractionRow: View {
                     .font(CompactList.meta).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: Theme.Space.xs)
+            if more > 0 {
+                Text(verbatim: "+\(more)").font(CompactList.metaStrong.monospacedDigit())
+                    .foregroundStyle(StatusPalette.needsYou.text).lineLimit(1).fixedSize()
+            }
             VisibleTimelineView(interval: 30) { now in
                 Text(Fmt.relative(interaction.createdAt, now: now)).font(CompactList.meta.monospacedDigit())
                     .foregroundStyle(.secondary).lineLimit(1)

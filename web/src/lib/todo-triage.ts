@@ -111,7 +111,7 @@ export function triage(todo: Todo, lookup: SessionLookup | undefined, now: numbe
   if (status === "failed") return at(now - last < SHELVE_AFTER_MS ? "waiting" : "done", "failed_start");
   if (status === "needs_you" || status === "interrupted") return at("waiting", "agent_asks");
   if (!todo.done_at && (reviewState(todo) === "needs_user" || ask?.outcome === "decide" || ask?.outcome === "cannot")) return at("waiting", "owner_decides");
-  if (status === "working") return at("working", "agent_running");
+  if (status === "working" || status === "waiting") return at("working", "agent_running");
   if (todo.done_at) return at(recent(ms(todo.done_at)) ? "just_done" : "done", "closed");
   if (acceptanceStands(todo)) return at(recent(ms(latestReview(todo.supervision)?.at)) ? "just_done" : "done", "accepted");
   if (todo.delivery?.state === "live") return at(recent(ms(todo.delivery.at) || last) ? "just_done" : "done", "deployed");

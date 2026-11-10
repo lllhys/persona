@@ -91,7 +91,8 @@ func containsAnyText(t string, list []string) bool {
 
 // approveByTask lets w's risky next step go ahead without a card when the agent's open todo authorizes it
 // (taskAuthorizes) and the hub may wake it (wake: the switch is on): it is approved as the user's "Do it once it's
-// ready" would be, a card the triage made of it is taken back to a wait, and the trace kept. False: the card goes up.
+// ready" would be, a card the triage made of it is taken back to a wait, and the trace kept. False: nothing is
+// approved; the caller neither wakes a risky step nor opens a card of its own (#3290).
 func (s *Service) approveByTask(ctx context.Context, k [2]string, w *proto.WorkState, wake bool) bool {
 	if !wake || w.Phase != proto.WorkBlocked || w.Wait == "" || w.Link != nil || w.ResetsAt != nil || !risky(w.Then) {
 		return false

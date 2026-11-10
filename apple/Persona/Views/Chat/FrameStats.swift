@@ -146,7 +146,7 @@ import UIKit
             var r = URLRequest(url: hub.url.appending(path: "mock/frames"))
             r.httpMethod = "POST"
             r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            r.setValue("Bearer " + hub.token, forHTTPHeaderField: "Authorization")
+            hub.authorize(&r)
             r.httpBody = body
             Task { _ = try? await URLSession.shared.data(for: r) }
         }
@@ -157,7 +157,7 @@ import UIKit
     private static func runGlide() async {
         guard let hub = AppModel.shared.api?.config else { return }
         var request = URLRequest(url: hub.url.appending(path: "mock/frames_glide_context"), timeoutInterval: 10)
-        request.setValue("Bearer " + hub.token, forHTTPHeaderField: "Authorization")
+        hub.authorize(&request)
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               var context = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -186,7 +186,7 @@ import UIKit
         var upload = URLRequest(url: hub.url.appending(path: "mock/frames"), timeoutInterval: 10)
         upload.httpMethod = "POST"
         upload.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        upload.setValue("Bearer " + hub.token, forHTTPHeaderField: "Authorization")
+        hub.authorize(&upload)
         upload.httpBody = body
         _ = try? await URLSession.shared.data(for: upload)
     }

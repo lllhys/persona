@@ -53,13 +53,20 @@ type Supervision struct {
 }
 
 // TaskProgress is a supervised task's agent's latest report: its kind, the step it is on of how many (0: not said),
-// what it said in a line, and when.
+// what it said in a line, and when. Line and Detail are for the apps only (#3181): no prompt, supervision message,
+// briefing, card or push reads them.
 type TaskProgress struct {
-	Kind  string    `json:"kind"`
-	Step  int       `json:"step,omitempty"`
-	Steps int       `json:"steps,omitempty"`
-	Text  string    `json:"text"`
-	At    time.Time `json:"at"`
+	Kind  string `json:"kind"`
+	Step  int    `json:"step,omitempty"`
+	Steps int    `json:"steps,omitempty"`
+	Text  string `json:"text"`
+	// Line: the report paraphrased in one sentence in the user's language (report_line.go), for the Progress row; ""
+	// until the model wrote it, and for good when there is no model or it failed (the apps show Text).
+	Line string `json:"line,omitempty"`
+	// Detail: the report as the agent wrote it (Markdown, at most 2000 characters), for the task's details; "" when it
+	// is Text (one line of at most 200 characters).
+	Detail string    `json:"detail,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 // TaskReview is one review: the assistant's verdict, with each criterion's evidence or gap.
@@ -215,8 +222,8 @@ func (s *Service) updateSupervision(ctx context.Context, id string, change func(
 }
 
 // noteProgress keeps p as supervised task id's progress (in memory, no ledger write: see Supervision.Progress) and
-// tells the apps.
-func (s *Service) noteProgress(ctx context.Context, id string, p TaskProgress) {
+// tells the apps; false when id is no supervised task.
+func (s *Service) noteProgress(ctx context.Context, id string, p TaskProgress) bool {
 	s.todos.mu.Lock()
 	cur := s.todos.todos[id]
 	ok := cur != nil && cur.Supervision != nil
@@ -229,6 +236,7 @@ func (s *Service) noteProgress(ctx context.Context, id string, p TaskProgress) {
 	if ok {
 		s.todosChanged(ctx)
 	}
+	return ok
 }
 
 // ---- the snapshot ----

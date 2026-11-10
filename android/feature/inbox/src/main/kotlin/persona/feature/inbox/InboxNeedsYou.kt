@@ -7,7 +7,7 @@ import persona.core.domain.inbox.InboxRowType
 /**
  * Persona has this item in hand: the hub puts it In progress (`status`, inbox phase 1), or, from an older hub, the AI twin
  * is on it (queued or running). It is not the user's to answer: the inbox page lists it under In progress / "Persona is working on it",
- * so the tab's badge and the Persona home's "Needs you now" leave it out too (#4848).
+ * so the Persona home's "Needs you now" leaves it out too (#4848).
  */
 val InboxRecord.agentWorking: Boolean get() = item.isWorking || agent?.state == "running" || agent?.state == "queued"
 
@@ -19,4 +19,12 @@ fun needsYouCount(list: InboxListResult, working: (InboxRow) -> Boolean): Int =
 fun needsYouCount(list: InboxListResult, records: List<InboxRecord>): Int {
     val working = records.filter { it.agentWorking }.map { it.item.id }.toSet()
     return needsYouCount(list) { it.type == InboxRowType.Item && it.id in working }
+}
+
+/** Use reconciled conversation reads, including receipts not yet reflected by the hub's item list. */
+fun inboxUnreadCount(records: List<InboxRecord>, conversations: InboxConversationList? = null): Int {
+    val ids = records.map { it.item.id }.toSet()
+    val grouped = conversations?.rows.orEmpty().filter { row -> row.records.any { it.item.id in ids } }
+    val groupedIds = grouped.flatMap { it.records }.map { it.item.id }.toSet()
+    return grouped.count { it.unread } + records.count { it.item.id !in groupedIds && !it.read && !it.item.isDone }
 }

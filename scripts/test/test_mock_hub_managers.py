@@ -8,7 +8,11 @@ Starts scripts/mock/mock_hub.py on a free port with a HOME of its own (MOCK_EXTE
 - each manager keeps its own inbox mutes and rules: one set for another manager covers only its items, and an offline
   one answers 503 assistant_offline;
 - the roster's inbox_needs_you is what the merged inbox lists open under "Needs you" for each online manager, absent
-  for an offline or installing one, and follows an item being handled.
+  for an offline or installing one, and follows an item being handled; the merged inbox leaves out the offline one's
+  items, as the hub leaves out a manager that doesn't answer;
+- a computer added with add.manager (MOCK_ADD_COMPUTER=1) is that manager's in the reply and in /machines (an offline
+  manager's is not listed until a manager that is online has it); a manager the roster lacks is 404 no_manager, one
+  being installed 409 installing, and neither adds a computer.
 
     python3 scripts/test/test_mock_hub_managers.py
 """
@@ -39,7 +43,8 @@ class MockHubManagersTests(unittest.TestCase):
         cls.port = free_port()
         cls.home = tempfile.mkdtemp(prefix="mock-managers-")
         env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
-        env.update(HOME=cls.home, PORT=str(cls.port), MOCK_EXTENSIONS="1", MOCK_MANAGER_NAS="1")
+        env.update(HOME=cls.home, PORT=str(cls.port), MOCK_EXTENSIONS="1", MOCK_MANAGER_NAS="1", MOCK_ADD_COMPUTER="1",
+                   MOCK_ADD_COMPUTER_JOIN="0")
         cls.proc = subprocess.Popen([sys.executable, str(ROOT / "scripts/mock/mock_hub.py")], env=env,
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 30
@@ -127,6 +132,49 @@ class MockHubManagersTests(unittest.TestCase):
         for s in theirs:
             self.assertEqual((s.get("machine_id"), s.get("state")), ("nas", "unknown"), s)
 
+    def test_a_computer_added_to_a_manager(self):
+        def machines():
+            _, answer = self.call("GET", "/api/v1/machines")
+            return {m["id"]: m for m in answer["machines"]}
+        body = lambda name, manager: json.dumps({"add": {"name": name, "os": "linux", "manager": manager}}).encode()
+        status, answer = self.call("POST", "/api/v1/auth/pair-codes", body("Work Box", "m-3fa21c"))
+        self.assertEqual((status, answer.get("machine"), answer.get("manager"), answer.get("added")), (200, "work-box", "m-3fa21c", True), answer)
+        self.assertEqual(machines()["work-box"]["manager"], "m-3fa21c")
+        # the same name again (pending, never connected) for another manager: the same computer, moved there
+        status, answer = self.call("POST", "/api/v1/auth/pair-codes", body("Work Box", "assistant"))
+        self.assertEqual((status, answer.get("machine"), answer.get("manager"), answer.get("added")), (200, "work-box", "assistant", None), answer)
+        self.assertEqual(machines()["work-box"]["manager"], "assistant")
+        # an offline manager's: accepted, but not listed until that manager reports it (the real hub lists what a
+        # manager reports); the same name again for an online one lists it there
+        status, answer = self.call("POST", "/api/v1/auth/pair-codes", body("Home Box", "m-8b04d2"))
+        self.assertEqual((status, answer.get("machine"), answer.get("manager"), answer.get("added")), (200, "home-box", "m-8b04d2", True), answer)
+        self.assertNotIn("home-box", machines())
+        status, answer = self.call("POST", "/api/v1/auth/pair-codes", json.dumps({"add": {"name": "Home Box"}}).encode())
+        self.assertEqual((status, answer.get("machine"), answer.get("manager"), answer.get("added")), (200, "home-box", "m-8b04d2", None), answer)
+        self.assertNotIn("home-box", machines())
+        status, answer = self.call("POST", "/api/v1/auth/pair-codes", body("Home Box", "m-3fa21c"))
+        self.assertEqual((status, answer.get("machine"), answer.get("manager")), (200, "home-box", "m-3fa21c"), answer)
+        self.assertEqual(machines()["home-box"]["manager"], "m-3fa21c")
+        before = set(machines())
+        for manager, want in (("m-ffffff", (404, "no_manager")), ("m-c1e9f0", (409, "installing"))):
+            status, answer = self.call("POST", "/api/v1/auth/pair-codes", body("Nowhere Box", manager))
+            self.assertEqual((status, answer.get("code")), want, answer)
+        self.assertEqual(set(machines()), before, "a refused add added a computer")
+
+    def test_sessions_of_one_manager(self):
+        _, everyone = self.call("GET", "/api/v1/sessions")
+        owners = {s["manager"] for s in everyone["sessions"]}
+        self.assertGreater(len(owners), 1, "the mock has sessions of several managers")
+        for mid in sorted(owners):
+            _, answer = self.call("GET", "/api/v1/sessions?manager=" + mid)
+            self.assertEqual([(s["machine_id"], s["session_id"]) for s in answer["sessions"]],
+                             [(s["machine_id"], s["session_id"]) for s in everyone["sessions"] if s["manager"] == mid], mid)
+        status, answer = self.call("GET", "/api/v1/sessions?manager=m-ffffff")
+        self.assertEqual((status, answer.get("code")), (404, "no_manager"))
+        # the header alone filters nothing: this list was never routed by it
+        _, answer = self.call("GET", "/api/v1/sessions", manager="m-3fa21c")
+        self.assertEqual(len(answer["sessions"]), len(everyone["sessions"]))
+
     def test_the_roster_counts_each_inbox(self):
         def roster():
             _, answer = self.call("GET", "/api/v1/managers")
@@ -151,6 +199,7 @@ class MockHubManagersTests(unittest.TestCase):
         self.assertGreater(managers["m-3fa21c"]["inbox_needs_you"], 0)  # the other manager's badge has something to show
         for mid in ("m-8b04d2", "m-c1e9f0"):  # offline, installing
             self.assertNotIn("inbox_needs_you", managers[mid], mid)
+        self.assertNotIn("m-8b04d2", {x["manager"] for x in items})  # the offline one's items aren't merged in
         mine = next(x for x in items if x["manager"] == "assistant" and needs_you(x))
         body = json.dumps({"done": True, "items": [{"id": mine["id"]}]}).encode()
         status, _ = self.call("POST", "/api/v1/inbox/done", body)

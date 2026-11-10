@@ -164,7 +164,7 @@ After enabling the extension for a Mac, Control Computer on its machine page off
 | Not installed | "Cua Driver isn't installed on this Mac" + Install Cua Driver |
 | Installing | Spinner + current step + Cancel |
 | Failed | "Installation failed: <last installer lines>" + Reinstall |
-| Missing permissions or requesting permission | Step-by-step guidance (#1280): approved permissions checked, missing ones numbered in order; uses the original macOS 26 System Settings names (System Settings › Privacy & Security › Accessibility; Screen & System Audio Recording, called Screen Recording in older versions; the app is listed as Cua Driver). Missing recording adds "When the system asks to quit and reopen or allow direct screen access, choose Allow"; ends with "Return here and tap Check Again". Buttons Grant Access and Check Again, plus VNC when Screen Sharing is on |
+| Missing permissions or requesting permission | Step-by-step guidance (#1280): approved permissions checked, missing ones numbered in order; uses the original macOS 26 System Settings names (System Settings › Privacy & Security › Accessibility; Screen & System Audio Recording, called Screen Recording in older versions; the app is listed as Cua Driver). Missing recording adds "When the system asks to quit and reopen or allow direct screen access, choose Allow"; ends with "Return here and tap Check Again". Buttons Grant Access and Check Again, plus VNC when Screen Sharing is on (the web has none here: its one entry is the page's top-bar View screen, and while the dialogs are up the section points to it, #3247) |
 | Ready | "Ready to control · Cua Driver 0.38.0" |
 
 The page polls every 2 seconds while a job runs or permission was requested and it is still waiting for Allow.

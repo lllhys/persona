@@ -15,6 +15,8 @@ class SetupFailureTest {
             "not_logged_in" to (FailureReason.NotLoggedIn to FailureAction.LoginClaude),
             "auth_failed" to (FailureReason.AuthFailed to FailureAction.EditProvider),
             "assistant_offline" to (FailureReason.AssistantRestarting to FailureAction.Retry),
+            "launcher_out_of_scope" to (FailureReason.ProviderOutOfScope to FailureAction.EditProvider),
+            "launcher_own_service" to (FailureReason.ProviderOutOfScope to FailureAction.EditProvider),
         )
         for ((code, expected) in cases) {
             val failure = mapOperationFailure(code, null, retryable = true)
@@ -30,5 +32,11 @@ class SetupFailureTest {
 
     @Test fun deliveryEvidenceStillComesFirst() {
         assertEquals(FailureReason.Unknown, mapOperationFailure("no_machine", "unknown", retryable = true).reason)
+    }
+
+    /** A provider outside the computer's scope refuses the start before anything runs: the message waits for the user. */
+    @Test fun aProviderOutOfScopeIsASetupRefusal() {
+        assertEquals(true, "launcher_out_of_scope" in SetupFailureCodes)
+        assertEquals(true, "launcher_own_service" in SetupFailureCodes)
     }
 }

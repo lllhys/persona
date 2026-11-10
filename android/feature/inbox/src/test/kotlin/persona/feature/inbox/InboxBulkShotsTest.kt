@@ -52,7 +52,8 @@ class InboxBulkShotsTest {
             sourceLabel = "邮件", source = "mail")
     }
 
-    private class OneInbox(snapshot: InboxSnapshot) : InboxRepository {
+    private class OneInbox(snapshot: InboxSnapshot, subscriptions: Boolean = false) : InboxRepository {
+        override val subscriptionsShown = MutableStateFlow(subscriptions)
         val asked = mutableListOf<Pair<List<InboxDoneTarget>, InboxBulkAction>>()
         override val entries = MutableStateFlow(emptyList<InboxEntry>())
         override val snapshot = MutableStateFlow(snapshot)
@@ -72,8 +73,9 @@ class InboxBulkShotsTest {
         override suspend fun downloadFile(file: LarkPart.File): String = error("not used")
     }
 
+    private val navigated = mutableListOf<NavKey>()
     private val navigator = object : Navigator {
-        override fun navigate(key: NavKey) = Unit
+        override fun navigate(key: NavKey) { navigated += key }
         override fun back() = Unit
         override fun selectTab(tab: AppTab) = Unit
     }
@@ -134,4 +136,34 @@ class InboxBulkShotsTest {
 
     @Test fun light() = shoot(dark = false)
     @Test fun dark() = shoot(dark = true)
+
+    /** Source subscriptions (#2041): once the hub shows them, their entry joins the Inbox's other settings and opens their pages. */
+    private fun subscriptions(dark: Boolean) {
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true) {
+                Box(Modifier.width(400.dp).height(900.dp).background(PersonaTheme.palette.background)) {
+                    InboxScreen(OneInbox(InboxSnapshot(records = records), subscriptions = true), navigator)
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("更多").performClick()
+        rule.waitForIdle()
+        save("inbox-subscriptions-sheet-${if (dark) "dark" else "light"}", screen())
+        rule.onNode(hasText("订阅来源")).performClick()
+        rule.waitForIdle()
+        val route = navigated.single() as persona.core.navigation.ExtensionUiRoute
+        assertEquals(persona.core.contracts.api.SUBSCRIPTIONS_UI, route.extensionId)
+    }
+
+    @Test fun subscriptionsLight() = subscriptions(dark = false)
+    @Test fun subscriptionsDark() = subscriptions(dark = true)
+
+    @Test fun noSubscriptionsEntryUntilTheHubShowsThem() {
+        rule.setContent { PersonaTheme(reduceMotion = true) { InboxScreen(OneInbox(InboxSnapshot(records = records)), navigator) } }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("更多").performClick()
+        rule.waitForIdle()
+        rule.onNode(hasText("订阅来源")).assertDoesNotExist()
+    }
 }

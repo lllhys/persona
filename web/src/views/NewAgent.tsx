@@ -31,6 +31,7 @@ import { Icon } from "../ui/icons";
 import { ModelPicker, type ModelList } from "../ui/ModelPicker";
 import { t } from "../i18n";
 import { useAddComputer } from "./machines/AddComputerEntry";
+import { useScopedMachines } from "../lib/current-assistant";
 import { currentHosts, engineName, startHosts } from "../lib/engines";
 import { initialLauncher, launcherBlock } from "../lib/launcher-health";
 import { navigate } from "../lib/router";
@@ -44,7 +45,8 @@ interface Dirs {
 }
 
 export function NewAgent({ open, onClose, preset }: { open: boolean; onClose: () => void; /** Filled in when another page opens it (the knowledge base's "Open agent"). */ preset?: NewAgentPreset | null }) {
-  const machines = useStore((s) => s.machines);
+  // with several assistants, the current one's computers: the agent started here shows in its list (docs/assistant/managers.md "Clients")
+  const machines = useScopedMachines();
   const online = useMemo(() => machines.filter((m) => m.online), [machines]);
   // no computer at all (docs/assistant/onboarding.md 4.5): the "Computer" field says why it is empty and adds one, nothing else to fill in
   const loaded = useStore((s) => s.loaded);

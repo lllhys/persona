@@ -47,7 +47,9 @@ export type Route =
   | { name: "agent-archives" }
   // view=calendar: the to-dos' calendar (#2029), its mode and the day it shows ("YYYY-MM-DD"), with the open to-do beside it
   | { name: "todos"; id?: string; view?: "calendar"; mode?: "day" | "week" | "month"; date?: string }
-  | { name: "extension"; extension: string; ui: string };
+  | { name: "extension"; extension: string; ui: string }
+  // the source subscription pages (#2041), their first state in ?state=
+  | { name: "subscriptions" };
 
 /** `?view=term|chat` of an agent page's address; anything else is no choice. */
 export function parseView(search: string): SessionView | undefined {
@@ -82,6 +84,7 @@ export function parse(path: string, search = ""): Route {
   if (p[0] === "a") return { name: "agents", id: p[1] };
   if (p[0] === "agents") return p[1] === "archived" ? { name: "agent-archives" } : { name: "agent-list" };
   if (p[0] === "settings") return { name: "settings" };
+  if (p[0] === "subscriptions") return { name: "subscriptions" };
   // /plugin/<id>/<ui>: the same page under its name before #1845 (bookmarks)
   if ((p[0] === "extension" || p[0] === "plugin") && p[1] && p[2]) return { name: "extension", extension: p[1], ui: p[2] };
   if (p[0] === "todos") {
@@ -176,6 +179,8 @@ export function routePath(r: Route): string {
     }
     case "extension":
       return `/extension/${encodeURIComponent(r.extension)}/${encodeURIComponent(r.ui)}`;
+    case "subscriptions":
+      return "/subscriptions";
     default:
       return "/overview";
   }

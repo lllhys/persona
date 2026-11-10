@@ -21,6 +21,7 @@ import persona.core.contracts.TodoDecision
 import persona.core.contracts.TodoDecisionResponse
 import persona.core.contracts.TodoDecisionsResponse
 import persona.core.contracts.TodosResponse
+import persona.core.contracts.api.AssistantManagerChoice
 import persona.core.contracts.api.AssistantViewAnswer
 import persona.core.contracts.api.TasksApi
 import persona.core.contracts.generated.ExtensionAssistantHTMLActionInput
@@ -62,21 +63,34 @@ class HttpTasksApi internal constructor(
             .sessions.firstOrNull { it.key == key }
     }
 
+    // The list is every manager's, each to-do with its `manager` (docs/protocol/protocol.md "Per-manager routing"): noted, so the
+    // requests for one name its manager, as an inbox item's do.
     override suspend fun todos(): List<Todo> =
-        JsonCodec.decodeFromJsonElement<TodosResponse>(call(path("todos"))).todos
+        JsonCodec.decodeFromJsonElement<TodosResponse>(call(path("todos"))).todos.onEach {
+            AssistantManagerChoice.noteItem(listOf("todos", it.id), it.manager)
+        }
 
-    override suspend fun createTodo(title: String, notes: String): Todo =
-        JsonCodec.decodeFromJsonElement(call(path("todos"), "POST", buildJsonObject {
+    // A new to-do is the current assistant's (the client names it on `POST todos`).
+    override suspend fun createTodo(title: String, notes: String): Todo {
+        val owner = AssistantManagerChoice.current.value.manager
+        val made: Todo = JsonCodec.decodeFromJsonElement(call(path("todos"), "POST", buildJsonObject {
             put("title", title)
             put("notes", notes)
         })["todo"] ?: error("no todo in the answer"))
+        return (if (made.manager == null) made.copy(manager = owner) else made)
+            .also { AssistantManagerChoice.noteItem(listOf("todos", it.id), it.manager) }
+    }
 
     override suspend fun patchTodo(id: String, title: String?, notes: String?, done: Boolean?): Todo =
-        JsonCodec.decodeFromJsonElement(call(path("todos", id), "PATCH", buildJsonObject {
+        stamped(JsonCodec.decodeFromJsonElement(call(path("todos", id), "PATCH", buildJsonObject {
             title?.let { put("title", it) }
             notes?.let { put("notes", it) }
             done?.let { put("done", it) }
-        })["todo"] ?: error("no todo in the answer"))
+        })["todo"] ?: error("no todo in the answer")))
+
+    /** One to-do's answer comes from its manager unstamped: it keeps the manager its list showed it under. */
+    private fun stamped(todo: Todo): Todo =
+        if (todo.manager != null) todo else todo.copy(manager = AssistantManagerChoice.itemHeader(listOf("todos", todo.id)))
 
     override suspend fun deleteTodo(id: String) {
         call(path("todos", id), "DELETE")
@@ -125,8 +139,8 @@ class HttpTasksApi internal constructor(
     override suspend fun dismissPlan(id: String): TaskPlan = plan(call(path("task-plans", id, "dismiss"), "POST", JsonObject(emptyMap())))
 
     override suspend fun retryTask(todoId: String): Todo =
-        JsonCodec.decodeFromJsonElement(call(path("todos", todoId, "retry"), "POST", JsonObject(emptyMap()))["todo"]
-            ?: error("no todo in the answer"))
+        stamped(JsonCodec.decodeFromJsonElement(call(path("todos", todoId, "retry"), "POST", JsonObject(emptyMap()))["todo"]
+            ?: error("no todo in the answer")))
 
     override suspend fun acceptTask(todoId: String, askedAt: String) {
         call(path("todos", todoId, "accept"), "POST", buildJsonObject { put("asked_at", askedAt) })

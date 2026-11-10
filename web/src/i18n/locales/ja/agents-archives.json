@@ -12,5 +12,5 @@
   "load_failed": "アーカイブしたエージェントを読み込めませんでした",
   "retry": "再試行",
   "unsupported_title": "アーカイブは使えません",
-  "unsupported_body": "エージェントをアーカイブするには hub とマネージャーを更新してください。"
+  "unsupported_body": "エージェントをアーカイブするには hub とアシスタントを更新してください。"
 }

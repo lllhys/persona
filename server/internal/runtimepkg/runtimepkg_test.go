@@ -1,10 +1,13 @@
 package runtimepkg
 
 import (
+	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -67,6 +70,13 @@ func TestGenerate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// What an earlier run left: a tree of the layout before parts and a part no package takes now. README.md stays.
+	for _, stale := range []string{"persona-dsh-runtime/dsh/lib/a.js", "dsh-0000000000000000.tar.gz", "README.md"} {
+		_ = os.MkdirAll(filepath.Join(out, filepath.Dir(stale)), 0o755)
+		if err := os.WriteFile(filepath.Join(out, stale), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	files, err := Generate(src, out)
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +89,37 @@ func TestGenerate(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("copied %v, want %v", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(out, "persona-dsh-runtime", "dsh", "test")); err == nil {
-		t.Fatal("tests were copied")
+	// One part per directory: the three packages that take runtime-sdk share one blob. The stale files are gone.
+	parts, _ := filepath.Glob(filepath.Join(out, "*"+partSuffix))
+	if entries, _ := os.ReadDir(out); len(parts) != 5 || len(entries) != 7 || string(mustRead(t, filepath.Join(out, "README.md"))) != "old" {
+		t.Fatalf("wrote %d parts, %d entries", len(parts), len(entries))
+	}
+	for _, part := range parts {
+		zr, err := gzip.NewReader(bytes.NewReader(mustRead(t, part)))
+		if err != nil || zr.Name != "" || zr.ModTime.Unix() > 0 {
+			t.Fatalf("%s: gzip header %v", part, err)
+		}
+	}
+	again := t.TempDir()
+	if _, err := Generate(src, again); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range append(parts, filepath.Join(out, indexFile)) {
+		name = filepath.Base(name)
+		if !bytes.Equal(mustRead(t, filepath.Join(out, name)), mustRead(t, filepath.Join(again, name))) {
+			t.Fatalf("%s differs between two runs", name)
+		}
+	}
+	// Loading one package unpacks its own parts only.
+	d := &dist{fsys: os.DirFS(out), root: "."}
+	p, err := d.load("persona-dsh-runtime")
+	if err != nil || p == nil || p.Hash != Hash(files["persona-dsh-runtime"]) || len(p.Files) != 5 {
+		t.Fatalf("load: %+v %v", p, err)
+	}
+	for part, dp := range d.parts {
+		if unpacked := dp.files != nil; unpacked != (strings.HasPrefix(part, "dsh-") || strings.HasPrefix(part, "runtime-sdk-")) {
+			t.Fatalf("%s unpacked: %v", part, unpacked)
+		}
 	}
 	got = got[:0]
 	for _, f := range files["persona-pi-runtime"] {
@@ -135,27 +174,51 @@ func TestPackagesMatchTheLoader(t *testing.T) {
 	}
 }
 
-// The Agent SDK bridge as committed (integrations/agent-sdk/dist, the SDK bundled in): it generates, loads, and stays
-// under MaxSize, the bound every package is offered and fetched within.
-func TestAgentSDKPackage(t *testing.T) {
+// generateIntegrations runs Generate on the packages as committed in integrations/ into a temporary directory.
+func generateIntegrations(t *testing.T) (map[string][]File, string) {
+	t.Helper()
 	src := filepath.Join("..", "..", "..", "integrations")
 	if _, err := os.Stat(filepath.Join(src, "agent-sdk", "dist", "bridge.mjs")); err != nil {
 		t.Skipf("no integrations checkout beside server/: %v", err)
 	}
 	out := t.TempDir()
-	if _, err := Generate(src, out); err != nil {
+	files, err := Generate(src, out)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(OverrideEnv, out)
-	p, err := Load("persona-agent-sdk-runtime")
-	if err != nil || p == nil {
-		t.Fatalf("load: %v %v", p, err)
+	return files, out
+}
+
+// The packages as committed in integrations/ (the Agent SDK bridge bundled in): each unpacks with exactly the files
+// and hash of its sources, and stays under MaxSize, the bound every package is offered and fetched within.
+func TestGeneratedPackages(t *testing.T) {
+	files, out := generateIntegrations(t)
+	d := &dist{fsys: os.DirFS(out), root: "."}
+	for name, want := range files {
+		p, err := d.load(name)
+		if err != nil || p == nil {
+			t.Fatalf("%s: %v %v", name, p, err)
+		}
+		want = append([]File(nil), want...)
+		sort.Slice(want, func(i, j int) bool { return want[i].Path < want[j].Path })
+		if !reflect.DeepEqual(p.Files, want) || p.Hash != Hash(want) {
+			t.Fatalf("%s: unpacked files or hash differ from integrations/", name)
+		}
+		size := 0
+		for _, f := range p.Files {
+			size += len(f.Data)
+		}
+		if size > MaxSize || name == "persona-agent-sdk-runtime" && (len(p.Files) != 2 || size < 100<<10) {
+			t.Fatalf("%s: %d files, %d bytes (MaxSize %d)", name, len(p.Files), size, MaxSize)
+		}
 	}
-	size := 0
-	for _, f := range p.Files {
-		size += len(f.Data)
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(p.Files) != 2 || size > MaxSize || size < 100<<10 {
-		t.Fatalf("%d files, %d bytes (MaxSize %d)", len(p.Files), size, MaxSize)
-	}
+	return data
 }

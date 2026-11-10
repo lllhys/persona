@@ -69,7 +69,7 @@ final class ClipboardSectionTests: XCTestCase {
         app.launchPinned()
         let offer = app.switches["clipboard-offer"].firstMatch
         XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 30))
-        for _ in 0..<4 where !(offer.exists && offer.isHittable) { app.swipeUp() }
+        for _ in 0..<12 where !(offer.exists && offer.isHittable) { app.swipeUp() }
         XCTAssertTrue(offer.waitForExistence(timeout: 5))
         XCTAssertEqual(offer.value as? String, "0", "the offer is opt-in")
         shot(app, "clipboard-offer-default-off")
@@ -87,7 +87,7 @@ final class ClipboardSectionTests: XCTestCase {
         allowSystemAlert(["允许", "Allow"], wait: 4)
         XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 30))
         let offer = app.switches["clipboard-offer"].firstMatch
-        for _ in 0..<4 where !(offer.exists && offer.isHittable) { app.swipeUp() } // the list's last section, made when shown
+        for _ in 0..<12 where !(offer.exists && offer.isHittable) { app.swipeUp() } // the list's last section, made when shown
         XCTAssertTrue(offer.waitForExistence(timeout: 5), "no offer switch:\n\(app.debugDescription)")
         XCTAssertEqual(offer.value as? String, "1")
         shot(app, "clipboard-offer-setting")

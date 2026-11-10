@@ -35,12 +35,12 @@ func TestHealthDenyRules(t *testing.T) {
 		t.Fatalf("a health conversation denied %q", got)
 	}
 
-	_, flags := n.claudeAssistantMCPAndTools("sess-123", assistant)
+	_, flags := n.claudeAssistantMCPAndTools("sess-123", assistant, true)
 	i := slices.Index(flags, "--disallowedTools")
 	if i < 0 || !slices.Contains(flags[i+1:], "Read(/"+health+"/**)") || slices.Contains(flags[i+1:], "--disallowedTools") {
 		t.Fatalf("flags %q", flags)
 	}
-	if _, flags := n.claudeAssistantMCPAndTools("sess-123", health); slices.ContainsFunc(flags, func(f string) bool { return strings.HasPrefix(f, "Read(") }) {
+	if _, flags := n.claudeAssistantMCPAndTools("sess-123", health, true); slices.ContainsFunc(flags, func(f string) bool { return strings.HasPrefix(f, "Read(") }) {
 		t.Fatalf("a health conversation's flags deny files: %q", flags)
 	}
 }
@@ -76,7 +76,7 @@ func TestHealthReportRules(t *testing.T) {
 	if got := healthReportRules("/home/a,b/.persona/health"); got != nil {
 		t.Fatalf("a path with a comma got %q", got)
 	}
-	_, flags := n.claudeAssistantMCPAndTools("sess-123", health)
+	_, flags := n.claudeAssistantMCPAndTools("sess-123", health, true)
 	i := slices.Index(flags, "--allowedTools")
 	if i < 0 || !slices.Contains(strings.Split(flags[i+1], ","), "Edit("+reports+")") {
 		t.Fatalf("flags %q", flags)

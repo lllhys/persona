@@ -1,5 +1,5 @@
 {
-  "step_open": "点「打开 ego lite」，它会在那台 Mac 上打开（屏幕共享开着时可以用「VNC」在这里操作）",
+  "step_open": "点「打开 ego lite」，它会在那台 Mac 上打开（屏幕共享开着时，可以点本页顶部的「查看屏幕」在这里操作）",
   "step_import": "首次设置里选从 Chrome（或别的浏览器）导入数据：网站的登录状态会一起带过来。macOS 会多次要钥匙串密码，每次都输那台 Mac 的登录密码。不想导入可以跳过",
   "step_finish": "做完首次设置，它会装上 ego-browser 命令",
   "step_recheck": "回到这里点「再检查一次」",

@@ -252,6 +252,8 @@ func TestGoldenChannelMessage(t *testing.T) {
 func TestGoldenTaskDone(t *testing.T) {
 	golden(t, "task_done", prompts.RenderTaskDone(prompts.TaskDone{Owner: "示例用户"}))
 	golden(t, "task_done.delivery", prompts.RenderTaskDone(prompts.TaskDone{Owner: "示例用户", Delivery: true}))
+	// The reason in the user's language: the apps show it on the task (#3180).
+	golden(t, "task_done.language", prompts.RenderTaskDone(prompts.TaskDone{Owner: "示例用户", Language: "English"}))
 	golden(t, "task_delivery", prompts.RenderTaskDelivery()) // handed to a task's agent after its prompt (#3306)
 	// The user's files, copied to the agent's computer (#2437).
 	golden(t, "task_attachments", prompts.RenderTaskAttachments(prompts.TaskAttachments{Copied: true,

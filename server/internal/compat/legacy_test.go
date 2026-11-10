@@ -96,3 +96,45 @@ func TestMCPNamespacesShareOnlyTheBuiltinHandler(t *testing.T) {
 		t.Fatal("guest permission scope expanded")
 	}
 }
+
+func TestMCPRegistrationPolicy(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "persona"
+		if legacy {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			env := map[string]string{"PERSONA_SESSION_ID": "same", "JARVIS_SESSION_ID": "stale", "PERSONA_GUEST": "", "JARVIS_GUEST": "1"}
+			builtin := map[string]any{"command": "fixture", "env": env}
+			extension := map[string]any{"command": "other", "env": map[string]string{"PERSONA_GUEST": "extension"}}
+			servers := MCPRegistrationServers(map[string]any{"persona": builtin, "extension": extension}, legacy)
+			wantCount := 2
+			if legacy {
+				wantCount++
+			}
+			if len(servers) != wantCount || !reflect.DeepEqual(servers["persona"], builtin) || !reflect.DeepEqual(servers["extension"], extension) {
+				t.Fatalf("unexpected MCP servers: %v", servers)
+			}
+			if alias, ok := servers[MCPServer]; ok != legacy || legacy && !reflect.DeepEqual(alias, builtin) {
+				t.Fatalf("legacy handler = %v (%v), want enabled=%v", alias, ok, legacy)
+			}
+			mirrored := builtin["env"].(map[string]string)
+			if mirrored["JARVIS_SESSION_ID"] != "same" || mirrored["JARVIS_GUEST"] != "" || env["JARVIS_SESSION_ID"] != "stale" {
+				t.Fatalf("process environment precedence or input changed: %v / %v", mirrored, env)
+			}
+			if len(extension["env"].(map[string]string)) != 1 {
+				t.Fatal("extension environment was aliased")
+			}
+			wantTools := []string{"mcp__persona__lark_agent_reply", "mcp__persona__ask_user"}
+			if legacy {
+				wantTools = []string{"mcp__persona__lark_agent_reply", "mcp__jarvis__lark_agent_reply", "mcp__persona__ask_user", "mcp__jarvis__ask_user"}
+			}
+			if got := MCPAllowedToolNames([]string{"lark_agent_reply", "ask_user"}, legacy); !reflect.DeepEqual(got, wantTools) {
+				t.Fatalf("allowed tools = %v, want %v", got, wantTools)
+			}
+			if got := MCPToolNames([]string{"ask_user"}); !reflect.DeepEqual(got, []string{"mcp__persona__ask_user", "mcp__jarvis__ask_user"}) {
+				t.Fatalf("historical tool recognition narrowed: %v", got)
+			}
+		})
+	}
+}

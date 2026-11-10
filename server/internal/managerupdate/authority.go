@@ -30,7 +30,7 @@ type Authority struct {
 // the explicit independent manager. No schema, setting or service is changed.
 func (c *Controller) ReadAuthority(ctx context.Context, p Plan) (Authority, error) {
 	var out Authority
-	if err := p.validateShape(); err != nil {
+	if err := p.validateIdentity(); err != nil {
 		return out, err
 	}
 	if c.UID != p.UID {

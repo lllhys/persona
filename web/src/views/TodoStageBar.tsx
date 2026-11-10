@@ -33,7 +33,7 @@ function connector(state: TodoStageState, side: "before" | "after") {
   return cx("h-px flex-1", reached ? "bg-green/50" : "bg-line-strong");
 }
 
-/** The PR link: http(s) only (anything else is not drawn), named by its number when the address ends in one. */
+/** PR/MR links allow only http(s); merge_requests paths use MR !N, while other labels keep their existing form. */
 export function prLink(raw?: string): { url: string; text: string; label: string } | null {
   const url = raw?.trim() ?? "";
   let u: URL;
@@ -43,13 +43,14 @@ export function prLink(raw?: string): { url: string; text: string; label: string
     return null;
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const mr = /\/merge_requests\/(\d+)\/?$/.exec(u.pathname)?.[1];
   const n = /\/(\d+)\/?$/.exec(u.pathname)?.[1];
-  const text = n ? t("todos.stage_pr_n", { n }) : t("todos.stage_pr");
+  const text = mr ? t("todos.stage_mr_n", { n: mr }) : n ? t("todos.stage_pr_n", { n }) : t("todos.stage_pr");
   return { url, text, label: t("todos.stage_pr_label", { pr: text, host: u.host }) };
 }
 
-export function TodoStageBar({ stage, prURL, className = "" }: { stage?: string; prURL?: string; className?: string }) {
-  const current = todoStageIndex(stage);
+export function TodoStageBar({ stage, stageKind, prURL, className = "" }: { stage?: string; stageKind?: string; prURL?: string; className?: string }) {
+  const current = stageKind === "general" ? -1 : todoStageIndex(stage);
   const pr = prLink(prURL);
   if (current < 0 && !pr) return null;
   return (

@@ -17,6 +17,14 @@ import { STATE_LABEL, stateName } from "../lib/state-labels";
 
 export const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
 
+/** One sidebar group's content and chevron take the same direction-specific timing from the web motion tokens. */
+export function sidebarFoldMotion(open: boolean) {
+  return {
+    transitionDuration: open ? "var(--sidebar-fold-open)" : "var(--sidebar-fold-close)",
+    transitionTimingFunction: open ? "var(--sidebar-fold-open-ease)" : "var(--sidebar-fold-close-ease)",
+  } as const;
+}
+
 /** Spread on a field holding a secret that is not this site's password (a key, a computer's password): no spell check,
  *  and the 1Password, LastPass and Bitwarden extensions leave it alone. The field sets its own `autoComplete`. */
 export const SECRET_INPUT = { spellCheck: false, "data-1p-ignore": true, "data-lpignore": "true", "data-bwignore": true } as const;
@@ -221,7 +229,9 @@ export function Spinner({ size = 12 }: { size?: number }) {
 /** An on / off switch (role=switch): the knob slides over 200 ms with the design system's ease (reduced motion: at once).
  *  Settings' rows, and the chat's and "New agent"'s ultracode switch (#3428). `className`: added to the track (a place
  *  that needs its grayed state drawn more clearly); without it the switch is as before. */
-export function Switch({ on, onChange, disabled, label, className, describedBy }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean; label: string; className?: string; describedBy?: string }) {
+/** The one on/off switch, iOS-style (#3675): a green or grey track and a white knob with a soft shadow and no ring
+ *  (`--switch-on`, `--switch-off`, `--shadow-knob`). The `switch` class gives it a pill-shaped ring on keyboard focus only. */
+export function Switch({ on, onChange, disabled, label, className, describedBy, title }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean; label: string; className?: string; describedBy?: string; title?: string }) {
   return (
     <button
       type="button"
@@ -229,11 +239,12 @@ export function Switch({ on, onChange, disabled, label, className, describedBy }
       aria-checked={on}
       aria-label={label}
       aria-describedby={describedBy}
+      title={title}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={cx("touch-hit relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50", on ? "bg-accent" : "bg-hover-2", className)}
+      className={cx("switch touch-hit relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50", on ? "bg-switch-on" : "bg-switch-off", className)}
     >
-      <span className="absolute left-[2px] size-[18px] rounded-full bg-white shadow-btn transition-transform duration-200" style={{ transform: on ? "translateX(16px)" : "none", transitionTimingFunction: EASE }} />
+      <span aria-hidden className="absolute left-[2px] size-[18px] rounded-full bg-white shadow-knob transition-transform duration-200" style={{ transform: on ? "translateX(16px)" : "none", transitionTimingFunction: EASE }} />
     </button>
   );
 }
@@ -250,7 +261,7 @@ export function Kbd({ children }: { children: React.ReactNode }) {
  *  children: padding there is room for what they draw outside themselves (a ring, a shadow) and stays while closed.
  *  `min-w-0`: the grid's implicit column's `auto` minimum is the item's content-based minimum, so one child that cannot
  *  break (a long URL) would widen the whole grid past its column — the Inbox list then scrolls sideways (#3262). */
-export function Collapse({ open, children, className = "", clipClassName = "", lazy = false, unclipped = false }: { open: boolean; children: React.ReactNode; className?: string; clipClassName?: string; lazy?: boolean; /** Once open and still, the content isn't clipped: sticky headers inside it stick to the scroller, not to this box. */ unclipped?: boolean }) {
+export function Collapse({ open, children, className = "", clipClassName = "", lazy = false, unclipped = false, sidebarFold = false }: { open: boolean; children: React.ReactNode; className?: string; clipClassName?: string; lazy?: boolean; /** Once open and still, the content isn't clipped: sticky headers inside it stick to the scroller, not to this box. */ unclipped?: boolean; /** Sidebar groups fold by clipping fully visible content, with the shared sidebar timing. */ sidebarFold?: boolean }) {
   const [closing, setClosing] = useState(false);
   const [moving, setMoving] = useState(false);
   // A lazy one's new content is laid out at 0fr first and the row opens a frame later: a long trace's first layout
@@ -279,15 +290,21 @@ export function Collapse({ open, children, className = "", clipClassName = "", l
     return () => cancelAnimationFrame(f);
   }, [open, laidOut]);
   const shown = open && laidOut;
+  const unclippedNow = unclipped && shown && !moving;
   return (
     <div
-      className={`grid transition-[grid-template-rows,opacity] duration-300 ${className}`}
-      style={{ gridTemplateRows: shown ? "1fr" : "0fr", opacity: shown ? 1 : 0, transitionTimingFunction: EASE, willChange: moving ? "opacity" : undefined }}
+      className={`grid ${sidebarFold && !unclippedNow ? "overflow-hidden [contain:layout_paint]" : ""} ${sidebarFold ? "transition-[grid-template-rows]" : "transition-[grid-template-rows,opacity] duration-300"} ${className}`}
+      style={{
+        gridTemplateRows: shown ? "1fr" : "0fr",
+        opacity: sidebarFold || shown ? 1 : 0,
+        ...(sidebarFold ? sidebarFoldMotion(open) : { transitionTimingFunction: EASE }),
+        willChange: moving ? (sidebarFold ? "grid-template-rows" : "opacity") : undefined,
+      }}
       onTransitionEnd={(e) => e.target === e.currentTarget && e.propertyName === "grid-template-rows" && settle()}
       // inert once closed, not while it closes: switching a long trace inert is a full style pass (34 ms for 650 steps)
       inert={(!open && !moving) || undefined}
     >
-      <div className={`min-h-0 min-w-0 ${unclipped && shown && !moving ? "" : "overflow-hidden [contain:layout_paint]"} ${clipClassName}`}>{collapseMounted(lazy, open, closing) && children}</div>
+      <div className={`min-h-0 min-w-0 ${!sidebarFold && !unclippedNow ? "overflow-hidden [contain:layout_paint]" : ""} ${clipClassName}`}>{collapseMounted(lazy, open, closing) && children}</div>
     </div>
   );
 }
@@ -733,6 +750,7 @@ function MenuRow({ item: it, asking, working, refCb, onHover, onChoose }: { item
   const detailId = `${useId()}-detail`;
   const label = rowLabel(it, asking ? it.key : null);
   const detail = asking && it.confirmDetail ? it.confirmDetail : it.detail;
+  const tag = it.tag && <span className="ml-1.5 inline-block rounded-[5px] bg-ai-tint px-1.5 align-[1px] text-[10.5px] leading-[1.5] font-medium whitespace-nowrap text-ai">{it.tag}</span>;
   return (
     <button
       ref={refCb}
@@ -751,20 +769,24 @@ function MenuRow({ item: it, asking, working, refCb, onHover, onChoose }: { item
         it.wrap || detail ? "min-h-8 py-1.5" : "h-8",
         it.danger ? "text-red" : "text-ink",
         asking && "bg-red-tint font-medium",
+        it.dim && "opacity-55",
       )}
     >
       {it.state && <StatusMark state={it.state} />}
+      {it.lead}
       {it.icon && <Icon name={it.icon} size={14} className={it.danger ? "" : "text-ink-3"} />}
       {detail ? (
         // label over its explanation, both wrapping: the explanation never pushes the label (or the check) off the row
         <span className="min-w-0 flex-1">
-          <span className="block break-words">{label}</span>
+          <span className="block break-words">{label}{tag}</span>
           <span id={detailId} className="mt-0.5 block text-[11.5px] leading-snug break-words text-ink-3">{detail}</span>
         </span>
       ) : (
-        <span className={cx("min-w-0 flex-1", it.wrap ? "break-all" : "truncate", it.mono && "font-mono")}>{label}</span>
+        <span className={cx("min-w-0 flex-1", it.wrap ? "break-all" : "truncate", it.mono && "font-mono")}>{label}{tag}</span>
       )}
       {it.state && <StatePill state={it.state} />}
+      {!working && !!it.badge && <span data-menu-badge aria-hidden={it.badgeLabel ? true : undefined} className="flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10.5px] font-semibold whitespace-nowrap text-attention tabular-nums">{it.badge > 99 ? "99+" : it.badge}</span>}
+      {!working && !!it.badge && it.badgeLabel && <span className="sr-only">{it.badgeLabel}</span>}
       {working ? <Spinner size={12} /> : it.hint && <span className="shrink-0 text-[11px] text-ink-3">{it.hint}</span>}
       {it.checked !== undefined && <Icon name="check" size={13} stroke={2.5} className={cx("shrink-0", it.checked ? "text-ink" : "invisible")} />}
       {accel && !working && <span aria-hidden className={cx("w-3.5 shrink-0 text-center text-[11px]", it.danger ? "" : "text-ink-3")}>{accel}</span>}

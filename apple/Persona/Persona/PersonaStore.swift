@@ -689,9 +689,10 @@ nonisolated extension APIClient {
         let path = "/api/v1/personas/\(id)/\(file)"
         if transport != nil || config.isDemo { return try await request("GET", path) }
         var req = URLRequest(url: url(path), timeoutInterval: 60)
-        req.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+        config.authorize(&req)
         req.setValue(LanguageStore.shared.launched, forHTTPHeaderField: "Accept-Language")
         let (data, resp) = try await Self.uncachedSession.data(for: req)
+        try CloudflareAccessError.check(resp, body: data, access: config.access)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw APIError(status: status, message: APIError.message(in: data) ?? HTTPURLResponse.localizedString(forStatusCode: status))

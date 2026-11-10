@@ -27,6 +27,7 @@ export function boardSectionOf({ todo, status }: BoardRow): BoardSectionKey {
     case "usage_limit":
       return "waiting";
     case "working":
+    case "waiting":
     case "not_started":
       return "working";
     case "unread":

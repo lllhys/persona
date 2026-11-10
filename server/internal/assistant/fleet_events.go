@@ -77,6 +77,7 @@ func (s *Service) NodeEvent(machine, event string, params json.RawMessage) bool 
 					s.fleet.mu.Unlock()
 				}
 				s.noteStop(machine, sid, p)
+				s.meetingTurnPrompt(machine, sid, p) // the user's own prompt to an Agent ends its meeting turn (meeting_turns.go)
 			}
 		}
 		// the hub shows it to the apps (hook_event)
@@ -111,6 +112,12 @@ func (s *Service) NodeRequest(ctx context.Context, machine, method string, param
 		}
 		r, err := s.nodeInteraction(ctx, p.Interaction)
 		return r, true, err
+	case assistantwire.MethodCloseoutCheck: // a turn that did work ends without a closeout (agents_closeout.go)
+		var p assistantwire.CloseoutCheckRequest
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, true, err
+		}
+		return s.closeoutCheck(ctx, machine, p), true, nil
 	case "assistant.lark":
 		out, err := s.assistantLark(ctx, machine)
 		return out, true, err

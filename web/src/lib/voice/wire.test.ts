@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
-import { cutLine, parseFrame, recentLines, resendFrame, runOpen, stampDate, startFrame, textFrame, INTERRUPT_FRAME, validExtensionID, voiceSocketURL } from "./wire";
+import { parseFrame, resendFrame, startFrame, textFrame, INTERRUPT_FRAME, voiceSocketURL } from "./frames";
+import { cutLine, recentLines, runOpen, stampDate, validExtensionID } from "./wire";
 
 const item = (seq: number, role: Item["role"], text: string, kind: Item["kind"] = "text"): Item => ({ id: `i${seq}`, seq, role, kind, text });
 

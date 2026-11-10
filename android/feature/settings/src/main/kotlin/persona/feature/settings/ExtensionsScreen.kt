@@ -49,6 +49,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import persona.core.contracts.api.SUBSCRIPTIONS_UI
 
 /**
  * Settings › Extensions (docs/extensions/extensions.md "App: Settings › Extensions"): every extension of the hub's (built in, from hub.json, installed on
@@ -158,7 +159,10 @@ fun ExtensionPage(
     startSignIn: Boolean = false,
     /** Whose extension it is (several managers); null: the default's. The requests this page makes name it. */
     manager: String? = null,
+    /** Opens its connectors' source subscriptions (#2041); without it, or for another manager's, the row is left out. */
+    onSubscriptions: (() -> Unit)? = null,
 ) {
+    val subscriptionCounts = rememberSubscriptionCounts(extensions.takeIf { manager == null && onSubscriptions != null }) { it.extension == extensionId }
     val owner = remember(extensions, extensionId, manager) { ExtensionOwners.of(manager) }
     if (extensions == null) {
         JListPage(title = stringResource(R.string.settings_ext_title), onBack = onBack) { item { JNotice(stringResource(R.string.settings_ext_demo_none)) } }
@@ -249,6 +253,7 @@ fun ExtensionPage(
                 if (onChannel != null) channelLink(detail, onChannel)
                 val pages = detail.ui.filter { auth?.page.isNullOrBlank() || it.id != auth.page }
                 if (onPage != null) extensionPages(pages, onPage)
+                if (onSubscriptions != null) subscriptionsEntry(subscriptionCounts, onSubscriptions)
                 if (connectors != null) connectorInbox(hubConnectors, onConnector) { c, on ->
                     scope.launch {
                         try {
@@ -668,7 +673,9 @@ internal fun persona.core.contracts.api.ManagerRoster?.ownerOrDefault(manager: S
     manager?.takeIf { it.isNotBlank() } ?: this?.defaultManagerId ?: persona.core.contracts.api.ManagerRoster.ASSISTANT_MANAGER
 
 /** An extension's own requests' paths (`extensions/<id>/…`, `plugins/<id>/…` on an older hub). */
-internal fun extensionPrefixes(extensionId: String) = listOf(listOf("extensions", extensionId), listOf("plugins", extensionId))
+internal fun extensionPrefixes(extensionId: String) =
+    if (extensionId == SUBSCRIPTIONS_UI) listOf(listOf("subscriptions")) // the subscription pages (#2041)
+    else listOf(listOf("extensions", extensionId), listOf("plugins", extensionId))
 
 /**
  * [extensions] naming [manager] on its requests under [prefixes] (segments under /api/v1), for an extension's page to hand

@@ -37,8 +37,12 @@ func (n *Node) agentOfficeScript() string {
 }
 
 // assistantTools are the assistant's --allowedTools: Persona's tools, and its copy of the office skill's script.
-func (n *Node) assistantTools() string {
-	return assistantAllowedTools + ",mcp__" + compat.MCPServer + "," + officeRule(n.assistantOfficeScript())
+func (n *Node) assistantTools(legacyMCP bool) string {
+	tools := assistantAllowedTools
+	if legacyMCP {
+		tools += ",mcp__" + compat.MCPServer
+	}
+	return tools + "," + officeRule(n.assistantOfficeScript())
 }
 
 func (n *Node) assistantOfficeScript() string {

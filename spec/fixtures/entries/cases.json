@@ -1,0 +1,1831 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "task_waiting_for_review_only_in_needs_you",
+      "description": "A task its supervisor judged finished (pending_review) waits for the user's review: it is in Needs you and not in In progress.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-review",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-review",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-review",
+            "title": "w-review",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-review"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "task_waiting_for_decision_only_in_needs_you",
+      "description": "A task with an open ask (decide) and a needs_user one are both in Needs you, once each, even while the first one's agent still works.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-decide",
+            "title": "Choose the rollout",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-decide",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "ask": {
+              "outcome": "decide",
+              "verdict": "Choose the rollout",
+              "recommend": "Roll out to half",
+              "asked_at": "2026-11-10T08:00:00Z"
+            }
+          },
+          {
+            "id": "t-user",
+            "title": "Pick a database",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-user",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "needs_user"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-decide",
+            "title": "w-decide",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-user",
+            "title": "w-user",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-decide",
+          "task:t-user"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "running_task_once_without_its_agent",
+      "description": "A task whose agent works is one In progress row; its agent is not a row of its own, though the main conversation lists Agents opened by hand.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-run",
+            "title": "Add the export button",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-run",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-run",
+            "title": "w-run",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-run"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "task_agent_question_only_in_needs_you",
+      "description": "A task whose agent asks something is one Needs you row (the task, carrying the question); it leaves In progress, and its agent is no row of its own.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-ask",
+            "title": "Set up the demo server",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-ask",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "title": "w-ask",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-ask",
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-ask"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "answered_task_back_in_progress",
+      "description": "Once the question is answered (no card left, the agent works again) the same task is back in In progress.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-ask",
+            "title": "Set up the demo server",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-ask",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "title": "w-ask",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-ask"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "manual_agent_question_only_in_needs_you",
+      "description": "In the main conversation an Agent opened by hand (no task) that asks something is a Needs you row, not an In progress one.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "m-ask",
+            "title": "m-ask",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-manual",
+            "machine_id": "mac",
+            "session_id": "m-ask",
+            "kind": "permission",
+            "created_at": "2026-11-10T08:00:00Z",
+            "tool_name": "Bash",
+            "input": {
+              "command": "npm test"
+            }
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "agent:mac/m-ask"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "manual_agent_working_only_in_progress",
+      "description": "In the main conversation a working Agent opened by hand is an In progress row; idle, unread and the assistant's own sessions are in neither.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "m-work",
+            "title": "m-work",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "m-idle",
+            "title": "m-idle",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "m-unread",
+            "title": "m-unread",
+            "cwd": "/home/user/project",
+            "state": "unread",
+            "status": "unread",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "persona",
+            "title": "persona",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "assistant": true
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "agent:mac/m-work"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "manual_agents_only_in_the_main_conversation",
+      "description": "Another conversation lists only its own tasks: no Agents opened by hand, and no task of another conversation.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "side-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-side",
+            "title": "Draft the release notes",
+            "origin": "side-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-side",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-main",
+            "title": "Main chat task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-main",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-side",
+            "title": "w-side",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-main",
+            "title": "w-main",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "m-ask",
+            "title": "m-ask",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "m-work",
+            "title": "m-work",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-manual",
+            "machine_id": "mac",
+            "session_id": "m-ask",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-side"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "main_conversation_watches_every_task",
+      "description": "The main conversation has a row for every task, whatever conversation dispatched it.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-side",
+            "title": "Draft the release notes",
+            "origin": "side-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-side",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-side",
+            "title": "w-side",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-side"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "finished_tasks_in_neither",
+      "description": "Done, cancelled and accepted tasks are in neither entry; the board has them.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-done",
+            "title": "Shipped the fix",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-done",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "done_at": "2026-11-10T08:00:00Z"
+          },
+          {
+            "id": "t-cancel",
+            "title": "Dropped idea",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-cancel",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "done_at": "2026-11-10T08:00:00Z",
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "cancelled"
+            }
+          },
+          {
+            "id": "t-accepted",
+            "title": "Accepted work",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-acc",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "accepted",
+              "reviews": [
+                {
+                  "verdict": "accepted",
+                  "note": "Looks good",
+                  "at": "2026-11-10T08:00:00Z"
+                }
+              ]
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-done",
+            "title": "w-done",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-cancel",
+            "title": "w-cancel",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-acc",
+            "title": "w-acc",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "plan_and_message_wait_for_the_user",
+      "description": "A plan waiting for Start is one Needs you row (whatever its task count), and so is a message card waiting for Send; a sent card and a started plan are in neither.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [],
+        "sessions": [],
+        "interactions": [],
+        "plans": {
+          "p-open": {
+            "id": "p-open",
+            "conversation": "main-chat",
+            "state": "open",
+            "created_at": "2026-11-10T08:00:00Z",
+            "tasks": [
+              {
+                "title": "Diet card",
+                "prompt": "Build it",
+                "cwd": "/home/user/project",
+                "machine": "mac"
+              },
+              {
+                "title": "Fix the supervisor",
+                "prompt": "Fix it",
+                "cwd": "/home/user/project",
+                "machine": "mac"
+              }
+            ]
+          },
+          "p-started": {
+            "id": "p-started",
+            "conversation": "main-chat",
+            "state": "started",
+            "created_at": "2026-11-10T08:00:00Z",
+            "tasks": [
+              {
+                "title": "Old plan",
+                "prompt": "Done",
+                "cwd": "/home/user/project",
+                "machine": "mac"
+              }
+            ]
+          }
+        },
+        "feed": [
+          {
+            "id": "msg-1",
+            "conversation": "main-chat",
+            "at": "2026-11-10T08:00:00Z",
+            "kind": "message",
+            "ref": "mail-1",
+            "body": {
+              "draft": "Thanks, see you at 3",
+              "text": "Can we meet at 3?"
+            }
+          },
+          {
+            "id": "msg-2",
+            "conversation": "main-chat",
+            "at": "2026-11-10T08:00:00Z",
+            "kind": "message",
+            "ref": "mail-2",
+            "body": {
+              "draft": "Done",
+              "text": "Ping",
+              "sent_at": "2026-11-10T08:00:00Z"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "needs_you": [
+          "plan:p-open",
+          "message:msg-1"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "interrupted_and_failed_tasks_need_you",
+      "description": "A task whose turn broke off on a model error, and one whose agent never started (the hub ends it with done_at), wait for the user to continue or retry: Needs you.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-cut",
+            "title": "Migrate the settings",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-cut",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-fail",
+            "title": "Start on an offline machine",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [],
+            "start_error": "machine offline",
+            "done_at": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-cut",
+            "title": "w-cut",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "turn_error": "API Error: 529 overloaded"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-cut",
+          "task:t-fail"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "stale_task_folded_not_counted",
+      "description": "An open task with nothing running and no activity for 48 hours is folded under In progress (shelved) and not counted; a stopped task from today is an In progress row.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3387"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-stale",
+            "title": "Old exploration",
+            "origin": "main-chat",
+            "created_at": "2026-11-01T08:00:00Z",
+            "updated_at": "2026-11-01T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-stale",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-stopped",
+            "title": "Stopped between rounds",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-stopped",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-stale",
+            "title": "w-stale",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-01T08:00:00Z",
+            "state_since": "2026-11-01T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-stopped",
+            "title": "w-stopped",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-stopped"
+        ],
+        "shelved": [
+          "task:t-stale"
+        ]
+      }
+    },
+    {
+      "name": "manual_task_question_has_one_task_row",
+      "description": "A hand-made task carries its current agent question once, without a second Agent row.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3443"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-ask",
+            "title": "Set up the demo server",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-ask",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "title": "w-ask",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1,
+            "todo": {
+              "id": "t-ask",
+              "title": "Set up the demo server"
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-ask",
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-ask"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "manual_running_task_folds_current_agent",
+      "description": "A hand-made task whose agent works has one In progress row, regardless of its missing origin.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3443"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-run",
+            "title": "Add the export button",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-run",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-run",
+            "title": "w-run",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "todo": {
+              "id": "t-run",
+              "title": "Add the export button"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-run"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "done_manual_task_releases_running_agent",
+      "description": "A done hand-made task is no longer a row; its still-working agent is an independent In progress row.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3443"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-done",
+            "title": "Shipped the fix",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-done",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "done_at": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-done",
+            "title": "w-done",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "todo": {
+              "id": "t-done",
+              "title": "Shipped the fix"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "agent:mac/w-done"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "released_manual_link_does_not_hide_agent",
+      "description": "A released historical link does not fold an independently asking Agent into the remaining hand-made task row.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3443"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-ask",
+            "title": "Set up the demo server",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-ask",
+                "linked_at": "2026-11-10T08:00:00Z",
+                "released_at": "2026-11-10T08:30:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "title": "w-ask",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1,
+            "todo": {
+              "id": "t-ask",
+              "title": "Set up the demo server"
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-ask",
+            "machine_id": "mac",
+            "session_id": "w-ask",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "agent:mac/w-ask"
+        ],
+        "running": [
+          "task:t-ask"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "background_commands_and_monitor_in_progress_use_working_mark",
+      "description": "background commands and monitor in progress use working mark",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_working": true,
+            "background_count": 2,
+            "background_tasks_count": 2
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": {
+            "tasks": 2,
+            "subagents": 0,
+            "workflows": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "workflow_summary_in_progress_keeps_phase_and_progress",
+      "description": "workflow summary in progress keeps phase and progress",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_working": true,
+            "background_count": 1,
+            "background_tasks_count": 0,
+            "running_workflows": 1,
+            "workflow_progress": {
+              "task_id": "workflow-a",
+              "name": "review-checks",
+              "status": "running",
+              "running": true,
+              "phase": "Adversarial review",
+              "phase_index": 2,
+              "phase_count": 3,
+              "agents_done": 5,
+              "agents_started": 6,
+              "agents_running": 1,
+              "started_at": "2026-11-10T08:00:00Z"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": {
+            "tasks": 0,
+            "subagents": 0,
+            "workflows": 1,
+            "phase": "Adversarial review",
+            "progress": "5/6+"
+          }
+        }
+      }
+    },
+    {
+      "name": "subagent_detail_counts_once_in_its_task",
+      "description": "subagent detail counts once in its task",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "background_working": true,
+            "background": [
+              {
+                "id": "sub-a",
+                "kind": "agent"
+              }
+            ],
+            "subagents": [
+              {
+                "id": "sub-a",
+                "session_id": "worker@sub-a",
+                "running": true
+              },
+              {
+                "id": "sub-b",
+                "session_id": "worker@sub-b",
+                "running": true
+              }
+            ]
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": {
+            "tasks": 0,
+            "subagents": 2,
+            "workflows": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "mixed_summary_has_independent_counts_not_raw_background_count",
+      "description": "mixed summary has independent counts not raw background count",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_working": true,
+            "background_count": 3,
+            "background_tasks_count": 2,
+            "running_subagents": 3,
+            "running_workflows": 1,
+            "workflow_progress": {
+              "task_id": "workflow-a",
+              "name": "review-checks",
+              "status": "running",
+              "running": true,
+              "phase": "Adversarial review",
+              "phase_index": 2,
+              "phase_count": 3,
+              "agents_done": 5,
+              "agents_started": 6,
+              "agents_running": 1,
+              "started_at": "2026-11-10T08:00:00Z"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": {
+            "tasks": 2,
+            "subagents": 3,
+            "workflows": 1,
+            "phase": "Adversarial review",
+            "progress": "5/6+"
+          }
+        }
+      }
+    },
+    {
+      "name": "external_wait_without_background_keeps_clock",
+      "description": "external wait without background keeps clock",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_tasks_count": 0,
+            "work": {
+              "phase": "blocked",
+              "on": "external",
+              "wait": "Waiting for deployment"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": null
+        }
+      }
+    },
+    {
+      "name": "user_question_wins_over_running_workflow",
+      "description": "user question wins over running workflow",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "pending_interactions": 1,
+            "background_tasks_count": 0,
+            "running_workflows": 1,
+            "workflow_progress": {
+              "task_id": "workflow-a",
+              "name": "review-checks",
+              "status": "running",
+              "running": true,
+              "phase": "Adversarial review",
+              "phase_index": 2,
+              "phase_count": 3,
+              "agents_done": 5,
+              "agents_started": 6,
+              "agents_running": 1,
+              "started_at": "2026-11-10T08:00:00Z"
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "id": "question-a",
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Choose a release window",
+                "options": []
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:activity-task"
+        ],
+        "running": [],
+        "shelved": []
+      }
+    },
+    {
+      "name": "manual_agent_workflow_is_one_in_progress_row",
+      "description": "manual agent workflow is one in progress row",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "manual-worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_working": true,
+            "background_tasks_count": 0,
+            "running_workflows": 1,
+            "workflow_progress": {
+              "task_id": "workflow-a",
+              "name": "review-checks",
+              "status": "running",
+              "running": true,
+              "phase": "Adversarial review",
+              "phase_index": 2,
+              "phase_count": 3,
+              "agents_done": 5,
+              "agents_started": 6,
+              "agents_running": 1,
+              "started_at": "2026-11-10T08:00:00Z"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "agent:fixture-device/manual-worker"
+        ],
+        "shelved": [],
+        "activity": {
+          "agent:fixture-device/manual-worker": {
+            "tasks": 0,
+            "subagents": 0,
+            "workflows": 1,
+            "phase": "Adversarial review",
+            "progress": "5/6+"
+          }
+        }
+      }
+    },
+    {
+      "name": "non_lead_agent_background_work_counts_once",
+      "description": "non lead agent background work counts once",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "issue #3588"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "activity-task",
+            "title": "Fixture task",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "fixture-device",
+                "session_id": "worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              },
+              {
+                "machine_id": "fixture-device",
+                "session_id": "second-worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              },
+              {
+                "machine_id": "fixture-device",
+                "session_id": "second-worker",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "fixture-device",
+            "session_id": "worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "fixture-device",
+            "session_id": "second-worker",
+            "title": "Fixture task",
+            "cwd": "/demo/project",
+            "state": "working",
+            "status": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "waiting": true,
+            "background_working": true,
+            "background_tasks_count": 2
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:activity-task"
+        ],
+        "shelved": [],
+        "activity": {
+          "task:activity-task": {
+            "tasks": 2,
+            "subagents": 0,
+            "workflows": 0
+          }
+        }
+      }
+    }
+  ]
+}

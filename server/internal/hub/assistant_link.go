@@ -187,7 +187,7 @@ func (l assistantLink) deviceCallFrom(ctx context.Context, from string, p assist
 			// complete: the list is every machine there is (the manager reported them and the pending computers were
 			// read), so an id in neither it nor others was removed.
 			return json.Marshal(map[string]any{"devices": list, "phone_online": h.phoneClient() != nil,
-				"complete": h.devicesUp() && !h.trustUnknown(), "others": others})
+				"complete": h.devicesUp() && !h.trustUnknown(), "others": others, "apps": h.clientAppList(ctx)})
 		}
 	}
 	m := h.localMachine(p.Device)

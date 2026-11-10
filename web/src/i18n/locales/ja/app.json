@@ -28,5 +28,6 @@
   "session_choices_one": "IDが{sid}で始まるセッションが{count}件あります。開くものを選んでください",
   "session_choices_other": "IDが{sid}で始まるセッションが{count}件あります。開くものを選んでください",
   "title_health": "ヘルスケア",
-  "title_agent_archives": "アーカイブしたエージェント"
+  "title_agent_archives": "アーカイブしたエージェント",
+  "title_subscriptions": "購読"
 }

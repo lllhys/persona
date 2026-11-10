@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { TaskPlan } from "./feed";
 import type { Supervision } from "./supervision";
-import { cardBucket, taskCardSlots, tasksToStart, type TaskCardMetadata } from "./task-cards";
+import { cardBucket, type TaskCardMetadata } from "./task-cards";
 import { todoBucket, triageTodos } from "./todo-triage";
 import type { Todo } from "./todos";
-import { progressRows } from "../views/assistant/Tasks";
+import { assistantEntries } from "./assistant-entries";
 
-// #3331: the conversation's Progress entry and the To-dos page's "Not done" read one rule (todoBucket).
+// #3331: the conversation's In progress entry and the To-dos page's "Not done" read one rule (todoBucket).
 const NOW = Date.parse("2026-11-10T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 const at = hoursAgo(1);
@@ -40,7 +40,7 @@ describe("cardBucket", () => {
     expect(cardBucket(card({ todo_id: "t" }), todo({ done_at: at, supervision: accepted() }), {}, noSessions, NOW)).toBe("closed");
   });
 
-  it("a plan waiting for Start is the To start entry's, never Progress'", () => {
+  it("a plan waiting for Start is Needs you's, never In progress'", () => {
     const plans = { open: plan("open", "open"), gone: plan("gone", "dismissed") };
     expect(cardBucket(card({ plan_id: "open", index: 0 }), undefined, plans, noSessions, NOW)).toBe("start");
     expect(cardBucket(card({ plan_id: "gone", index: 0 }), undefined, plans, noSessions, NOW)).toBe("closed");
@@ -48,7 +48,14 @@ describe("cardBucket", () => {
   });
 });
 
-describe("Progress counts what the To-dos page counts", () => {
+// In progress (#3387) is the open tasks that do not wait on the user; none of these do, so it is the page's open number.
+const entryRows = (conversation: string, todos: Todo[], plans: Record<string, TaskPlan>, main?: string) => {
+  const got = assistantEntries({ conversation, main, todos, sessions: [], interactions: [], plans, feed: [], lookup: noSessions, now: NOW });
+  const ids = (items: typeof got.running) => items.map((item) => (item.kind === "task" ? item.todo.id : item.key));
+  return { open: ids(got.running), shelved: ids(got.shelved), needsYou: got.needsYou.map((item) => item.key) };
+};
+
+describe("In progress counts what the To-dos page counts", () => {
   const todos: Todo[] = [
     todo({ id: "open" }),
     todo({ id: "shelved", created_at: hoursAgo(80), updated_at: hoursAgo(60) }),
@@ -61,30 +68,19 @@ describe("Progress counts what the To-dos page counts", () => {
 
   it("the main conversation: every to-do, the same open number, shelved folded, plans not counted", () => {
     const main = todos.map((td) => (td.origin === "c" ? { ...td, origin: "main" } : td));
-    const cards = taskCardSlots("main", [], [], plans, main, true);
-    const rows = progressRows(cards, main, plans, noSessions, NOW);
+    const rows = entryRows("main", main, plans, "main");
     const page = triageTodos(main, noSessions, NOW);
     expect(rows.open.length).toBe(page.open);
-    expect(rows.open.map((c) => c.todo_id).sort()).toEqual(["elsewhere", "manual", "open"]);
-    expect(rows.shelved.map((c) => c.todo_id)).toEqual(["shelved"]);
+    expect([...rows.open].sort()).toEqual(["elsewhere", "manual", "open"]);
+    expect(rows.shelved).toEqual(["shelved"]);
     expect(rows.shelved.length).toBe(page.shelved);
-    expect(rows.closed.map((c) => c.todo_id).sort()).toEqual(["accepted", "done"]);
-    // the two plan tasks waiting for Start are in none of Progress' lists
-    expect([...rows.open, ...rows.shelved, ...rows.closed].some((c) => !c.todo_id)).toBe(false);
+    // the finished ones are in neither entry; the plan waiting for Start is one Needs you row, not its two tasks
+    expect(rows.needsYou).toEqual(["plan:p"]);
   });
 
   it("another conversation counts only the tasks it handed out, by the same rule", () => {
-    const cards = taskCardSlots("c", [], [], {}, todos);
-    const rows = progressRows(cards, todos, {}, noSessions, NOW);
-    expect(rows.open.map((c) => c.todo_id)).toEqual(["open"]);
-    expect(rows.shelved.map((c) => c.todo_id)).toEqual(["shelved"]);
-  });
-});
-
-describe("tasksToStart", () => {
-  it("counts the tasks of this conversation's open plans only", () => {
-    const plans = { a: plan("a", "open", "c", 2), b: plan("b", "open", "c"), c: plan("c", "started", "c", 3), d: plan("d", "open", "other", 4) };
-    expect(tasksToStart("c", plans)).toBe(3);
-    expect(tasksToStart("none", plans)).toBe(0);
+    const rows = entryRows("c", todos, {});
+    expect(rows.open).toEqual(["open"]);
+    expect(rows.shelved).toEqual(["shelved"]);
   });
 });

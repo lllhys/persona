@@ -15,8 +15,7 @@ import (
 
 // The deployed commits (#3205, docs/assistant/todo-status-sop.md "Deployed needs evidence"): a hub that cannot reach
 // GitHub still knows what it runs when the deploy puts, next to the binaries, the commits the deployed one contains.
-// The file is deployedCommitsName in the hub's state directory (~/.persona, or ~/.jarvis kept from before) or next to
-// the running binary:
+// The file is deployedCommitsName in the hub's state directory or next to the running binary:
 //
 //	# persona deployed commits v1
 //	# repo: <owner>/<name>

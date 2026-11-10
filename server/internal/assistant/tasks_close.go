@@ -47,6 +47,7 @@ func (s *Service) taskCloseLoop(ctx context.Context) {
 	defer t.Stop()
 	refused := taskCloseRefused{}
 	idleSeen := idleSeen{}
+	var archived time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,6 +56,11 @@ func (s *Service) taskCloseLoop(ctx context.Context) {
 		}
 		s.closeDoneTaskAgents(ctx, refused)
 		s.closeIdleAgents(ctx, refused, idleSeen)
+		s.orphanWatch(ctx, time.Now()) // open to-dos whose agents are all gone (tasks_orphan.go)
+		if now := time.Now(); now.Sub(archived) >= autoArchiveEvery {
+			archived = now
+			s.archiveClosedSessions(ctx, now) // closed sessions idle for days (agent_archive_auto.go)
+		}
 	}
 }
 

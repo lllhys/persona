@@ -29,6 +29,7 @@ func (t *Todo) setPlan(row db.TodoRow) {
 	}
 	t.RemindAt, t.RemindedAt, t.Priority = row.RemindAt, row.RemindedAt, row.Priority
 	t.Project = row.Project
+	t.Kind = row.Kind
 }
 
 // keepPlan writes t's plan and project into row: a row made in memory for a change that is not to them keeps them.
@@ -39,6 +40,7 @@ func (t *Todo) keepPlan(row *db.TodoRow) {
 	}
 	row.RemindAt, row.RemindedAt, row.Priority = t.RemindAt, t.RemindedAt, t.Priority
 	row.Project = t.Project
+	row.Kind = t.Kind
 }
 
 // todoRowOf is todo t as a row (what memory has of it; the store-less PATCH changes it).
@@ -177,6 +179,9 @@ func (s *Service) editTodo(ctx context.Context, id string, e db.TodoEdit) (Todo,
 	cur, ok := s.todoNow(id)
 	if !ok {
 		return Todo{}, db.ErrTodoNotFound
+	}
+	if cur.isConcern() && cur.DoneAt == nil && e.Done != nil && *e.Done {
+		return Todo{}, db.ErrConcernUnreported // only its report closes it (concerns.go); the store checks it again
 	}
 	s.todos.writing.Lock()
 	now := time.Now().UTC()

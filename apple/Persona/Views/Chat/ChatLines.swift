@@ -133,12 +133,12 @@ struct ChatLines {
         for block in blocks {
             switch block {
             case .row(let r):
-                out.append(.row(r))
+                if !SubagentDelivery.isWake(r) { out.append(.row(r)) }
             case .turn(var t):
                 // Work a background task woke the agent for opens with that notice, where a message would be.
                 var wokeAt: Date?
                 if let first = t.ordered.first, case .notice(let n) = first, n.wake == true {
-                    out.append(.row(first))
+                    if !SubagentDelivery.isWake(first) { out.append(.row(first)) }
                     t.ordered.removeFirst()
                     wokeAt = n.ts
                 }
@@ -455,7 +455,8 @@ struct ChatLines {
             case .thinking(let i):
                 if !(i.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { items.append(.step(.thought(i))) }
             case .tools(let steps): items += steps.map { .step($0) }
-            case .notice(let i): items.append(.step(.thought(i)))
+            case .notice(let i):
+                if !SubagentDelivery.isWake(r) { items.append(.step(.thought(i))) }
             case .assistant(let i): items.append(.text(i))
             default: break
             }

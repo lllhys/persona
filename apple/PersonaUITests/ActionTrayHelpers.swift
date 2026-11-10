@@ -1,9 +1,9 @@
 import XCTest
 
-/// The phone's action bar above the assistant's composer (#2879): its entries open the trays that list what the dock's
-/// pills used to (tasks in Progress, agents in Agents, the board behind Progress' All).
+/// The action bar above the assistant's composer (#3393): Needs You and In Progress open the trays that list what the
+/// dock's pills used to (tasks and agents of no task, each in one of them; the board behind each tray's All).
 extension XCUIApplication {
-    /// Opens the tray of `entry` (`pending`, `progress`, `agents`) unless it is open, and returns its entry.
+    /// Opens the tray of `entry` (`needs-you`, `running`) unless it is open, and returns its entry.
     @MainActor @discardableResult
     func openActionTray(_ entry: String, timeout: TimeInterval = 20) -> XCUIElement {
         let button = buttons["action-bar.\(entry)"]

@@ -42,7 +42,10 @@ struct EngineSelectionView: View {
                                     if let detail = engine.detail {
                                         Text(detail).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
                                     }
-                                    Text(detection(engine, machine)).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    // Nothing to detect for no engine: it is there whenever the hub takes host sets.
+                                    if engine != .noEngine {
+                                        Text(detection(engine, machine)).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
                                     if let note = found.note, !note.isEmpty {
                                         Text(note).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
                                             .minimumScaleFactor(0.8)
@@ -85,6 +88,8 @@ struct EngineSelectionView: View {
                         #else
                         Text(machine.online ? String(localized: "Shows sessions from both herdr and Herdr App. Sessions you start from your phone still open in herdr. You can change this anytime in Settings › Machines.") : String(localized: "The machine is offline; your choice takes effect once it connects. Sessions from both engines are shown."))
                         #endif
+                    } else if selection.selected == .noEngine {
+                        Text(machine.online ? String(localized: "Shows the desktop apps' sessions. Starting or continuing a session from your phone is off. You can change this anytime in Settings › Machines.") : String(localized: "The machine is offline; your choice takes effect once it connects. The desktop apps' sessions are shown, and starting or continuing a session from your phone is off."))
                     } else {
                         Text(machine.online ? String(localized: "Only sessions in the selected engine are shown. You can change this anytime in Settings › Machines.") : String(localized: "The machine is offline; your choice takes effect once it connects. Only sessions in the selected engine are shown."))
                     }

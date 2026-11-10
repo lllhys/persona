@@ -50,6 +50,7 @@ The following values are policy defaults from `config_security.go`, **not measur
 | --- | --- | --- |
 | `trusted_cidrs` | `[]` | Additional trusted source subnets, treated as LAN on match; include only networks you truly control |
 | `allow_public_plaintext` | `false` | Allows public plaintext API when enabled, with a startup warning; does not remove the public main-token prohibition |
+| `plaintext_loopback_only` | `false` | Refuses plaintext from every source but loopback, the LAN and `trusted_cidrs` included: pages redirect to the TLS listener, everything else gets `403 tls_required`. Needs `public.tls_listen`; see [Keeping tokens off the LAN](#keeping-tokens-off-the-lan) |
 | `auth_failures` | `10` | Ban source after this many failures within a counting window |
 | `auth_window_seconds` | `60` | Window from the source's first failure in this round, seconds |
 | `auth_block_seconds` | `900` | Ban duration after threshold, seconds |
@@ -83,6 +84,36 @@ Default pairing tokens last 10 minutes and redeem a device token once. After red
 Computer links (persona-link, [link.md](link.md)) also use only this TLS port and pin the fingerprint obtained at pairing, including on LAN; hub rejects their plaintext requests except loopback.
 TLS terminates at hub, which authenticates link credentials and forwards the connection unchanged to the computer-connection manager (2026-11-04, [machines.md](../server/machines.md), "Who connects to computers").
 Forwarding uses `GET /api/v1/bus/relay` with the manager's own bus token (same as the bus: only `Authorization: Bearer jb_…`, TLS required for public sources; device credentials cannot open it, nor can it open app endpoints).
+
+## Keeping tokens off the LAN
+
+By default the plaintext `listen` port accepts tokens from any LAN or VPN source. On a network other people share, such as an office LAN or a company VPN, anyone who can capture traffic there can read them. Setting `security.plaintext_loopback_only: true` limits plaintext to the hub machine itself. For a plaintext request from any other source:
+
+- A page request (`GET` / `HEAD` outside `/api/` and `/i/`) gets `308` to the same path and host name on the TLS port. Links built from an `http://` `public_url` (`/s/...`, `/todos?id=...`) and bookmarks keep working, and the browser reaches the app over HTTPS before any script reads a stored token.
+- Everything else, `/api/v1/health` included, gets `403 tls_required`.
+
+Loopback keeps plaintext. That covers the built-in manager, the local assistant, SSH tunnels that end on the hub machine, and a reverse proxy on the hub machine that terminates TLS. The hub refuses to start with the switch on and no `public.tls_listen`. If the TLS address has gone at start-up (see above), only the hub machine can reach the hub until it is fixed. The setting does not change the listening sockets or `personad.socket`, so it takes effect at the next restart or `personad hub switch`.
+
+Before turning it on, make sure every client can use the TLS port:
+
+| Client | Over the TLS port |
+| --- | --- |
+| Persona Link, mesh peers | Already TLS-only, pinned |
+| Android | Pins the fingerprint from a TLS pairing. A pairing made before TLS was on checks HTTPS against system CAs, like the Apple apps |
+| iOS, watchOS, Mac app | Uses the system trust store only, with no pinning, and keeps the URL it was paired with. Needs a certificate the device trusts, then a new pairing with an `https://` address |
+| Web app | Works after the redirect. The browser warns about a certificate it does not trust, and `localStorage` is per origin, so the first visit on HTTPS asks for sign-in again |
+| ssh / tailcat nodes, the built-in manager | Not affected: they carry no hub token over the hub's HTTP port |
+
+The managed self-signed certificate names only `<hub_id>.persona.invalid`, so no system trust store accepts it. To keep the Apple apps working, give the TLS listener a certificate they trust through `public.cert_file` / `public.key_file`. One option is a publicly trusted certificate for a name that resolves to the hub. Another is a private CA that you install and trust on each device. Issue the certificate for the managed key `~/.persona/tls/hub.key`: the pin is the public key's hash, so Persona Link and other pinned clients keep working without pairing again. With a private CA, for example:
+
+```sh
+cd ~/.persona/tls
+openssl req -new -key hub.key -subj "/CN=<hub address>" -out hub.csr
+printf 'subjectAltName=IP:<hub address>\nextendedKeyUsage=serverAuth\n' > hub.ext
+openssl x509 -req -in hub.csr -CA <ca>.crt -CAkey <ca>.key -CAcreateserial -days 825 -sha256 -extfile hub.ext -out hub-ca.crt
+```
+
+On iOS, install the CA as a profile, then turn it on under Settings › General › About › Certificate Trust Settings. Then set `public_url` to the `https://` address so that new pairings and links use it. Pair each Apple device again, and remove its old device so that its old token stops working. The hub does not renew a custom certificate, so reissue it before it expires. Persona Link pins the key, which does not change.
 
 ## Candidate addresses and DDNS
 
@@ -217,6 +248,28 @@ After pairing failures, Android Connection diagnostics shows the latest attempt:
 
 Public plaintext APIs default to `403 tls_required`, except `GET /api/v1/health`. This refusal happens after the request arrives and cannot retract an already-plaintext token; clients must choose the protocol before requesting.
 
+## Behind Cloudflare Access
+
+Use this when hub is published on a public hostname through Cloudflare Tunnel with Cloudflare Access in front, so phones reach it over the internet without a system VPN (#3502). Access answers requests without credentials with a `302` to its login page. Browsers (web app) handle the login themselves; the iOS and Android apps instead send an Access **service token** as the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers. No hub changes.
+
+**Cloudflare dashboard**:
+
+1. Zero Trust › Access › Service Auth › Service Tokens › create a token. Copy the **Client ID** and **Client Secret**; the secret is shown only once.
+2. In hub's Access application, add a policy with Action **Service Auth** that includes that service token. Keep the existing login policy so browsers still work.
+3. WebSocket must pass through the tunnel (`/api/v1/ws`). Cloudflare Tunnel allows it by default; don't turn it off.
+
+**In the app**: the values belong to one paired hub. Enter them on the pairing screen under "Cloudflare Access" **before** pairing (otherwise the first pairing request is already redirected), or later in Settings › hub, where they can also be changed or cleared. The secret is stored like hub token (iOS keychain, Android encrypted storage), shown masked, and never written to logs or diagnostics.
+
+- Both headers go on every request to that hub: REST, WebSocket, port forwarding, media players, pairing and token exchange, notification actions and, on iOS, extensions and widgets that call hub directly.
+- They go **only** to that hub's own origin, never to other hubs, mesh peers, redirect targets or third-party URLs.
+
+**When Access blocks the app** (redirect to the `cloudflareaccess.com` login, its HTML login page, or a `403` from Access), the app does not follow the redirect and shows a specific error instead of a generic connection failure:
+
+- no token set: "This hub is behind Cloudflare Access and needs a service token";
+- token set: "Cloudflare Access rejected the service token" (wrong or revoked token, or no Service Auth policy includes it).
+
+**Warning: `cloudflared` on hub's machine makes internet traffic loopback.** The tunnel connects to hub from `127.0.0.1`, so hub treats every public request as local: the main token works, the admin UI skips `admin.access`, and authentication failures are not throttled ([PROXY protocol](#proxy-protocol) lists the effects). Hub never trusts `Cf-Connecting-IP` or other forwarded headers. Configure `security.proxy_protocol` and `security.trusted_cidrs` as described in [Source classification and reverse proxies](#source-classification-and-reverse-proxies); PROXY protocol helps only when the hop that connects to hub sends a PROXY header carrying the real client address. If yours can't, Access is the only thing in front of hub, so keep its policies tight.
+
 <a id="经-ssh-隧道连-hub直连不通时的后备"></a>
 
 ## Connecting to hub through SSH (fallback when direct access fails)
@@ -237,6 +290,13 @@ App ──HTTP / WebSocket──▶ 127.0.0.1:<random-port> (inside app process)
 - **Pairing tunnels**: initially dial under ID `pairing`, then `adopt` under the new hub ID after success. State updates resolve the tunnel object's current ID (`SSHTunnels.key(of:in:)`), exposing failures in connection details and **Settings › SSH tunnels**.
 - **iOS backgrounding**: close tunnels with socket; foreground reselects routes / rebuilds (about 1 second measured in simulator). Silent-push wakeups build tunnels on demand too.
   So do buttons pressed outside the app (#3142): a notification's Allow / Deny / Approve / Reject or Reply, and the Live Activity's buttons, for a group with tunnels (any kind: SSH, local proxy, in-app). With the group's socket connected they go to the hub it is on; otherwise (closed for the background, or just woken and not there yet) they pick the group's way the same way (`AppModel.outside`), send their one request to the hub the chosen tunnel reaches, and close that group's tunnels again once its last button is done, if its socket is still closed (the app going to the background meanwhile leaves them to it). iOS gives a button about 30 seconds: a way not found within 20 seconds (an in-app tunnel that needs a fresh sign-in or MFA) ends as a timeout, said in a notification. Siri / Shortcuts intents still go straight to the paired address.
+- **Through the in-app tunnel** (iOS): when the SSH server is reachable only inside a private network the in-app tunnel reaches ([below](#connecting-to-hub-through-an-in-app-tunnel)), the SSH tunnel can dial it through that tunnel instead of the device's own network, so no system VPN has to displace another one (Tailscale, for example). The app first brings up the core's tunnel and a loopback forward to `<SSH host>:<SSH port>`, then the SSH tunnel dials `127.0.0.1:<that port>`:
+
+  ```text
+  App ──HTTP / WebSocket──▶ 127.0.0.1:<port A> ══SSH══▶ 127.0.0.1:<port B> ══Tunnel core══▶ SSH server ──TCP──▶ hub
+  ```
+
+  The host key stays pinned for the configured SSH host and port, never for the loopback address. The core is started with a hub's own in-app route as its probe (this hub's, else another paired hub's: the core and its sign-in are one per device; its `ssh_port` when the extension gives one), never the SSH route's own address, and the SSH server's forward is kept apart from the hub's own in-app forward: closing either one never stops the other, and the core's tunnel goes down only when neither is left. The background and button rules above apply to the chain as a whole: both layers close when the app goes to the background, and a button pressed outside the app brings both up (within the same 20 seconds) and closes both afterwards. Not offered on the pairing page or on Android (no in-app tunnel there).
 - **Watch unsupported**: Watch connects directly and cannot tunnel. If hub is SSH-only, direct data-fetch features fail, but pushes unaffected (they do not use this connection). Web currently unsupported.
 - **Android** (`android/core/hub/src/main/kotlin/persona/core/hub/tunnel/`): JSch in process, one SSH session per hub that forwards a loopback port (`setPortForwardingL`, one `direct-tcpip` channel per connection). Android lacks the JDK classes JSch uses for X25519 and Ed25519, so `curve25519-sha256` and `ssh-ed25519` run on Tink (`TinkX25519`, `TinkEd25519`, named to JSch by class). The device key is one Ed25519 seed per device in `hub-data/ssh-key.enc` under `noBackupFilesDir`, encrypted with the app's Keystore-backed keyset (never backed up, kept when a hub is unpaired, an unreadable file is reported instead of replaced); each pairing's tunnel settings, the proxy's password included, live in `hub-data/<pairing>/tunnels.enc` and go with the pairing. The same `HubWay` order picks the way inside the group connection (`OkHttpHubConnection`), whose base URL becomes `http://127.0.0.1:<port>` plus the paired address's path; the connection keeps running in the background, and so does its tunnel, while the 2-minute direct recheck waits for the foreground. A failure only the user can fix (host key, public key) waits for new settings instead of redialling, and stays on the tunnel's page as "Last failure"; saving the tunnel's page again (after a successful **Test connection and save**) dials it again. Tunnels are set up after pairing: the pairing page has no SSH option.
 
@@ -250,6 +310,7 @@ In the app: **Settings › hub › SSH tunnels**, separately per paired hub; bef
 | Username | Sent unchanged; Warpgate target login uses `user:target` |
 | Tunnel target | Hub address as seen by SSH server; default `127.0.0.1:18660` (hub on this server) |
 | Always use SSH | Off: only if direct fails; on: always prefer SSH |
+| Connect through *tunnel name* | Shown when the build has the in-app tunnel core and a paired hub has an in-app tunnel: dial the SSH server through that tunnel ("Through the in-app tunnel" above). Test connection and save goes the same way |
 
 "Copy authorized_keys line" copies a restricted line to paste into that server user's `~/.ssh/authorized_keys`:
 
@@ -287,6 +348,7 @@ Supported algorithms (swift-nio-ssh): key exchange `curve25519-sha256`, `ecdh-sh
 | SSH server cannot forward to hub (connect failed) | Wrong target from SSH server's perspective, or hub not listening there |
 | Test connection and save succeeds, then every request fails with `TLS is required for public requests` (`403 tls_required`) | The hub runs in Docker on the SSH server and sees the tunnel from its container gateway (the hub logs `api: plaintext from <gateway>, this container's gateway`): see "Security notes" above |
 | SSH handshake failed (no common algorithm) | RSA-only host key or chacha20-only server; add Ed25519 host key and enable AES-GCM |
+| Can't reach the SSH server through the in-app tunnel | The tunnel's sign-in (**Settings › hub › Tunnel › Sign in and select node**), and that the SSH host and port are reachable from the tunnel's network |
 
 ## Connecting to hub through an in-app tunnel
 
@@ -300,6 +362,7 @@ App ──HTTP / WebSocket──▶ 127.0.0.1:<port> (tunnel-core forwarding, in
 - **Availability**: hub has an installed, enabled extension contributing `tunnels` ([extensions.md](../extensions/extensions.md), "In-app tunnels"). The tunnel name (its Settings row title), `target_host`, and `target_port` come from the extension. The app refreshes them on every hello and stores them in pairing information.
 - **Core outside the repository**: a directory on the build machine, selected by `app.tunnel_core` in `config.json` ([config.md](config.md)). `scripts/persona_config.py xcconfig` writes it to `Config.xcconfig`; only physical-device builds link it. Without configuration, the feature is absent: simulator and unconfigured builds show "This app build has no private-network tunnel core" on hub's tunnel page and skip it during routing.
 - **Routing** matches SSH tunnels: direct first, tunnel only if all fail, retry direct every 2 minutes while tunneled. "Always use tunnel" prefers the tunnel. If the same hub also has SSH configured, try SSH first.
+- **Carrying an SSH tunnel**: the core is a generic loopback TCP forward, so an SSH tunnel can reach its server through it ([SSH, "Through the in-app tunnel"](#connecting-to-hub-through-ssh-fallback-when-direct-access-fails)) for a hub that listens only on loopback behind an SSH server in the private network. Its probe is always a hub's own in-app route: `target_host:ssh_port` when the extension sets `ssh_port` ([extensions.md](../extensions/extensions.md), "In-App tunnels"), which answers even when the hub listens only on loopback; otherwise `target_host:target_port` as before. The probe is set once per app process, by whichever path starts the core first. The direct in-app tunnel always forwards to `target_port`.
 - **Connect only on demand**: start the core on first use, never connect automatically, and disconnect after the last forward closes. Disconnect when iOS backgrounds; reroute on return.
 - **Sign-in**: accounts and nodes belong in the core's own control panel (loopback web page, **Settings › hub › Tunnel › Sign in and select node**). Data stays in app `Application Support/tunnel`, excluded from backups and never uploaded to hub. The panel opens sign-in outside the app. If the user copies a link externally and returns, the app offers clipboard text to the core (`PersonaTunnelOfferLink`); only recognized text is accepted, then the panel refreshes.
 - **Security**: hub sees an address from the tunnel-side network and treats it as LAN ([source classification](#来源判断与反向代理)), just like a direct connection from that network.
@@ -364,7 +427,7 @@ DEBUG builds: `-seedLocalProxy <base64 of the LocalProxyRoute JSON>` sets the fi
 
 ## Network troubleshooting
 
-Run `personad hub doctor` on the hub machine first. Read-only: checks hub.json plaintext `listen`, `public.tls_listen`, `security.allow_public_plaintext`, TLS certificate, and that the data directory's credential files (hub.json, `secret.key`, `relay-tunnel.token`, the key and credential suffixes, `docker/db-password`…) are mode 0600 and its whole-secret folders (`tls/`, `docker/`, `extensions/data/`…) are 0700; asks running hub for candidates; lists each local IPv6 as publishable / excluded with reasons; on Linux checks public-IPv6 routes through TUN / virtual interfaces and ufw / nft rules; ends with next steps: which TLS port to allow, which URL to test on cellular. **No external reachability probes**: local access to its own address cannot prove public ingress.
+Run `personad hub doctor` on the hub machine first. Read-only: checks hub.json plaintext `listen`, `public.tls_listen`, `security.allow_public_plaintext`, `security.plaintext_loopback_only`, TLS certificate, and that the data directory's credential files (hub.json, `secret.key`, `relay-tunnel.token`, the key and credential suffixes, `docker/db-password`…) are mode 0600 and its whole-secret folders (`tls/`, `docker/`, `extensions/data/`…) are 0700; asks running hub for candidates; lists each local IPv6 as publishable / excluded with reasons; on Linux checks public-IPv6 routes through TUN / virtual interfaces and ufw / nft rules; ends with next steps: which TLS port to allow, which URL to test on cellular. **No external reachability probes**: local access to its own address cannot prove public ingress.
 
 TUN proxy automatic routes may send public-connection responses into the proxy, causing timeout or interrupted handshakes. **Not measured**. On a hub authorized for troubleshooting, inspect IPv6 routes to the phone source and capture on physical / TUN interfaces: did requests arrive, did replies leave correctly? Temporarily disable TUN for comparison. If implicated, preserve direct reply routing for inbound connections in proxy / policy routing; `trusted_cidrs` cannot fix return routes.
 

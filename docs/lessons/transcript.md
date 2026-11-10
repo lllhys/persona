@@ -101,6 +101,22 @@ Tests need the system row followed by a real-shaped synthetic assistant error, p
 an out-of-window record. A new error code alone does not change old clients' error buttons: document that client work
 and the item-cache version bump separately.
 
+## Subagent peer reports are nonterminal tool output (#3378)
+
+A peer display name such as `general-purpose` does not prove a subagent relationship. Associate `origin.from` /
+`senderTaskId` with the actual Agent/Task launch receipt or explicit notification call ID before normalizing its
+reports. A launch receipt and an interim SendMessage are `task.status: running`, not completed merely because
+`kind` is `tool_result`. Keep every result item, not just the last per call; status-only completion pointers do not
+replace the report. Seed launches, peer origins and terminal status across cold windows and incremental catch-up.
+When historical user text becomes tool output at the same item ID, change the opaque history version so existing
+client caches cannot preserve the old standalone peer card. Full-text reparse also needs the call association for
+hidden handback lines. Validate both the bounded preview and the full report, not only a short fixture.
+
+A report card is only mounted inside manually opened work. Load it on that intent rather than enlarging the cold
+first screen for everyone. Keep the same component, disclosure state and running-summary bar; verify manual opening
+in a real browser as well as mounted tests. A later main merge can consume prior bundle headroom: compare against
+unmodified main and reduce eager code, never raise the first-screen budget for the report feature.
+
 ## A tail window may contain no words at all (2026-11-04, #1163)
 
 When listing offline sessions, the node reads only the last 384 KB of a transcript (`quickTail`) to get its title and last words. Claude Code now writes an entire `api-request-blob` on one transcript line, 300–500 KB per line;
@@ -132,6 +148,18 @@ Claude Code 2.1.319 adds two more shapes (#6381). A hand-back that arrives while
 A subagent that waits on its own background work gets an interim notification ("This agent has not reported yet … SubagentHandback"), and the notification that ends it names only the subagent, no `<tool-use-id>`.
 The apps find a task's card by `tool_use_id`, else by the id in the launch receipt, and the 2.1.319 receipt's first sentence says "including the agentId below": their pattern took "below" for the id. So the report stayed off the card, which kept the interim text as its result.
 The node now gives such a notification the call an earlier notification of the task named (`noteCall`), drops the interim text, and seeds both, with the reports handed back, into windows read from a file's end (`window.go`), so a cold open of a big file gives the same notices.
+
+## Apple subagent results (#3377)
+
+A background Agent launch receipt is not a completion result. Keep its progress card until authoritative terminal
+state arrives, then use the ordinary collapsed tool-result row. Keep report deliveries separately from lifecycle
+state: an empty completion pointer must not erase earlier report bodies, and `running`, `waiting` or unknown
+statuses must not stop the progress bar. Preserve exact tool-use IDs; a shared subagent type
+or title cannot safely identify a report's call. Legacy notice detail and notice text are separate payloads: do not
+reuse a notice's text-truncation metadata for its report detail. When the hub changes peer input into tool results,
+bump the Apple chat cache so old peer cards are not retained. Retain referenced launch exchanges when trimming
+cached tails, and treat `wake` as turn evidence without drawing another message card. Run the shared result tests
+in both Apple app targets.
 
 ## Work opened in the App folded again by the same page (2026-11-07, #6038)
 

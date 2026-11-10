@@ -7,6 +7,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelsTest {
+    @Test fun agentTaskResultsDecodeRunningAndKeepOriginalReportIdentity() {
+        for (status in listOf("running", "waiting", "completed", "failed", "stopped")) {
+            val item = JsonCodec.decodeFromString<Item>("""{"id":"report#0","seq":12,"role":"user","kind":"tool_result",
+                "tool_use_id":"toolu_launch","text":"Full report","full_size":8192,
+                "task":{"kind":"agent","status":"$status","task_id":"agent-a","tool_use_id":"toolu_launch","detail":"Preview"}}""")
+            assertEquals(status, item.task?.status)
+            assertEquals("toolu_launch", item.toolUseId)
+            assertEquals("Full report", item.text)
+            assertEquals(8192, item.fullSize)
+            assertEquals(item, JsonCodec.decodeFromString<Item>(JsonCodec.encodeToString(item)))
+        }
+        assertNull(JsonCodec.decodeFromString<Item>("""{"id":"legacy","kind":"tool_result","text":"general-purpose says hello"}""").task)
+    }
+
     @Test fun sessionDecodesWithMissingFieldsAndUnknownState() {
         val s = JsonCodec.decodeFromString<Session>(
             """{"machine_id":"server","session_id":"u1","cwd":"/home/x/code/foo","status":"done","state":"later","extra":1}""",
@@ -43,14 +57,14 @@ class ModelsTest {
         val history = JsonCodec.decodeFromString<Session>(
             """{"machine_id":"m","session_id":"opaque","source_kind":"codex_history","source_thread_id":"thread",""" +
                 """"source_instance_id":"instance","parent_thread_id":"parent","read_only_reason":"外部进程正在使用此会话",""" +
-                """"capabilities":{"read":true,"future":true},"attached":true,"agent_label":"DSH"}""",
+                """"capabilities":{"read":true,"modes":false,"future":true},"attached":true,"agent_label":"DSH"}""",
         )
         assertEquals("codex_history", (history.sourceKind).zhAny())
         assertEquals("thread", (history.sourceThreadId).zhAny())
         assertEquals("instance", (history.sourceInstanceId).zhAny())
         assertEquals("parent", (history.parentThreadId).zhAny())
         assertEquals("外部进程正在使用此会话", (history.readOnlyReason).zhAny())
-        assertEquals(SessionCapabilities(read = true), history.capabilities)
+        assertEquals(SessionCapabilities(read = true, modes = false), history.capabilities)
         assertTrue(history.attached)
         assertEquals(history, JsonCodec.decodeFromString<Session>(JsonCodec.encodeToString(history)))
         // A malformed capability drops only that field (D5), never the session.

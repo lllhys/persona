@@ -244,19 +244,25 @@ func (c *codexConn) syncTasks() {
 	thread := c.threadID
 	c.mu.Unlock()
 	var res struct {
-		Data []struct {
+		Data *[]struct {
 			Command string `json:"command"`
 		} `json:"data"`
 	}
 	if err := c.call(ctx, "thread/backgroundTerminals/list", map[string]any{"threadId": thread}, &res); err != nil {
+		c.p.invalidateUpdateTasks()
+		return
+	}
+	if res.Data == nil {
+		c.p.invalidateUpdateTasks() // an absent or null list is unknown, never proof that a restart kills no work
 		return
 	}
 	tasks := []string{}
-	for _, t := range res.Data {
+	for _, t := range *res.Data {
 		tasks = append(tasks, "后台命令："+unwrapShell(t.Command))
 	}
 	c.p.mu.Lock()
-	c.p.tasks = tasks
+	c.p.tasks, c.p.tasksObserved = tasks, true
+	c.p.tasksRevision++
 	c.p.mu.Unlock()
 	c.p.ownerOr(c.n).rememberTasks(c.p.id, tasks)
 }

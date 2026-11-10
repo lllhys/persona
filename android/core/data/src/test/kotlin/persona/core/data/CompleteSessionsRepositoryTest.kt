@@ -53,6 +53,22 @@ class CompleteSessionsRepositoryTest {
         assertEquals(0, transport.requests.size)
     }
 
+    @Test fun revisionPushDuringCompleteRefreshKeepsMembershipAndNewRevision() = runTest {
+        val connection = Connection()
+        val requested = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<List<Session>>()
+        val transport = Transport().apply { legacyFetch = { requested.complete(Unit); response.await() } }
+        val repository = HubSessionsRepository(transport, connection, backgroundScope)
+        val refresh = backgroundScope.launch { repository.setListFilter(SessionListFilter(requiresCompleteMembership = true)) }
+        requested.await()
+        connection.events.emit(RevsEvent("demo", mapOf("session/0" to 9L)))
+        runCurrent()
+        response.complete(rows)
+        refresh.join()
+        assertEquals(rows.map { it.key }, repository.sessions.value.map { it.key })
+        assertEquals(9L, repository.sessions.value.first().rev)
+    }
+
     private class Connection : HubConnection {
         override val state = MutableStateFlow(ConnectionState.WaitingForNetwork)
         override val events = MutableSharedFlow<ServerEvent>()

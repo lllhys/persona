@@ -61,7 +61,7 @@ func Main(ctx context.Context, build update.Build, args []string, out io.Writer)
 	}
 	fs := flag.NewFlagSet("manager update "+action, flag.ContinueOnError)
 	fs.SetOutput(out)
-	path := fs.String("plan", "", "explicit release update plan")
+	path := fs.String("plan", "", "explicit release update plan (inventory accepts - for identity JSON on stdin)")
 	var mainID, machineID, machineUID *string
 	if action == "inventory" {
 		mainID = fs.String("main", "", "original persisted main session ID")
@@ -77,7 +77,7 @@ func Main(ctx context.Context, build update.Build, args []string, out io.Writer)
 	if *path == "" || fs.NArg() != 0 {
 		return errors.New("--plan is required; positional arguments are not accepted")
 	}
-	p, e := ReadPlan(*path)
+	p, e := readActionPlan(action, *path, os.Stdin)
 	if e != nil {
 		return e
 	}
@@ -109,6 +109,16 @@ func Main(ctx context.Context, build update.Build, args []string, out io.Writer)
 		return errors.Join(e, enc)
 	}
 	return e
+}
+
+func readActionPlan(action, path string, input io.Reader) (Plan, error) {
+	if path == "-" {
+		if action != "inventory" {
+			return Plan{}, errors.New("stdin identity is supported only for read-only inventory")
+		}
+		return decodePlan(input)
+	}
+	return ReadPlan(path)
 }
 
 // Check reads files, build metadata and the loaded service. It creates no state or service.

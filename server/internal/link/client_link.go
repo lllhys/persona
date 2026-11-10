@@ -31,6 +31,8 @@ type link struct {
 	named atomic.Bool
 	// gen counts this run's links, this one included (Status.Conn): the app's confirmations say which link's they are.
 	gen uint64
+	// again: link.json turned out to hold another pairing while writing to it (errPairedAgain); serve ends the link.
+	again chan struct{}
 }
 
 func dial(ctx context.Context, c *Config) (*link, error) {
@@ -59,6 +61,7 @@ var streamID = lazyre.New(`^[A-Za-z0-9_-]{1,64}$`)
 
 // serve runs the link until it ends and says why.
 func (l *link) serve(ctx context.Context, c *Config, o Options, rep *reporter) error {
+	l.again = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	defer l.conn.CloseNow()
@@ -80,12 +83,22 @@ func (l *link) serve(ctx context.Context, c *Config, o Options, rep *reporter) e
 		cancel(err)
 		l.conn.CloseNow()
 	}
+	// reconnect ends the link the way the hub expects for one that comes straight back (runActive dials at once).
+	reconnect := func(err error) {
+		cancel(err)
+		_ = l.conn.Close(websocket.StatusNormalClosure, "reconnect")
+	}
 	// The heartbeat is o's until the hub says another (endpoints); beat hands the pinger the latest, the link stays.
 	beat := make(chan heartbeat, 1)
 	go func() {
 		hb := heartbeat{every: o.PingEvery, timeout: o.PingTimeout}
 		t := time.NewTicker(hb.every)
 		defer t.Stop()
+		// A new pairing (persona-link pair, the tray's or the App's) is followed while the link is up, not only after
+		// it drops. The zero stamp makes the first look compare: a pairing written while this link was dialing counts.
+		pairT := time.NewTicker(pairCheck)
+		defer pairT.Stop()
+		var seen time.Time
 		// A ping waits for its pong on its own, so a reconnect or a network change is not held up behind one that is
 		// out (with a slow link's heartbeat, for up to the hub's timeout). One of each kind at a time; the first that
 		// fails drops the link.
@@ -143,8 +156,19 @@ func (l *link) serve(ctx context.Context, c *Config, o Options, rep *reporter) e
 					ping(true, hb.check())
 				}
 			case <-o.Redial:
-				cancel(errRedial)
-				_ = l.conn.Close(websocket.StatusNormalClosure, "reconnect")
+				reconnect(errRedial)
+				return
+			case <-pairT.C:
+				// Only the mtime says when to look: endpoints and renames rewrite link.json with the same pairing.
+				if now := stampOf(o.Path); !now.Equal(seen) {
+					seen = now
+					if repaired(o.Path, c) {
+						reconnect(errRepaired)
+						return
+					}
+				}
+			case <-l.again:
+				reconnect(errRepaired)
 				return
 			}
 		}
@@ -188,6 +212,9 @@ func (l *link) serve(ctx context.Context, c *Config, o Options, rep *reporter) e
 			}
 			go func(id string) {
 				if err := l.forward(ctx, id, o.Target); err != nil {
+					if ctx.Err() != nil { // called off because the link ended: that says nothing about the node
+						return
+					}
 					o.Logf("link: stream %s: %v", id, err)
 					_ = l.send(ctx, Message{Type: "open_failed", ID: id, Error: err.Error()})
 					rep.set(func(s *Status) { s.Node, s.NodeError = "offline", err.Error() })
@@ -235,6 +262,9 @@ func (l *link) endpoints(m Message, c *Config, o Options, rep *reporter) {
 			return nil
 		})
 		if err != nil {
+			if errors.Is(err, errPairedAgain) {
+				l.pairedAgain()
+			}
 			return
 		}
 		c.Endpoints = eps
@@ -254,6 +284,24 @@ func (l *link) endpoints(m Message, c *Config, o Options, rep *reporter) {
 		}
 		s.Pending = m.Pending
 	})
+}
+
+// pairedAgain tells serve that link.json holds another pairing than this link's: the link moves to it.
+func (l *link) pairedAgain() {
+	select {
+	case l.again <- struct{}{}:
+	default:
+	}
+}
+
+// repaired: link.json now holds another credential, computer or hub than c (a new pairing). A file that cannot be read
+// right now changes nothing: the link stays as it is.
+func repaired(path string, c *Config) bool {
+	f, err := Read(path)
+	if err != nil {
+		return false
+	}
+	return f.Token != c.Token || f.FP != c.FP || f.Trust != c.Trust || f.Machine != c.Machine
 }
 
 // heartbeat is how a link is pinged: every, and how long a pong may take; hub: the hub said so (endpoints).
@@ -379,7 +427,7 @@ func (l *link) forward(ctx context.Context, id, target string) error {
 	dctx, dcancel := context.WithTimeout(ctx, dialTimeout) // the handshake only: the stream lives as long as the link
 	defer dcancel()
 	ws, resp, err := websocket.Dial(dctx, wsURL(l.ep.URL, StreamPath+"?id="+id), &websocket.DialOptions{
-		HTTPClient: l.streams, HTTPHeader: bearer(l.token), CompressionMode: websocket.CompressionContextTakeover})
+		HTTPClient: l.streams, HTTPHeader: bearer(l.token), CompressionMode: StreamCompression})
 	if err != nil {
 		return fmt.Errorf("开不了流：%w", handshakeError(resp, err))
 	}

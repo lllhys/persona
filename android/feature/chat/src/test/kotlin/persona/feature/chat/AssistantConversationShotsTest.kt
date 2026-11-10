@@ -39,8 +39,8 @@ import java.io.File
 class AssistantConversationShotsTest {
     @get:Rule val rule = createComposeRule()
     private val session = SessionKey("computer", "main")
-    private val plan = TaskPlan("plan", "main", listOf(PlanTask("Assistant layout", todoId = "task")), "started", at(8))
-    private val todo = Todo("task", "Assistant layout", origin = "main", planId = plan.id, createdAt = at(8), quiet = true,
+    private val plan = TaskPlan("plan", "main", listOf(PlanTask("Tidy the conversation", todoId = "task")), "started", at(8))
+    private val todo = Todo("task", "Tidy the conversation", origin = "main", planId = plan.id, createdAt = at(8), quiet = true,
         agents = listOf(TodoAgent("computer", "agent", title = "Layout agent")))
     private val transcript = listOf(
         Item("compact", 1, ts = at(1), role = "system", kind = "notice", text = "Context compacted"),
@@ -91,7 +91,9 @@ class AssistantConversationShotsTest {
         var simplified by mutableStateOf(false)
         var dark by mutableStateOf(false)
         var expanded by mutableStateOf(emptySet<String>())
-        var progressOpens = 0
+        // what a tap on the dispatched line opens over the conversation (#3700)
+        val sheet = mutableStateOf<TaskSheet?>(null)
+        var dispatchedLabel = ""
         var checkedLabel = ""
         rule.mainClock.autoAdvance = false
         try {
@@ -99,11 +101,12 @@ class AssistantConversationShotsTest {
                 PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                     val context = LocalContext.current
                     checkedLabel = context.resources.getQuantityString(R.plurals.chat_assistant_checked, 2, 2)
+                    dispatchedLabel = androidx.compose.ui.res.stringResource(R.string.chat_assistant_dispatched_one, "Tidy the conversation")
                     val loader = remember { ImageLoader.Builder(context).build() }
                     DisposableEffect(loader) { onDispose { loader.shutdown() } }
                     val todos by store.todos.collectAsState()
                     val host = AssistantTaskHost(store, "main", listOf(Session("computer", "agent", state = "working", activity = "Verifying layout")),
-                        { it }, {}, { throw it }, {}, onOpenProgress = { progressOpens++ })
+                        { it }, {}, { throw it }, {}, sheet = sheet)
                     val original = ChatTimeline().lines(transcript, false, expanded).lines
                     val presentation = AssistantConversation.project(original, transcript)
                     val lines = if (simplified) AssistantTaskCards.lines(presentation.foreground, feed, mapOf(plan.id to plan), todos)
@@ -140,7 +143,10 @@ class AssistantConversationShotsTest {
                 rule.onNodeWithText(checkedLabel).assertIsDisplayed()
                 rule.onNodeWithText("layout", substring = true).assertDoesNotExist()
                 rule.onAllNodesWithTag("assistant-dispatch-hint").assertCountEquals(1)
+                // the line names the one dispatched task and opens that task's detail, not the In progress tray
+                rule.onNodeWithText(dispatchedLabel).assertIsDisplayed()
                 rule.onNodeWithTag("assistant-dispatch-hint").performClick()
+                rule.runOnIdle { assertEquals(TaskSheet.Task("task"), sheet.value); sheet.value = null }
                 colors += capture(style, appearance, "after", language)
                 rule.onNodeWithText(checkedLabel).performClick(); settle()
                 rule.onNodeWithText("layout", substring = true).assertExists()
@@ -156,7 +162,6 @@ class AssistantConversationShotsTest {
                 rule.onAllNodesWithTag("assistant-dispatch-hint").assertCountEquals(1)
                 rule.onNodeWithText("Verification passed. Evidence remains available.").assertDoesNotExist()
             }
-            assertEquals(2, progressOpens)
             assertNotEquals("dark capture must differ from light", colors[0], colors[1])
         } finally { scope.cancel() }
     }

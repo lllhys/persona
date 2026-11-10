@@ -16,8 +16,17 @@
   "change_done_needs_delivery": "“Done means live and checked”: {before} → {after}",
   "title_leaders": "Leader conversations",
   "change_leaders": "Leader conversations (they supervise the tasks they hand out): {before} → {after}",
+  "title_interject_background": "Move running work to the background when I interject",
+  "change_interject_background": "“Move running work to the background when I interject”: {before} → {after}",
+  "title_agent_tasks": "Every Agent Persona starts is a supervised task",
+  "change_agent_tasks": "“Every Agent Persona starts is a supervised task”: {before} → {after}",
   "title_model_tiers": "Agent presets",
   "change_model_tier": "{profile} · {tier}: {before} → {after}",
   "title_review_sample_percent": "Share of finished tasks to spot-check",
-  "change_review_sample_percent": "Share of finished tasks to spot-check: {before}% → {after}%"
+  "change_review_sample_percent": "Share of finished tasks to spot-check: {before}% → {after}%",
+  "title_meeting_attendance_default": "Persona in recorded meetings",
+  "change_meeting_attendance_default": "Persona in recorded meetings: {before} → {after}",
+  "meeting_role_off": "Off",
+  "meeting_role_listener": "Listener",
+  "meeting_role_participant": "Participant"
 }

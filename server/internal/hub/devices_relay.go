@@ -163,10 +163,11 @@ func (h *Hub) serveLinkStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Compressed like the ssh connections (Compression=yes): node traffic is JSON.
+	// Compressed like the ssh connections (Compression=yes): node traffic is JSON. Each message on its own
+	// (link.StreamCompression), also for a Persona Link that still asks for context takeover.
 	h.relayLinkConn(w, r, devicewire.Accept{Kind: devicewire.AcceptLinkStream, MachineID: p.Machine, TokenID: p.ID,
 		StreamID: r.URL.Query().Get("id")}, &websocket.AcceptOptions{InsecureSkipVerify: true,
-		CompressionMode: websocket.CompressionContextTakeover}, 64<<20)
+		CompressionMode: link.StreamCompression}, 64<<20)
 }
 
 // relayLinkConn takes Persona Link's connection and hands it to the manager: 503 assistant_offline while there is none

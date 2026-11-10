@@ -85,6 +85,10 @@ fun PairingScreen(
     var address by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var metadata by remember { mutableStateOf<PairingRequest?>(null) }
+    // A Cloudflare Access service token (docs/operations/network.md "Behind Cloudflare Access"), kept out of saved state too.
+    var accessId by remember { mutableStateOf("") }
+    var accessSecret by remember { mutableStateOf("") }
+    var accessOpen by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<PairingFailure?>(null) }
     var running by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(listOf<PairingProgress>()) }
@@ -108,6 +112,8 @@ fun PairingScreen(
     }
     fun accept(link: String) {
         welcome = false; readiness = false; credentialsSaved = false; lastRequest = null; tries = 0; addressError = null; typed = false
+        // A token typed for another hub must never go to this one.
+        accessId = ""; accessSecret = ""; accessOpen = false
         try {
             val request = PairingInput.parse(link)
             metadata = request; address = request.url; token = request.token; failure = null
@@ -231,7 +237,11 @@ fun PairingScreen(
         val value = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
         if (value.isNullOrBlank()) notice = R.string.settings_pairing_notice_clipboard_empty else accept(value)
     }
-    fun edit() { credentialsSaved = false; lastRequest = null; confirm = null; failure = null; progress = emptyList(); manual = true; tries = 0; addressError = null }
+    fun edit() {
+        credentialsSaved = false; lastRequest = null; confirm = null; failure = null; progress = emptyList(); manual = true; tries = 0; addressError = null
+        // The address may change to another hub: its token starts empty.
+        accessId = ""; accessSecret = ""; accessOpen = false
+    }
     fun next() {
         if (address.isBlank() || token.isBlank()) return
         tries = 0
@@ -300,6 +310,7 @@ fun PairingScreen(
                                 PairingRecovery.Permission -> authorize()
                                 PairingRecovery.Scan -> requestScan()
                                 PairingRecovery.Retry, PairingRecovery.Update -> lastRequest?.let(::connect) ?: edit()
+                                PairingRecovery.Access -> lastRequest?.let { confirm = it; failure = null; progress = emptyList(); accessOpen = true } ?: edit()
                             }
                         }, Modifier.fillMaxWidth())
                         JButton(stringResource(R.string.settings_pairing_diagnostics), onDiagnostics, Modifier.fillMaxWidth(), kind = JButtonKind.Secondary)
@@ -317,10 +328,23 @@ fun PairingScreen(
                 val request = requireNotNull(confirm)
                 item { PairingHeading(stringResource(R.string.settings_pairing_confirm), stringResource(R.string.settings_pairing_confirm_body)) }
                 pairingDetails(request, resources)
+                item {
+                    JTextButton(stringResource(R.string.settings_access_title), { accessOpen = !accessOpen }, Modifier.padding(top = Tokens.Space.s))
+                }
+                if (accessOpen) item {
+                    JCard {
+                        Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
+                            HubAccessFields(accessId, { accessId = it }, accessSecret, { accessSecret = it })
+                            SettingsCaption(stringResource(R.string.settings_access_pairing_caption))
+                        }
+                    }
+                }
                 if (paired) item { JNotice(stringResource(R.string.settings_pairing_replace_body), title = stringResource(R.string.settings_pairing_replace_title), status = Status.NeedsYou) }
                 item {
                     PairingActions {
-                        JButton(stringResource(R.string.settings_pairing_confirm), { confirm = null; connect(request) }, Modifier.fillMaxWidth())
+                        JButton(stringResource(R.string.settings_pairing_confirm), {
+                            confirm = null; connect(request.copy(access = if (accessOpen) HubAccess.of(accessId, accessSecret) else null))
+                        }, Modifier.fillMaxWidth())
                         JButton(stringResource(R.string.settings_pairing_edit_input), ::edit, Modifier.fillMaxWidth(), kind = JButtonKind.Secondary)
                     }
                 }

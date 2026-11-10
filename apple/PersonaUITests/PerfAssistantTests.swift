@@ -129,8 +129,8 @@ final class PerfAssistantTests: PerfTestCase {
     /// The task board sheet from the action bar's Progress tray (#2879), presented and closed.
     @MainActor func testTaskBoardSheet() throws {
         openMain()
-        see(app.buttons["action-bar.progress"], "the action bar's Progress", timeout: 15).tap()
-        let board = see(app.buttons["action-tray.board"], "the Progress tray's All", timeout: 5)
+        see(app.buttons["action-bar.running"], "the action bar's In Progress", timeout: 15).tap()
+        let board = see(app.buttons["action-tray.board"], "the In Progress tray's All", timeout: 5)
         measureTransition(navigation: false) {
             board.tap()
             let close = app.buttons["关闭"].firstMatch

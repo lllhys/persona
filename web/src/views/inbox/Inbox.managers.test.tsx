@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// The inbox with several managers (docs/assistant/managers.md "Clients"): each manager's group keeps its own sections open or
-// closed, a route opens the copy of its manager, the Muted and Rules dialogs list each manager's under its name, and
-// a rule from another manager's item is read and saved with that manager.
+// The inbox with several managers (docs/assistant/managers.md "Clients"): the list is the current assistant's (no manager
+// headings), with its own sections open or closed, a route opens the copy of its manager, the Muted dialog lists the
+// current assistant's, a rule from another manager's item is read and saved with that manager, a new mail is the current
+// assistant's, and an offline current assistant's list says it is offline rather than empty.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ vi.mock("../../lib/api", async (orig) => ({
     const header = init?.headers?.["X-Persona-Manager"];
     calls.list.push({ path, method: init?.method ?? "GET", header, json: init?.json });
     if (path.startsWith("/inbox?")) return Promise.resolve({ items: calls.items });
-    if (path === "/mail/accounts") return Promise.resolve({ accounts: [] });
+    if (path === "/mail/accounts") return Promise.resolve({ accounts: header === "m-1" ? [{ id: "work", email: "work@example.com" }] : [] });
     if (path === "/managers") return Promise.resolve(calls.roster);
     if (path === "/inbox/mutes") return Promise.resolve({ mutes: header === "m-1" ? [{ id: "u1", source: "lark", tag: "chat", value: "oc_w", name: "Work group" }] : [{ id: "u2", source: "lark", tag: "chat", value: "oc_h", name: "Home group" }] });
     if (path === "/inbox/policies" && (init?.method ?? "GET") === "GET") return Promise.resolve({ policies: header === "m-1" ? [{ id: "p1", source: "lark", tag: "chat", value: "oc_w", name: "Work group", tier: "noise" }] : [] });
@@ -32,10 +33,10 @@ vi.mock("../../lib/store", async (orig) => {
   return { ...m, useStore: <T,>(sel: (s: ReturnType<typeof m.getState>) => T) => m.useStore((s) => sel({ ...s, loaded: true })) };
 });
 
-import { resetInboxForTests, type InboxItem } from "../../lib/inbox";
-import { resetManagerChoice } from "../../lib/manager-choice";
+import { reloadInbox, resetInboxForTests, type InboxItem } from "../../lib/inbox";
+import { chooseManager, resetManagerChoice } from "../../lib/manager-choice";
 import { setRoster } from "../../lib/managers";
-import { routedItem } from "./Inbox";
+import { Inbox, routedItem } from "./Inbox";
 import { InboxList } from "./InboxList";
 import { openPolicyDialog, PolicyDialogHost } from "./PolicyDialog";
 
@@ -83,14 +84,25 @@ const clickText = async (text: string) => {
 };
 
 describe("the inbox of several managers", () => {
-  it("keeps each manager's sections open or closed on their own", async () => {
+  it("lists the current assistant's items only, and keeps each one's sections open or closed on their own", async () => {
     act(() => root.render(<InboxList />));
     await flush();
-    expect(sections()).toEqual([["action", "true"], ["fyi", "true"], ["action", "true"], ["fyi", "true"]]);
-    // close the first group's FYI (the default's): the other group's stays open
-    const fyi = host.querySelectorAll<HTMLElement>('[data-section="fyi"] button[aria-expanded]')[0];
-    act(() => fyi.click());
-    expect(sections()).toEqual([["action", "true"], ["fyi", "false"], ["action", "true"], ["fyi", "true"]]);
+    const rows = () => [...host.querySelectorAll<HTMLElement>("[data-item]")].map((r) => `${r.dataset.manager}:${r.dataset.item}`);
+    // the default's two items, in its two sections; nothing of the other manager, and no manager's name over them
+    expect(sections()).toEqual([["action", "true"], ["fyi", "true"]]);
+    expect(rows()).toEqual(["assistant:lark:f1:1", "assistant:lark:f3:1"]);
+    expect(host.textContent).not.toContain("工作");
+    // close the default's FYI, then switch: the other assistant's list, with its FYI open as at first
+    act(() => host.querySelector<HTMLElement>('[data-section="fyi"] button[aria-expanded]')!.click());
+    expect(sections()).toEqual([["action", "true"], ["fyi", "false"]]);
+    act(() => chooseManager("m-1"));
+    await flush();
+    expect(sections()).toEqual([["action", "true"], ["fyi", "true"]]);
+    expect(rows()).toEqual(["m-1:lark:f1:1", "m-1:lark:f2:1"]);
+    // and back: the default's FYI is still closed
+    act(() => chooseManager(null));
+    await flush();
+    expect(sections()).toEqual([["action", "true"], ["fyi", "false"]]);
   });
 
   it("opens the copy of the manager the route names; a route without one opens the default's", () => {
@@ -101,21 +113,57 @@ describe("the inbox of several managers", () => {
     expect(routedItem(items, "lark:f3:1", "m-1")).toBeUndefined();
   });
 
-  it("lists each manager's mutes under its name, and unmutes with it", async () => {
+  it("lists the current assistant's mutes, and unmutes with it", async () => {
+    act(() => chooseManager("m-1"));
     act(() => root.render(<InboxList />));
     await flush();
     await clickText("更多操作");
     await clickText("已静音");
     const groups = [...document.body.querySelectorAll<HTMLElement>("[data-mutes-manager]")];
-    expect(groups.map((g) => g.dataset.mutesManager)).toEqual(["assistant", "m-1"]);
-    expect(groups[1].textContent).toContain("工作");
-    expect(groups[1].textContent).toContain("Work group");
-    // each read names its manager, the default's too: what it answers is stamped with the one asked
-    expect(calls.list.filter((c) => c.path === "/inbox/mutes").map((c) => c.header)).toEqual(["assistant", "m-1"]);
-    const unmute = groups[1].querySelector("button")!;
+    expect(groups.map((g) => g.dataset.mutesManager)).toEqual(["m-1"]);
+    expect(groups[0].textContent).toContain("Work group");
+    expect(groups[0].textContent).not.toContain("工作"); // no heading: the list is one assistant's
+    // the read names the assistant: what it answers is stamped with the one asked
+    expect(calls.list.filter((c) => c.path === "/inbox/mutes").map((c) => c.header)).toEqual(["m-1"]);
+    const unmute = groups[0].querySelector("button")!;
     await act(async () => unmute.click());
     await flush();
     expect(calls.list.find((c) => c.path === "/inbox/mutes/u1")).toMatchObject({ method: "DELETE", header: "m-1" });
+  });
+
+  it("writes a new mail from the current assistant's accounts, sent through it", async () => {
+    act(() => chooseManager("m-1"));
+    act(() => root.render(<Inbox onToggleSidebar={() => {}} />));
+    await flush();
+    expect(calls.list.filter((c) => c.path === "/mail/accounts").map((c) => c.header)).toContain("m-1");
+    await clickText("写邮件");
+    const to = document.body.querySelector<HTMLInputElement>('input[aria-label="收件人"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(to, "someone@example.com");
+      to.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickText("发送");
+    expect(calls.list.find((c) => c.path === "/mail/send")).toMatchObject({ method: "POST", header: "m-1", json: expect.objectContaining({ account_id: "work" }) });
+  });
+
+  it("says the current assistant is offline instead of an empty list, and only then", async () => {
+    setRoster({ ...ROSTER, managers: [...ROSTER.managers, { id: "m-2", name: "家里", online: false, last_seen: new Date(Date.now() - 3 * 3_600_000).toISOString() }] });
+    act(() => chooseManager("m-2"));
+    act(() => root.render(<InboxList />));
+    await flush();
+    const state = host.querySelector<HTMLElement>("[data-assistant-offline]");
+    expect(state?.dataset.assistantOffline).toBe("m-2");
+    expect(state?.textContent).toContain("家里 离线");
+    expect(state?.textContent).toContain("最后同步于");
+    expect(state?.textContent).toContain("它上线后这里会更新。");
+    expect(host.textContent).not.toContain("都处理完了");
+    expect(host.querySelector("[data-inbox-no-sources]")).toBeNull();
+    // an online current assistant with nothing: as before
+    act(() => chooseManager("m-1"));
+    calls.items = [];
+    await act(async () => { await reloadInbox(); });
+    await flush();
+    expect(host.querySelector("[data-assistant-offline]")).toBeNull();
   });
 
   it("reads and saves a rule of another manager's item with that manager", async () => {

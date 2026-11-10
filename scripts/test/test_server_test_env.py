@@ -179,6 +179,8 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             (checkout / "sdk/ts/src/index.ts").write_text("export const fixture = true;\n")
             (checkout / "sdk/ts/node_modules/typescript/package.json").write_text('{"name":"typescript"}\n')
             (checkout / "docs/guide.md").write_text("# Fixture guide\n")
+            (checkout / "scripts/deploy").mkdir()
+            (checkout / "scripts/deploy/db.sh").write_text("# synthetic db script\n")
             (checkout / "sdk/templates/go/persona-extension.json").write_text('{"template":true}\n')
             sdk = checkout / "sdk/go"
             (sdk / "go.mod").write_text("module example.invalid/fixture-sdk\n")
@@ -249,6 +251,7 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                  "assert not (base/'sdk/ts/node_modules').exists()\n"
                  # Read from the package directory exactly as the hub's inboxBody test helper does.
                  "inbox_source=(base/'server/internal/hub/../../../scripts/mock/inbox_events.json').read_text()\n"
+                 "assert (base/'scripts/deploy/db.sh').read_text()=='# synthetic db script\\n'\n"
                  f"pathlib.Path({str(capture)!r}).write_text(json.dumps({{'args':sys.argv[1:],'env':dict(os.environ),'sdk_source':(sdk/'ext/fixture.go').read_text(),'inbox_source':inbox_source}}))\n"
                  "sys.exit(int(os.environ.get('FAKE_GO_EXIT','0')))\n")
             environment = {

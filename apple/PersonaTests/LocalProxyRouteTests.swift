@@ -283,7 +283,11 @@ struct LocalProxyRouteTests {
         var hub = PairedHub(id: "rt-button", config: ServerConfig(url: URL(string: "http://rt-button.invalid:18660")!, token: "t"))
         hub.localProxy = LocalProxyRoute(port: proxy.port, targetHost: "127.0.0.1", targetPort: fake.port)
         defer { LocalProxies.shared.close(hub.id) }
-        let body = try await model(hub).outside(APIClient(config: hub.config, group: hub.group)) { api in
+        // The group's socket as it is in the background: built for this registry (not the keychain's) and suspended.
+        let m = model(hub)
+        m.buildLinks()
+        m.link(hub.group)?.live.suspended = true
+        let body = try await m.outside(APIClient(config: hub.config, group: hub.group)) { api in
             let (data, _) = try await APIClient.uncachedSession.data(from: api.url("/api/v1/health"))
             return String(decoding: data, as: UTF8.self)
         }

@@ -33,6 +33,7 @@ class HubSessionsRepository(
     private var revision = 0L
     private var machinesChanged = 0L
     private val sessionChanges = mutableMapOf<String, Long>()
+    private val revisionChanges = mutableMapOf<SessionKey, Long>()
     private enum class Mode { Unknown, Paged, Legacy }
     private var mode = Mode.Unknown
     private var listCapability: Boolean? = null
@@ -118,6 +119,7 @@ class HubSessionsRepository(
                             // A negotiated paged client must not adopt an accidental full legacy push.
                             if (mode == Mode.Paged) return@withLock
                             sessionChanges[event.machineId] = ++revision
+                            revisionChanges.keys.removeAll { it.machineId == event.machineId }
                             val remaining = mutableSessions.value.filterNot { it.machineId == event.machineId }
                             val incoming = if (mode == Mode.Legacy) event.sessions else event.sessions.take(WINDOW_SIZE)
                             mutableSessions.value = (remaining + incoming.map { it.copy(machineId = event.machineId) })
@@ -130,7 +132,10 @@ class HubSessionsRepository(
                             if (mode == Mode.Legacy) mutableListStatus.update { it.copy(total = mutableSessions.value.size) }
                         }
                         is RevsEvent -> {
-                            sessionChanges[event.machineId] = ++revision
+                            revision++
+                            if (mode != Mode.Paged) event.revs.forEach { (sessionId, rev) ->
+                                revisionChanges[SessionKey(event.machineId, sessionId)] = rev
+                            }
                             mutableSessions.update { list -> list.map { session ->
                                 event.revs[session.sessionId]?.takeIf { session.machineId == event.machineId }
                                     ?.let { session.copy(rev = it) } ?: session
@@ -171,12 +176,15 @@ class HubSessionsRepository(
             val job = currentCoroutineContext().job
             val (epoch, filter) = lock.withLock {
                 activeRequest = job
-                mutableListStatus.update { it.copy(loading = true) }
+                mutableListStatus.update { it.copy(loading = true, failed = false) }
                 generation to mutableListStatus.value.filter
             }
+            var failed = false
             try { block(epoch, filter) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { failed = true; throw error }
             finally { withContext(NonCancellable) { lock.withLock {
-                if (generation == epoch) mutableListStatus.update { it.copy(loading = false) }
+                if (generation == epoch) mutableListStatus.update { it.copy(loading = false, failed = failed) }
                 if (activeRequest === job) activeRequest = null
             } } }
         }
@@ -414,8 +422,11 @@ class HubSessionsRepository(
             if (epoch != generation) return
             if (machinesChanged <= before) mutableMachines.value = machines
             val changed = sessionChanges.filterValues { it > before }.keys
-            mutableSessions.value = sessions.filterNot { it.machineId in changed } +
-                mutableSessions.value.filter { it.machineId in changed }
+            mutableSessions.value = (sessions.filterNot { it.machineId in changed } +
+                mutableSessions.value.filter { it.machineId in changed }).map { session ->
+                revisionChanges[session.key]?.takeIf { it > (session.rev ?: Long.MIN_VALUE) }?.let { session.copy(rev = it) } ?: session
+            }
+            revisionChanges.clear()
             mutableListStatus.update { it.copy(paged = false, loaded = true, hasMore = false, hasPrevious = false, total = mutableSessions.value.size) }
             verifyHeld()
             persist()

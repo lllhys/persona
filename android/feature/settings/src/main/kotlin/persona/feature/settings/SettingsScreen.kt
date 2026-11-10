@@ -307,7 +307,7 @@ private fun SettingsContent(
             val providerService = services.providers.takeUnless { services.demo }
             when {
                 providerStep == "add" && providerService != null -> NewProviderPage(providerService, onBack = { providerStep = null }, onSaved = { providerStep = null },
-                    readiness = services.readiness)
+                    readiness = services.readiness, machines = machines)
                 providerStep == "import" && providerService != null -> ProviderImportPage(providerService, machines, onBack = { providerStep = null }, onDone = { providerStep = null })
                 provider != null -> ProviderDetailPage(providerService, provider!!, machines, onBack = { provider = null })
                 else -> ProvidersPage(providerService, machines, back,
@@ -327,10 +327,12 @@ private fun SettingsContent(
             onChat = onNavigate?.let { navigate -> { machine, session -> navigate(persona.core.navigation.ChatRoute(machine, session)) } })
         "hub-update" -> HubUpdatePage(hubUpdates, machines, back, online = connection == ConnectionState.Online, onMachine = onNavigate)
         "hubs" -> tunnelPage?.takeIf { services.tunnels != null }?.let { opened ->
-            HubTunnelPage(services.tunnels!!, opened.substringAfter(':'),
+            if (opened.startsWith("access:")) HubAccessPage(services.tunnels!!, opened.substringAfter(':'), onBack = { tunnelPage = null })
+            else HubTunnelPage(services.tunnels!!, opened.substringAfter(':'),
                 if (opened.startsWith("ssh:")) TunnelKind.Ssh else TunnelKind.Proxy, onBack = { tunnelPage = null })
         } ?: HubsScreen(services.hubs ?: HubGroups.None, services.addHub?.let { { page = "hubs-add" } }, back, deviceFeedback,
-            tunnels = services.tunnels, onTunnel = { hubId, kind -> tunnelPage = (if (kind == TunnelKind.Ssh) "ssh:" else "proxy:") + hubId })
+            tunnels = services.tunnels, onTunnel = { hubId, kind -> tunnelPage = (if (kind == TunnelKind.Ssh) "ssh:" else "proxy:") + hubId },
+            onAccess = { hubId -> tunnelPage = "access:$hubId" })
         // Adding a hub is the pairing page with an adding service; it returns to the hub list.
         "hubs-add" -> PairingScreen(services.addHub ?: services.pairing, services.sessions,
             onReady = { page = "hubs" }, onDiagnostics = { open(SettingsPage.Diagnostics) }, diagnostics = services.diagnostics,

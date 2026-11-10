@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/extwire"
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -122,8 +123,11 @@ func (h *Hub) toolPersonaSettings(ctx context.Context, from string, m *Machine, 
 	if err != nil {
 		return "", err
 	}
-	if r.Allow == nil || !*r.Allow {
-		return "The user declined on the phone: nothing changed.", nil
+	if !r.UserAllowed() { // only the user's own answer counts: an expired card, or one answered for them, is no decline (#3722)
+		if r.UserDenied() {
+			return "The user declined the change: nothing changed.", nil
+		}
+		return prompts.RenderSettingUnanswered(), nil
 	}
 	for _, f := range change.fields {
 		if !f.Optional && strings.TrimSpace(r.Values[f.Key]) == "" {

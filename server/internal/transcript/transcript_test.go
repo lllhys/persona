@@ -635,6 +635,35 @@ func TestBackgroundTasks(t *testing.T) {
 	}
 }
 
+// A foreground command moved to the background by hand (Ctrl+B, or a message sent mid-turn, #3278) runs on as a
+// background task until its notification, as one started in the background does; a foreground command that just ends
+// leaves nothing behind.
+func TestManuallyBackgroundedCommand(t *testing.T) {
+	meta := &Meta{}
+	lines := []string{
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-11-10T08:55:18Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"python3 slow.py","description":"Run a slow test"}}]}}`,
+		`{"type":"user","uuid":"u1","timestamp":"2026-11-10T08:55:24Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"Command was manually backgrounded by user with ID: bmk9rnfdz. Output is being written to: /tmp/tasks/bmk9rnfdz.output. If it is still running after 30m in the background, it will be stopped and you will be notified."}]}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-11-10T08:55:25Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"date","description":"Get the time"}}]}}`,
+		`{"type":"user","uuid":"u2","timestamp":"2026-11-10T08:55:26Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"Tue Nov 10 16:55:26 CST 2026"}]}}`,
+	}
+	for i, l := range lines {
+		ParseLine(i+1, []byte(l), meta)
+	}
+	if len(meta.Background) != 1 || len(meta.fgBash) != 0 {
+		t.Fatalf("background %+v, foreground left %v", meta.Background, meta.fgBash)
+	}
+	if b := meta.Background[0]; b.ID != "bmk9rnfdz" || b.Kind != "shell" || b.Command != "python3 slow.py" || b.Description != "Run a slow test" ||
+		b.OutputFile != "/tmp/tasks/bmk9rnfdz.output" {
+		t.Fatalf("task: %+v", b)
+	}
+	note := "<task-notification>\n<task-id>bmk9rnfdz</task-id>\n<status>completed</status>\n<summary>Background command \"Run a slow test\" completed (exit code 0)</summary>\n</task-notification>"
+	q, _ := json.Marshal(map[string]any{"type": "queue-operation", "operation": "enqueue", "content": note})
+	ParseLine(5, q, meta)
+	if len(meta.Background) != 0 {
+		t.Fatalf("still running after its notification: %+v", meta.Background)
+	}
+}
+
 func TestPageTurnsStartsAtAPrompt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	var b strings.Builder

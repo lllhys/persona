@@ -55,6 +55,12 @@ final class SentAsYouTests: XCTestCase {
         for _ in 0..<swipes where !(element.exists && element.isHittable) { app.swipeUp() }
     }
 
+    /// Scrolls until the whole of `element` is inside the window, for a screenshot of it (hittable can still be half off screen).
+    @MainActor private func revealWhole(_ app: XCUIApplication, _ element: XCUIElement, swipes: Int = 8) {
+        let window = app.windows.firstMatch.frame
+        for _ in 0..<swipes where !(element.exists && window.contains(element.frame)) { app.swipeUp() }
+    }
+
     @MainActor private func shot(_ app: XCUIApplication, _ name: String) {
         guard let dir = env["PERSONA_SHOTS"] else { return }
         let png = URL(fileURLWithPath: dir).appending(path: "\(name).png")
@@ -250,7 +256,7 @@ final class SentAsYouTests: XCTestCase {
         reveal(app, row, swipes: 6)
         row.tap()
         let recall = app.buttons["sent.detail.recall"]
-        for _ in 0..<8 where !(recall.exists && recall.isHittable) { app.swipeUp() }
+        revealWhole(app, recall)
         XCTAssertTrue(recall.exists, "no 撤回… in the details:\n\(app.debugDescription)")
         shot(app, "sent-qa-recall")
         recall.tap()
@@ -270,6 +276,7 @@ final class SentAsYouTests: XCTestCase {
         let error = any(app, "sent.detail.recall.error")
         XCTAssertTrue(error.waitForExistence(timeout: 15), "no refusal under the button:\n\(app.debugDescription)")
         XCTAssertTrue(error.label.contains("消息没有撤回"), error.label)
+        revealWhole(app, error)
         shot(app, "sent-qa-recall-refused")
     }
 

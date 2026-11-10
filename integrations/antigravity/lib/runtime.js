@@ -4,6 +4,7 @@ import { contextWrapped } from '../../runtime-sdk/lib/compat.js'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { createRuntime, interactionId, page, snippet, summaryOf } from '../../runtime-sdk/index.js'
 import { isAssistantDir } from '../../runtime-sdk/lib/identity.js'
 import { AgyAcpClient } from './acp.js'
@@ -13,6 +14,7 @@ import {
   LABEL,
   mapToolInput,
   mapToolName,
+  nativeWorking,
   personaModeToAgy,
   readTranscriptSteps,
   RUNTIME,
@@ -171,7 +173,7 @@ export function createAgyRuntime(options = {}) {
     const rejectOpt = opts.find((o) => o.kind === 'reject_once') || opts.find((o) => o.kind === 'reject_always')
 
     // A request that crossed the interrupt on the wire: ACP wants every pending one answered 'cancelled'.
-    if (cancelling.has(rawId)) return { outcome: { outcome: 'cancelled' } }
+    if (cancelling.has(rawId) || archived.has(rawId)) return { outcome: { outcome: 'cancelled' } }
     if (shouldBypassPermission(rawId) && allowAlwaysOpt) {
       return { outcome: { outcome: 'selected', optionId: allowAlwaysOpt.optionId } }
     }
@@ -245,6 +247,34 @@ export function createAgyRuntime(options = {}) {
     return `agy:${rawId}`
   }
 
+  function readConversationStates() {
+    const path = join(agyDir, 'conversation_summaries.db')
+    if (!existsSync(path)) return new Map()
+    let db
+    try {
+      db = new DatabaseSync(path, { readOnly: true })
+      db.exec('PRAGMA query_only = 1; PRAGMA busy_timeout = 50')
+      const rows = db.prepare(`
+        SELECT conversation_id, status, not_fully_idle, killed, step_count,
+               title, workspace_uris, last_modified_time
+        FROM conversation_summaries
+      `).all()
+      return new Map(rows.map((row) => {
+        let workspaceUris = []
+        try {
+          const parsed = JSON.parse(row.workspace_uris)
+          if (Array.isArray(parsed)) workspaceUris = parsed.filter((uri) => typeof uri === 'string' && uri)
+        } catch {}
+        return [row.conversation_id, { ...row, WorkspaceURIs: workspaceUris }]
+      }))
+    } catch {
+      // A missing or unavailable native summary cannot establish that a text reply ended the turn.
+      return new Map()
+    } finally {
+      db?.close()
+    }
+  }
+
   function syncTranscriptAppend(rawId) {
     const pid = toPersonaId(rawId)
     const bDir = brainDirOf(rawId)
@@ -266,8 +296,9 @@ export function createAgyRuntime(options = {}) {
 
   async function listSessions() {
     const { convs, cwdByConv } = readCacheMetadata()
+    const states = readConversationStates()
     const brainRoot = join(agyDir, 'brain')
-    const seenIds = new Set(Object.keys(convs))
+    const seenIds = new Set([...Object.keys(convs), ...states.keys()])
     if (existsSync(brainRoot)) {
       try {
         for (const name of readdirSync(brainRoot)) {
@@ -281,14 +312,19 @@ export function createAgyRuntime(options = {}) {
       if (archived.has(rawId)) continue
       const meta = convs[rawId]
       const summary = meta?.summary
+      const native = states.get(rawId)
       const pid = toPersonaId(rawId)
+      const running = activeTurns.has(pid) || nativeWorking(native)
       const bDir = brainDirOf(rawId)
       const transcriptFile = join(bDir, '.system_generated', 'logs', 'transcript.jsonl')
       const hasTranscript = existsSync(transcriptFile)
-      if (!hasTranscript && !activeTurns.has(pid) && !rt.touched(pid)) continue
-      if (meta?.is_internal && !summary && !rt.touched(pid) && !activeTurns.has(pid)) continue
+      if (!hasTranscript && !running && !rt.touched(pid)) continue
+      if (meta?.is_internal && !summary && !rt.touched(pid) && !running) continue
 
-      let mtimeMs = Date.parse(summary?.UpdatedAt || meta?.last_modified_time || '') || 0
+      let mtimeMs = Math.max(
+        Date.parse(summary?.UpdatedAt || meta?.last_modified_time || '') || 0,
+        Date.parse(native?.last_modified_time || '') || 0,
+      )
       if (hasTranscript) {
         try {
           const st = statSync(transcriptFile)
@@ -297,12 +333,11 @@ export function createAgyRuntime(options = {}) {
       }
       if (!mtimeMs) mtimeMs = Date.now()
 
-      const cwd = sessionCwds.get(rawId) || workspacePathOf(summary, cwdByConv[rawId] || home)
+      const cwd = sessionCwds.get(rawId) || workspacePathOf(native, workspacePathOf(summary, cwdByConv[rawId] || home))
       if (cwd) sessionCwds.set(rawId, cwd)
       if (isAssistantDir(cwd)) assistants.add(pid)
 
-      const running = activeTurns.has(pid)
-      candidates.push({ rawId, pid, summary, cwd, mtimeMs, running, hasTranscript })
+      candidates.push({ rawId, pid, summary, native, cwd, mtimeMs, running, hasTranscript })
     }
 
     const chosen = rt.recent(candidates, {
@@ -313,14 +348,15 @@ export function createAgyRuntime(options = {}) {
       updatedAt: (c) => c.mtimeMs,
     })
 
-    return chosen.map(({ rawId, pid, summary, cwd, mtimeMs, running, hasTranscript }) => {
+    return chosen.map(({ rawId, pid, summary, native, cwd, mtimeMs, running, hasTranscript }) => {
       const steps = readTranscriptSteps(brainDirOf(rawId), false)
       const parsed = stepsToItems(steps, { brainDir: brainDirOf(rawId), full: false })
       if (!lastPushedSeq.has(pid)) lastPushedSeq.set(pid, parsed.toSeq)
-      let status = running ? 'working' : transcriptStatus(steps)
+      let status = running ? 'working' : transcriptStatus(steps, native)
       if (!hasTranscript && completedTurns.has(pid) && !running) status = 'done'
       const title =
         sessionTitles.get(rawId) ||
+        native?.title ||
         summary?.Title ||
         (cwd ? basename(cwd) : 'Antigravity')
       const modeInfo = sessionModes.get(rawId)
@@ -443,6 +479,7 @@ export function createAgyRuntime(options = {}) {
     const pid = toPersonaId(params.session_id)
     completedTurns.delete(pid)
     const rawId = toAgyId(pid)
+    if (archived.has(rawId)) throw new Error('Antigravity session is closed')
     const cwd = sessionCwds.get(rawId) || home
     const isAsst = Boolean(params.assistant) || assistants.has(pid) || isAssistantDir(cwd)
     if (isAsst) assistants.add(pid)
@@ -486,7 +523,9 @@ export function createAgyRuntime(options = {}) {
     const prevPromise = prevTurn?.promise || Promise.resolve()
     const promise = prevPromise
       .catch(() => {})
-      .then(() => acp.prompt(rawId, blocks))
+      .then(() => {
+        if (!archived.has(rawId)) return acp.prompt(rawId, blocks)
+      })
       .catch((err) => log(`agy prompt error (${pid}): ${err.message}`))
       .finally(() => {
         // The turn is over: a card still waiting has nothing to answer for any more.
@@ -523,6 +562,7 @@ export function createAgyRuntime(options = {}) {
   async function close(params) {
     const rawId = toAgyId(params.session_id)
     archived.add(rawId)
+    await interrupt(params)
     await acp.closeSession(rawId)
     rt.sessionsChanged()
   }

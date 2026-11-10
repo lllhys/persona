@@ -37,7 +37,7 @@
   "choose_source": "选择来源",
   "search": "按名称或 ID 查找",
   "cached": "导入运行或停止期间显示历史导入计划中的聊天。",
-  "no_sources": "此管理器没有支持聊天历史的来源。",
+  "no_sources": "此助手没有支持聊天历史的来源。",
   "no_candidates": "暂无可选项目。",
   "missing_identity": "此文档缺少来源标识，无法安全添加单项设置。",
   "unsupported": "选择文档不受支持或无效。未替换任何内容。请检查 hub 版本后重新加载。",

@@ -15,8 +15,13 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     /// Whether the list column shows (its button in the toolbar closes it).
     @State private var columns = SplitColumns.shown
     @Binding var path: NavigationPath
+    /// iOS: the list column's width and closing dragged on the line beside it and remembered under this key (#2624);
+    /// nil: the system's column.
+    var listKey: String? = nil
     /// The pages the list opens (`navigationDestination`s), registered in both layouts.
     var destinations: Destinations
+    /// The Assistant | Agents switch over the page column, on a phone's tabs (iPhone Duo open: `pageTabSwitch`, #2623).
+    var pageSwitch = false
     @ViewBuilder var sidebar: Sidebar
     /// The detail column before anything is open.
     @ViewBuilder var empty: Empty
@@ -70,9 +75,13 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                 NavigationStack(path: $path) {
                     empty.modifier(destinations)
                 }
+                #if os(iOS)
+                .safeAreaInset(edge: .top, spacing: 0) { if pageSwitch { PageTabSwitchRow() } }
+                #endif
             }
             .navigationSplitViewStyle(.balanced)
             .modifier(SidebarTopFill(shown: columns != .detailOnly))
+            .modifier(SplitDividerHandle(columns: $columns, key: listKey))
             // On the whole split, not the detail stack: its pages are built from the destinations the sidebar
             // registered, in the sidebar's environment.
             .environment(\.splitDetail, SplitDetail(isFirstPage: path.count <= 1, listHidden: columns == .detailOnly))
@@ -105,23 +114,33 @@ enum SplitColumns {
     #endif
 }
 
-/// The list column's width. iPhone Duo: none of our own (the system sizes the columns, and partly folded it moves the
-/// divide onto the fold). iPad: the system's sidebar is narrow for the agents' cards (they wrapped every title), so a
-/// wider one.
+/// The list column's width. iPad (and a Mac window): wider than the system's sidebar, which is narrow for the agents'
+/// cards (they wrapped every title); dragged on the line beside it (`SplitDividerHandle`, #2624), that width. One
+/// expression whatever the width: a modifier coming or going would build the list again (its filters, its scroll).
+/// iPhone Duo: none of our own (the system sizes the columns, and partly folded it moves the divide onto the fold) until
+/// one is kept from a drag; that takes the column once, at the drag's end, never during it.
 struct SidebarWidth: ViewModifier {
+    @Environment(\.splitListWidth) private var dragged
+
     func body(content: Content) -> some View {
-        // A Mac window: the same wider list column as on iPad.
         if UIDevice.current.userInterfaceIdiom == .pad || UIDevice.current.userInterfaceIdiom == .mac {
-            content.navigationSplitViewColumnWidth(min: Theme.Size.sidebarMin, ideal: Theme.Size.sidebar, max: Theme.Size.sidebarMax)
+            content.navigationSplitViewColumnWidth(min: dragged ?? Theme.Size.sidebarMin, ideal: dragged ?? Theme.Size.sidebar,
+                                                   max: dragged ?? Theme.Size.sidebarMax)
                 .background(GeometryReader { g in Color.clear.preference(key: SidebarEdge.self, value: g.frame(in: .global).maxX) })
+        } else if UIDevice.current.userInterfaceIdiom == .phone {
+            Group {
+                if let dragged { content.navigationSplitViewColumnWidth(dragged) } else { content }
+            }
+            // Where the column ends, for the handle on the line beside it.
+            .background(GeometryReader { g in Color.clear.preference(key: SidebarEdge.self, value: g.frame(in: .global).maxX) })
         } else {
             content
         }
     }
 }
 
-/// Where the list column ends, for `SidebarTopFill`.
-private struct SidebarEdge: PreferenceKey {
+/// Where the list column ends, for `SidebarTopFill` and the handle on the line beside it (`SplitDividerHandle`).
+struct SidebarEdge: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
@@ -163,6 +182,8 @@ struct SplitDetail: Equatable {
 }
 
 extension EnvironmentValues {
+    /// The width the list column was dragged to on the line beside it (#2624, `SplitDividerHandle`); nil: the system's.
+    @Entry var splitListWidth: CGFloat?
     @Entry var splitDetail: SplitDetail?
     /// Pushes a page by value onto the stack the view is in (an extension's `push`, docs/extensions/extensions.md「Page navigation」): its
     /// destination is registered with the list's.
@@ -227,5 +248,133 @@ struct SplitPlaceholder: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.pageBackground)
         .toolbarVisibility(.hidden, for: .navigationBar)
+    }
+}
+
+/// The line between a split's list and its page on iOS (#2624, iPad and iPhone Duo open), as Feishu's: a handle on it
+/// drags the list wider or narrower (`least`…`most`), the page taking the rest; dragged well past the least it closes the
+/// list, and from the page's leading edge it brings the list back; a double tap gives the column back to the system.
+/// The width and the closing are remembered under `key` (nil: no handle, the system's column, as before). The column's
+/// own button closes and opens it as well, remembered the same. Not on the Mac or Apple Vision Pro.
+struct SplitDividerHandle: ViewModifier {
+    @Binding var columns: NavigationSplitViewVisibility
+    let key: String?
+    /// The width dragged to; 0: never dragged (or given back), the system's.
+    @StoredValue private var width: Double
+    @StoredValue private var closed: Bool
+    /// The split's frame (global), and the column's width as last laid out at rest.
+    @State private var origin: CGFloat = 0
+    @State private var total: CGFloat = 0
+    @State private var measured: CGFloat = 0
+    /// While the handle is held: where the drag began, the width it would leave, whether letting go closes the list.
+    /// Gesture state: a drag the system cancels leaves nothing behind.
+    @GestureState private var live: Live?
+
+    struct Live: Equatable {
+        var start: CGFloat
+        var width: CGFloat
+        var closing: Bool
+    }
+
+    init(columns: Binding<NavigationSplitViewVisibility>, key: String?) {
+        _columns = columns
+        self.key = key
+        _width = StoredValue(wrappedValue: 0, (key ?? "split.list") + ".width")
+        _closed = StoredValue(wrappedValue: false, (key ?? "split.list") + ".closed")
+    }
+
+    private var shown: Bool { columns != .detailOnly }
+    private var phone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+
+    /// The least and the most the list is dragged to: an iPhone Duo's open display is narrower than an iPad; the page
+    /// keeps `splitDetailMin` beside it.
+    private var least: CGFloat { phone ? Theme.Size.sidebarMinPhone : Theme.Size.sidebarMin }
+    private var most: CGFloat { max(least, min(Theme.Size.sidebarMax, total - Theme.Size.splitDetailMin)) }
+    private func fitted(_ w: CGFloat) -> CGFloat { min(max(w, least), most) }
+
+    /// The width the list has now: the one kept (fitted to the room there is, which a turn or another window changes),
+    /// else the system's as laid out.
+    private var current: CGFloat { width > 0 ? fitted(CGFloat(width)) : max(least, measured) }
+
+    /// The width the column is given: the one being dragged to, else the one kept; nil: the system's. On iPhone Duo a
+    /// column with no width yet takes one only when the drag ends (`SidebarWidth`).
+    private var applied: CGFloat? {
+        if let live, !(phone && width == 0) { return live.width }
+        return width > 0 ? current : nil
+    }
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if let key, UIDevice.current.userInterfaceIdiom == .pad || phone {
+            content
+                .environment(\.splitListWidth, applied)
+                .onPreferenceChange(SidebarEdge.self) { edge in if live == nil { measured = edge - origin } }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { origin = $0.minX; total = $0.width }
+                .overlay(alignment: .leading) {
+                    handle
+                        .offset(x: shown ? (live?.width ?? current) - Theme.Split.handleWidth / 2 : 0)
+                        .accessibilityIdentifier("split.divider." + key)
+                }
+                .onAppear { if closed, shown { columns = .detailOnly } }
+                .onChange(of: columns) { _, now in closed = now == .detailOnly }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
+
+    /// The handle: a short bar on the line (at the page's edge while the list is closed), its touch area wider than it.
+    private var handle: some View {
+        Capsule()
+            .fill(live?.closing == true ? Theme.danger : live == nil ? Theme.Split.handle : Theme.Split.handleHeld)
+            .frame(width: Theme.Size.barWide, height: Theme.Size.tapTarget)
+            .scaledFrame(width: Theme.Split.handleWidth, height: Theme.Split.handleHeight)
+            .contentShape(.rect)
+            .gesture(drag)
+            .onTapGesture(count: 2) { width = 0 } // the system's column again
+            .animation(Theme.Motion.standard, value: live?.closing)
+            .accessibilityElement()
+            .accessibilityLabel(shown ? String(localized: "Resize the list") : String(localized: "Show List"))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { if !shown { withAnimation(Theme.Motion.layout) { columns = SplitColumns.shown } } }
+            .accessibilityAdjustableAction { direction in
+                guard shown else { return }
+                switch direction {
+                case .increment: width = Double(fitted(current + Theme.Split.step))
+                case .decrement: width = Double(fitted(current - Theme.Split.step))
+                @unknown default: break
+                }
+            }
+            .accessibilityActions {
+                if shown {
+                    Button(String(localized: "Hide List")) { withAnimation(Theme.Motion.layout) { columns = .detailOnly } }
+                }
+            }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: Theme.Split.slop, coordinateSpace: .global)
+            .updating($live) { g, state, _ in
+                // Mostly sideways, or it is the list's or the page's scroll and taps, not this.
+                guard shown, state != nil || abs(g.translation.width) > abs(g.translation.height) else { return }
+                let start = state?.start ?? current
+                let wanted = start + g.translation.width
+                state = Live(start: start, width: fitted(wanted), closing: wanted < least - Theme.Split.closesPast)
+            }
+            .onEnded { g in
+                guard abs(g.translation.width) > abs(g.translation.height) else { return }
+                if shown {
+                    let wanted = current + g.translation.width
+                    if wanted < least - Theme.Split.closesPast {
+                        withAnimation(Theme.Motion.layout) { columns = .detailOnly }
+                    } else if abs(g.translation.width) > Theme.Split.slop {
+                        width = Double(fitted(wanted))
+                    }
+                } else if g.translation.width > Theme.Split.opensPast {
+                    withAnimation(Theme.Motion.layout) { columns = SplitColumns.shown }
+                }
+            }
     }
 }

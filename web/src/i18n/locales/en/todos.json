@@ -20,6 +20,7 @@
   "stage_verify": "Verified",
   "stage_pr": "PR",
   "stage_pr_n": "PR #{n}",
+  "stage_mr_n": "MR !{n}",
   "stage_pr_label": "Open {pr} on {host} in a new tab",
   "delete_title": "Delete to-do",
   "delete_confirm": "Delete \"{title}\"? Linked agents aren't affected.",

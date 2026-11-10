@@ -14,6 +14,7 @@ import persona.core.contracts.api.ProviderAdded
 import persona.core.contracts.api.ProviderDiscovery
 import persona.core.contracts.api.ProviderProbe
 import persona.core.contracts.api.ProviderTest
+import persona.core.contracts.api.ProviderUpdate
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
@@ -72,8 +73,13 @@ class HttpProviderSetup internal constructor(
 
     private fun ProviderProbe.body(): RequestBody {
         fun String?.kept() = this?.trim()?.takeIf { it.isNotEmpty() }
-        val trimmed = ProviderProbe(preset.kept(), apiKey.kept(), baseUrl.kept(), auth.kept(), model.kept())
+        // Headers go as typed, "" too: it means none for this request over the stored ones.
+        val trimmed = ProviderProbe(preset.kept(), apiKey.kept(), baseUrl.kept(), auth.kept(), model.kept(), name.kept(), headers?.trim(), api.kept())
         return JsonCodec.encodeToString(ProviderProbe.serializer(), trimmed).toRequestBody(json)
+    }
+
+    override suspend fun update(name: String, changes: ProviderUpdate) {
+        call(path(name), "PUT", JsonCodec.encodeToString(ProviderUpdate.serializer(), changes).toRequestBody(json))
     }
 
     override suspend fun launchers(): List<HubLauncher> {

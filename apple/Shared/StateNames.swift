@@ -15,6 +15,8 @@ nonisolated enum StateName: String, CaseIterable, Sendable {
     case done
     /// A to-do or task the agent stopped on that wants a follow-up.
     case followUp
+    /// A to-do or task whose agent ended its turn but waits to be brought back: its background work, or the hub's wake-up (#3274).
+    case taskWaiting
 
     var text: String {
         switch self {
@@ -28,6 +30,7 @@ nonisolated enum StateName: String, CaseIterable, Sendable {
         case .awaitsReply: interfaceText("Awaiting Reply [State Names]")
         case .done: interfaceText("Done [State Names]")
         case .followUp: interfaceText("Follow-Up [State Names]")
+        case .taskWaiting: interfaceText("Task Waiting [State Names]")
         }
     }
 

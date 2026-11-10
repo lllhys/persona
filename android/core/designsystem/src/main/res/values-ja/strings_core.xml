@@ -190,6 +190,7 @@
     <string name="designsystem_core_engine_herdr">ターミナルのherdr</string>
     <string name="designsystem_core_engine_herdr_app">デスクトップアプリで開いたターミナル</string>
     <string name="designsystem_core_engine_orca">Orcaのターミナル</string>
+    <string name="designsystem_core_engine_tern">Ternのターミナル</string>
     <string name="designsystem_core_engine_paseo">Paseoのエージェント</string>
     <string name="designsystem_core_engine_cindy">Cindyのエージェント</string>
     <string name="designsystem_core_engine_offline">オフラインのため検出情報がありません</string>
@@ -335,6 +336,8 @@
     <string name="designsystem_core_endpoint_protocol">応答の形式が正しくありません</string>
     <string name="designsystem_core_endpoint_rejected">ハブがリクエストを拒否しました</string>
     <string name="designsystem_core_endpoint_rate_limited">リクエストが多すぎます。しばらくしてからお試しください</string>
+    <string name="designsystem_core_endpoint_access_required">このハブは Cloudflare Access の内側にあり、サービストークンが必要です</string>
+    <string name="designsystem_core_endpoint_access_rejected">Cloudflare Access がサービストークンを拒否しました</string>
     <string name="designsystem_core_endpoint_failed">接続に失敗しました</string>
     <string name="designsystem_core_address_empty">アドレスを入力してください</string>
     <string name="designsystem_core_address_spaces">アドレスにスペースは使えません</string>

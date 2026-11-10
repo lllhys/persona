@@ -45,7 +45,21 @@ type TodoRow struct {
 	Priority   string     `json:"priority"`
 	// Project is the slug of the knowledge-base project the todo belongs to (#2581), "" for none.
 	Project string `json:"project"`
+	// Kind is "" for a to-do or a task, or KindConcern (#3561). Set when it is made, never changed.
+	Kind string `json:"kind"`
 }
+
+// KindConcern is a todo for something the owner raised in the main conversation and wants an answer to (#3561,
+// docs/assistant/todos.md "Concerns"): it closes only through ReportConcern, once the main conversation told the owner
+// the outcome; no other close (by hand, the hub's judge, a review, a failed start) applies to it.
+const KindConcern = "concern"
+
+// DoneByReported marks a concern closed by the report of its outcome to the owner (ReportConcern), with the report as
+// DoneReason.
+const DoneByReported = "reported"
+
+// ErrConcernUnreported: a concern can only be closed by reporting its outcome to the owner (ReportConcern).
+var ErrConcernUnreported = errors.New("a concern closes only once its outcome was reported to the owner")
 
 // A todo's priorities besides normal ("").
 const (
@@ -86,12 +100,12 @@ type TodoAgentRow struct {
 }
 
 const todoColumns = `id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by, done_reason, reopened_at, quiet,
-	due_at, due_date, remind_at, reminded_at, priority, project`
+	due_at, due_date, remind_at, reminded_at, priority, project, kind`
 
 // todoDest is where a row of todoColumns is scanned to.
 func todoDest(r *TodoRow) []any {
 	return []any{&r.ID, &r.Title, &r.Notes, &r.DoneAt, &r.CreatedAt, &r.UpdatedAt, &r.Origin, &r.PlanID, &r.StartError, &r.DoneBy,
-		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority, &r.Project}
+		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority, &r.Project, &r.Kind}
 }
 
 // ListTodos returns all todos ordered by created_at DESC.
@@ -165,10 +179,10 @@ func (d *DB) GetTodo(ctx context.Context, id string) (*TodoRow, error) {
 // CreateTodo inserts a new todo.
 func (d *DB) CreateTodo(ctx context.Context, t TodoRow) error {
 	_, err := d.pool.Exec(ctx, `INSERT INTO todos (id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by,
-		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority, project)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority, project, kind)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		t.ID, t.Title, t.Notes, t.DoneAt, t.CreatedAt, t.UpdatedAt, t.Origin, t.PlanID, t.StartError, t.DoneBy, t.DoneReason, t.ReopenedAt, t.Quiet,
-		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority, t.Project)
+		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority, t.Project, t.Kind)
 	return err
 }
 
@@ -256,6 +270,9 @@ func (d *DB) EditTodo(ctx context.Context, id string, e TodoEdit, updatedAt time
 		if err != nil {
 			return err
 		}
+		if cur.Kind == KindConcern && cur.DoneAt == nil && e.Done != nil && *e.Done {
+			return ErrConcernUnreported // only ReportConcern closes it
+		}
 		e.Apply(&cur, updatedAt)
 		_, err = tx.Exec(ctx, `UPDATE todos SET title = $2, notes = $3, done_at = $4, updated_at = $5, start_error = $6,
 			done_by = $7, done_reason = $8, reopened_at = $9, due_at = $10, due_date = $11, remind_at = $12, reminded_at = $13,
@@ -302,13 +319,18 @@ func (d *DB) RetitleTodo(ctx context.Context, id, from, to string, at time.Time)
 	return &r, true, nil
 }
 
-// FailTodo ends a todo whose agent did not start: done (unless it already was) with why (#1077).
+// FailTodo ends a todo whose agent did not start: done (unless it already was) with why (#1077). A concern is left as
+// it is and returned unchanged: only the report of its outcome closes it.
 func (d *DB) FailTodo(ctx context.Context, id, startError string, at time.Time) (*TodoRow, error) {
 	var r TodoRow
-	err := d.pool.QueryRow(ctx, `UPDATE todos SET done_at = COALESCE(done_at, $2), start_error = $3, updated_at = $2 WHERE id = $1
+	err := d.pool.QueryRow(ctx, `UPDATE todos SET done_at = COALESCE(done_at, $2), start_error = $3, updated_at = $2
+		WHERE id = $1 AND kind <> 'concern'
 		RETURNING `+todoColumns, id, at, startError).
 		Scan(todoDest(&r)...)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if cur, gerr := d.GetTodo(ctx, id); gerr == nil {
+			return cur, nil // a concern: an agent of it not starting does not close it
+		}
 		return nil, ErrTodoNotFound
 	}
 	if err != nil {
@@ -338,11 +360,12 @@ func (d *DB) RetryTodo(ctx context.Context, id string, at time.Time) (*TodoRow, 
 }
 
 // AutoDoneTodo marks a task done by the hub (DoneByAuto, with why) when it is still open and the user has not
-// reopened it since workSince, the start of the work that was judged; false (and no error) when either changed.
+// reopened it since workSince, the start of the work that was judged; false (and no error) when either changed, or it
+// is a concern (never closed on its own).
 func (d *DB) AutoDoneTodo(ctx context.Context, id, reason string, at, workSince time.Time) (*TodoRow, bool, error) {
 	var r TodoRow
 	err := d.pool.QueryRow(ctx, `UPDATE todos SET done_at = $2, done_by = $3, done_reason = $4, updated_at = $2
-		WHERE id = $1 AND done_at IS NULL AND (reopened_at IS NULL OR reopened_at < $5)
+		WHERE id = $1 AND done_at IS NULL AND (reopened_at IS NULL OR reopened_at < $5) AND kind <> 'concern'
 		RETURNING `+todoColumns, id, at, DoneByAuto, reason, workSince).
 		Scan(todoDest(&r)...)
 	if errors.Is(err, pgx.ErrNoRows) {

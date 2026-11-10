@@ -22,6 +22,7 @@ import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcons
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import persona.core.contracts.api.SUBSCRIPTIONS_UI
 
 // The places an extension's View is drawn (docs/extensions/extensions.md "Declarative UI"): a page of its own (extension_page, from the
 // extension's page in Settings › Extensions; nav_page, from the "Extensions" section of the settings home) and a section on a launcher's
@@ -41,7 +42,8 @@ internal fun nativePageBinding(owner: persona.core.contracts.api.ExtensionStream
 fun ExtensionUiPage(extensions: ExtensionManagement?, extensionId: String, uiId: String, title: String, onBack: () -> Unit,
                     initialState: String? = null, depth: Int = 0, shown: Boolean = true, availableAdapter: NativeExtensionStreamAdapter? = null,
                     onPush: (ExtensionUiRoute) -> Unit = {}, manager: String? = null) {
-    val defaultBinding = extensions?.nativeStream?.collectAsState(initial = null)?.value
+    // The source subscription pages (#2041) are the manager's, drawn over HTTP only.
+    val defaultBinding = extensions?.nativeStream?.collectAsState(initial = null)?.value?.takeUnless { extensionId == SUBSCRIPTIONS_UI }
     val binding = remember(defaultBinding, manager) { nativePageBinding(defaultBinding, manager) }
     val owned = if (availableAdapter == null && binding != null) androidx.lifecycle.viewmodel.compose.viewModel(
         key = "native-extension:${binding.group}:${binding.owner}:${binding.manager}:${System.identityHashCode(binding.connection)}:$extensionId:$uiId:$depth",

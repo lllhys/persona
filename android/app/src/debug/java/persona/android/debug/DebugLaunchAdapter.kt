@@ -74,6 +74,8 @@ class DebugLaunchAdapter : LaunchAdapter {
         arguments.remove("debug.assistantSettings")?.let { persona.feature.assistant.settings.AssistantSettingsPreview.open = it }
         // "Model configuration" opens "Add model provider" (manual | preset) with persona://open?target=settings&page=modelconfig.
         arguments.remove("debug.newProvider")?.let { persona.feature.settings.NewProviderPreview.open = it }
+        // A provider's page (debug.openPage provider:<name>) opens its editor: form | computers.
+        arguments.remove("debug.providerEdit")?.let { persona.feature.settings.ProviderEditPreview.open = it }
         arguments.remove("debug.translateChats")?.let { persona.feature.settings.TranslationPreview.picking = it == "1" }
         // "New session" (debug.openPage new-agent) takes steps once loaded: launcher:<name>, effort:<level>, model:<id>, models[:<query>].
         arguments.remove("debug.newAgent")?.let { persona.feature.agents.NewAgentPreview.steps = it }

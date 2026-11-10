@@ -158,6 +158,7 @@ func (s *Service) channelProgressTick(id string) {
 
 // SessionItems is session.items: new items of a conversation the runs follow; they note the steps.
 func (s *Service) SessionItems(ctx context.Context, p SessionItems) {
+	s.taskStageItems(ctx, p)
 	s.registerInlineViews(ctx, p)
 	l := s.botLang(ctx) // before s.chans.mu
 	c := &s.chans

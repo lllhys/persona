@@ -129,10 +129,13 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	if err != nil {
 		return "", err
 	}
+	if verdict == reviewRework || verdict == reviewNeedsUser || a.UserCheck || a.Outcome == outcomeCannot {
+		s.setTaskStageKind(ctx, t.ID, "unverified", "", "", false)
+	}
 	b := &s.supervise
 	b.mu.Lock()
 	b.init()
-	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled} {
+	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled, sigOrphaned} {
 		delete(b.pending, t.ID+"|"+k) // reviewed: what waited is answered
 	}
 	b.mu.Unlock()
@@ -291,6 +294,9 @@ type reviewFeedBody struct {
 // accepted task's outcome is recorded, as when it closes by itself or the user closes it (todo_outcome.go, #2820); a
 // cancelled one came to nothing and records none.
 func (s *Service) reviewDoneTodo(ctx context.Context, id, reason string, accepted bool) (bool, error) {
+	if t, ok := s.todoNow(id); ok && t.isConcern() {
+		return false, nil // only its report closes a concern (concerns.go)
+	}
 	s.todos.writing.Lock() // memory takes the rows in the order the store committed them (todoBook.writing)
 	now := time.Now().UTC()
 	var row db.TodoRow

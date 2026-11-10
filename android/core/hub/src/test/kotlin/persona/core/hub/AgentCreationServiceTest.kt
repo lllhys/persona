@@ -69,4 +69,15 @@ class AgentCreationServiceTest {
             assertEquals("/api/v1/ops/$operation", (server.takeRequest().path).zhAny())
         }
     }
+
+    /** The manager refuses a provider outside the computer's scope before anything starts: its words are the answer, no lookup. */
+    @Test fun aStartRefusedForTheProvidersScopeSaysWhy() = runBlocking {
+        MockWebServer().use { server ->
+            val service = HttpAgentCreationService("hub/pairing", server.url("/").toString(), "test-token", OkHttpClient())
+            server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"jv_gw is not set to run on Laptop.","code":"launcher_out_of_scope"}"""))
+            val result = service.start(AgentStartRequest("machine", "/code", "jv_gw"), "00000000-0000-4000-8000-000000000003")
+            assertTrue(result is AgentStartResult.Rejected)
+            assertEquals(1, server.requestCount)
+        }
+    }
 }

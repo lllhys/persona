@@ -63,6 +63,9 @@ func TestDispatchIsOffByDefault(t *testing.T) {
 	if !r.IsError || !strings.Contains(resultText(r), "agents.dispatch.enabled") || len(f.starts) != 0 {
 		t.Fatalf("result %q, starts %v", resultText(r), f.starts)
 	}
+	if n := len(s.todosOf(context.Background(), "*")); n != 0 {
+		t.Fatalf("a refused dispatch made %d todos", n)
+	}
 }
 
 // On: agents get the tools; the assistant's conversations, which have agent_start, do not.
@@ -121,7 +124,7 @@ func TestDispatchStartsOnAnotherComputerAndReadsTheResult(t *testing.T) {
 	}
 }
 
-// wait_seconds holds the read until the task's turn is over.
+// wait_seconds holds the read until a later poll finds the task's turn is over.
 func TestDispatchReadWaitsForTheTaskToStop(t *testing.T) {
 	old := dispatchPoll
 	dispatchPoll = 5 * time.Millisecond
@@ -131,10 +134,19 @@ func TestDispatchReadWaitsForTheTaskToStop(t *testing.T) {
 		t.Fatal(resultText(r))
 	}
 	f.setItems(proto.Item{ID: "i1", Role: "assistant", Kind: proto.KindText, Text: "built"})
-	go func() {
-		time.Sleep(40 * time.Millisecond)
-		setStatus(f, "box", "s1", proto.StatusDone)
-	}()
+	polled := make(chan struct{})
+	f.answerNode(DeviceSessionGet, func(machine string, _ json.RawMessage) (any, error) {
+		if machine != "box" {
+			return nil, fmt.Errorf("unexpected machine %q", machine)
+		}
+		select {
+		case <-polled:
+			return map[string]any{"session": map[string]any{"session_id": "s1", "status": proto.StatusDone}, "ok": true}, nil
+		default:
+			close(polled)
+			return map[string]any{"session": map[string]any{"session_id": "s1", "status": proto.StatusWorking}, "ok": true}, nil
+		}
+	})
 	out := resultText(dispatchCall(s, "mac", "caller-0001", "dispatch_read", `{"session_id":"s1","wait_seconds":5}`))
 	if !strings.Contains(out, ": stopped.") || !strings.Contains(out, "built") {
 		t.Fatalf("read: %q", out)
@@ -265,5 +277,91 @@ func TestDispatchedTasksSurviveARestart(t *testing.T) {
 	}
 	if r := dispatchCall(again, "box", "s1", "dispatch_start", `{"machine":"mac","cwd":"/c","prompt":"p"}`); !strings.Contains(resultText(r), "does not dispatch") {
 		t.Fatalf("the task dispatched after a restart: %q", resultText(r))
+	}
+}
+
+// A dispatched task is a supervised task of the main conversation, as agent_supervise makes one: a todo that says
+// which agent handed it out, its card in the main conversation, a place in the snapshot, a supervision message when
+// its agent is done, and task_review to close it. The caller still reads the result itself.
+func TestDispatchedTaskIsSupervisedByTheMainConversation(t *testing.T) {
+	s, f := newQuietService(t)
+	ctx := context.Background()
+	on := true
+	f.hello.Agents.Dispatch.Enabled = &on
+	f.judge = `{"verdict":"done","reason":"测试都过了"}`
+	f.setSessions("mac", proto.Session{SessionID: "caller-0001", MachineID: "mac", Title: "fix the build", Status: proto.StatusWorking, Cwd: "/code/app"})
+	f.onStart = func(f *fakeHub, _ map[string]any) {
+		f.sessions["box"] = append(f.sessions["box"], proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude",
+			Status: proto.StatusWorking, State: proto.StateWorking, UpdatedAt: time.Now()})
+	}
+	r := dispatchCall(s, "mac", "caller-0001", "dispatch_start", `{"machine":"box","cwd":"/code/app","prompt":"run the Linux tests and report failures"}`)
+	if r.IsError || !strings.Contains(resultText(r), "session s1") {
+		t.Fatalf("start: %q", resultText(r))
+	}
+
+	todo := onlyTodo(s)
+	if todo.Origin != "conv1" || len(todo.Agents) != 1 || todo.Agents[0].MachineID != "box" || todo.Agents[0].SessionID != "s1" {
+		t.Fatalf("todo: %+v", todo)
+	}
+	if v := todo.Supervision; v == nil || v.Supervisor != "conv1" {
+		t.Fatalf("supervision: %+v", todo.Supervision)
+	}
+	for _, want := range []string{"fix the build", "mac", "dispatch_start", "/code/app", "run the Linux tests and report failures"} {
+		if !strings.Contains(todo.Notes, want) {
+			t.Errorf("the notes lack %q (who handed it out):\n%s", want, todo.Notes)
+		}
+	}
+	if !strings.Contains(feedKinds(s, "conv1"), "task") {
+		t.Fatalf("no task card in the main conversation: %s", feedKinds(s, "conv1"))
+	}
+	t.Logf("to-do %s %q, supervisor %s, agent %s/%s\nnotes:\n%s", todo.ID, todo.Title, todo.Supervision.Supervisor,
+		todo.Agents[0].MachineID, todo.Agents[0].SessionID, todo.Notes)
+	// The To-dos page lists it (GET /api/v1/todos) with the notes naming who handed it out.
+	page, ok := listedTodos(t, s)[todo.ID]
+	if !ok || !strings.Contains(fmt.Sprint(page["notes"]), "dispatch_start") {
+		t.Fatalf("GET /api/v1/todos: %v", page)
+	}
+	t.Logf("GET /api/v1/todos: id=%v title=%q agents=%v", page["id"], page["title"], page["agents"])
+	var listed bool
+	for _, st := range s.snapshotTasks(ctx, "") {
+		if st.ID == todo.ID {
+			listed = true
+			t.Logf("snapshot: %+v", st)
+		}
+	}
+	if !listed {
+		t.Fatal("the snapshot does not list the dispatched task")
+	}
+
+	// Its agent finishes: the main conversation gets a supervision message and the task waits for review.
+	agentTurn(s, f, proto.StatusWorking, "", 0)
+	agentTurn(s, f, proto.StatusDone, "Linux 上 2 个测试失败：TestA、TestB", 0)
+	waitFor(t, "the supervision message", func() bool { return len(f.notices()) == 1 })
+	if n := f.notices()[0]; !strings.Contains(n, "📋 督办") || !strings.Contains(n, "TestA、TestB") {
+		t.Fatalf("message:\n%s", n)
+	}
+	t.Logf("supervision message to the main conversation:\n%s", f.notices()[0])
+	waitFor(t, "the review", func() bool { return todoNow(s, todo.ID).Supervision.State == reviewPending })
+	raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "失败已列出"})
+	if res, err := s.runTool(ctx, "server", "conv1", "task_review", raw); err != nil || !strings.Contains(res, "accepted and closed") {
+		t.Fatalf("task_review: %s %v", res, err)
+	}
+	if done := todoNow(s, todo.ID); done.DoneAt == nil || done.Supervision.State != reviewAccepted {
+		t.Fatalf("accepted: %+v", done.Supervision)
+	}
+	// The caller still reads the result itself.
+	if out := resultText(dispatchCall(s, "mac", "caller-0001", "dispatch_read", `{"session_id":"s1"}`)); !strings.Contains(out, ": stopped.") {
+		t.Fatalf("read: %q", out)
+	}
+}
+
+// With no main conversation there is no supervisor: the task starts as before and no todo is made.
+func TestDispatchWithoutMainConversationMakesNoTodo(t *testing.T) {
+	s, _, _ := newDispatchService(t, true)
+	if r := dispatchCall(s, "mac", "caller-0001", "dispatch_start", `{"machine":"box","cwd":"/code/app","prompt":"build it"}`); r.IsError {
+		t.Fatal(resultText(r))
+	}
+	if n := len(s.todosOf(context.Background(), "*")); n != 0 {
+		t.Fatalf("%d todos without a main conversation", n)
 	}
 }

@@ -79,7 +79,7 @@ func dialResident(ctx context.Context, path string, wait time.Duration) (net.Con
 }
 
 // residentProgram and residentVersion are what the resident node of this process runs as (SetResident), for standby's
-// answer to ping while no Node serves (spool.go).
+// answer to ping while no Node serves (spool_standby.go).
 var residentProgram, residentVersion atomic.Value
 
 // SetResident says which program and build the resident node of this process is (nodecmd runResident, before Attach).
@@ -147,7 +147,7 @@ func Attach(ctx context.Context, newNode func() (*Node, error), extra <-chan net
 
 	keeper := newAssistantKeeper()
 	scans := &bgCarry{} // background-task scans go on from one connection's Node to the next (carry.go)
-	// No manager connected yet (or between connections): standby answers node.sock (spool.go).
+	// No manager connected yet (or between connections): standby answers node.sock (spool_standby.go).
 	sp := openSpool(SpoolPath())
 	sb := newStandby(sp, logf)
 	sb.want()

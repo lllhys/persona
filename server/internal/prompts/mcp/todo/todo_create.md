@@ -1,4 +1,4 @@
-Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day. When it clearly belongs to one of the user's areas of work, give project: the To-dos page groups to-dos by it.
+Add a to-do to the user's Persona to-dos, when the user asks you to note something to do or to remind them of it (or agrees to your suggestion): it shows on the To-dos page of the app, sorted by its due date, and with remind set the phone is pushed about it at that time. It is the user's own to-do, with no agent on it: work for an agent is task_plan. Done at once, nothing to confirm. An open to-do with the same title and due date is not made twice: you get that one back. Write the title as the thing to do (short, the user's language); put links, amounts and details in notes. Read due dates and times in the user's time zone; when only the day is known, give the day. When it clearly belongs to one of the user's areas of work, give project: the To-dos page groups to-dos by it. With kind concern it records a concern of the user's instead: open until you report its outcome with concern_report.
 
 ```json
 {
@@ -25,6 +25,11 @@ Add a to-do to the user's Persona to-dos, when the user asks you to note somethi
       "type": "string",
       "enum": ["high", "normal", "low"],
       "description": "normal when left out"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["todo", "concern"],
+      "description": "concern (main conversation only): something the user raised and wants an answer to, recorded so it is followed until you report its outcome to them with concern_report; nothing else closes it. todo (the default): one of the user's own to-dos"
     },
     "project": {
       "type": "string",

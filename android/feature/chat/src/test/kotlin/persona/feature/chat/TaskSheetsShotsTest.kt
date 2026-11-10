@@ -129,7 +129,7 @@ class TaskSheetsShotsTest {
                     sheet = sheet, machines = machines, pending = pending)
                 if (scene == "plan") PlanEditSheet(plan, host, onDismiss = {}) {}
                 else Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background).padding(vertical = Tokens.Space.l)) {
-                    AssistantTrays(host, remember { AssistantTrayState().apply { expanded = AssistantTray.Agents } },
+                    AssistantTrays(host, remember { AssistantTrayState().apply { expanded = AssistantTray.Running } },
                         host.pending, emptyList(), emptyList(), persona.core.designsystem.AssistantTrayTokens.maximumHeight,
                         busy = false, enabled = true, onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
                 }

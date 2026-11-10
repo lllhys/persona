@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="assistant_settings_title">アシスタント</string>
+    <string name="assistant_settings_title">アシスタントのプロフィール</string>
     <string name="assistant_settings_summary">Personaは「%1$s」で実行されています。</string>
     <string name="assistant_settings_load_failed">アシスタントの設定を読み込めません。接続を確認してから、下に引いて再試行してください。</string>
     <string name="assistant_settings_retry">再試行</string>
@@ -34,7 +34,7 @@
     <string name="assistant_settings_you_header">あなたについて</string>
     <string name="assistant_settings_notes">自分について</string>
     <string name="assistant_settings_notes_filled">入力済み</string>
-    <string name="assistant_settings_notes_from_hub">マネージャーの設定</string>
+    <string name="assistant_settings_notes_from_hub">アシスタントの設定</string>
     <string name="assistant_settings_notes_empty">未入力</string>
     <string name="assistant_settings_memory">メモリ</string>
     <string name="assistant_settings_memory_none">なし</string>
@@ -64,7 +64,7 @@
     <string name="assistant_settings_reach_phone_subtitle">スマートフォンで確認や通知をします</string>
     <string name="assistant_settings_reach_caption">Larkメッセージの送信、メール送信、予定の作成など、あなたの代わりに行う操作は、必ず先にスマートフォンで確認します。</string>
     <string name="assistant_settings_notes_intro">Personaにあなたのことを伝えます：コードの場所、仕事のデータを調べるのによく使うツール、触ってほしくないマシンやディレクトリ、報告のスタイルなど。新しいチャットを始めるたびに読み込まれ、変更は新しいチャットから反映されます。</string>
-    <string name="assistant_settings_notes_hub_notice">現在Personaはマネージャーの設定ファイル（manager.json）の内容を読み込んでいます。ここで保存すると、こちらが優先されます。</string>
+    <string name="assistant_settings_notes_hub_notice">現在Personaはアシスタントの設定ファイル（manager.json）の内容を読み込んでいます。ここで保存すると、こちらが優先されます。</string>
     <string name="assistant_settings_notes_placeholder">例：コードは~/codeにあります。週報の下書きは毎週金曜の終業前にください。</string>
     <string name="assistant_settings_notes_unsaved_title">「自分について」は保存されていません</string>
     <string name="assistant_settings_notes_unsaved_text">移動する前に変更を保存しますか？</string>

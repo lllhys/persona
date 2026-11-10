@@ -79,7 +79,7 @@ Reads a device makes on its own (filling a gap, a latest page, the card list aft
 | `cards` | `{id: state}` for cards on screen or just answered: `open` (its buttons work), `answering` (this device's answer is in flight: hidden or locked), `answered` (shown as answered, or gone). Ids not listed are not on screen. Only `open` against not-`open` is strict; see "Allowed differences" |
 | `status` | The chat's state: `working`, `needs_you`, `unread`, `idle` |
 | `live` | The streamed text on screen, or `null` |
-| `requests` | Requests the device must have sent since the last step that listed `requests` for it (or the start), in this order; others may come in between: `{"get": "/items", "after_seq": 4}`, `{"ws": "subscribe", "since_seq": 4}`, `{"post": "resolve", "id": "ix1"}`, `{"post": "messages", "id": "m1"}`, `{"post": "conversations", "id": "c1"}` (a start; `id` is the op id; `"new_op": true` instead: an op id this message never had) |
+| `requests` | Requests the device must have sent since the last step that listed `requests` for it (or the start), in this order; others may come in between: `{"get": "/items", "after_seq": 4}`, `{"ws": "subscribe", "since_seq": 4}`, `{"post": "resolve", "id": "ix1"}`, `{"post": "messages", "id": "m1"}`, `{"post": "conversations", "id": "c1"}` (a start; `id` is the op id; `"new_op": true` instead: an op id this message never had), `{"get": "/ops", "id": "m1"}` (the receipt of the op a write went with, by the write's id). Where the protocol allows several ways, an entry `{"one_of": [request, request…]}` is met by any one of them: a send in flight posted again or its op's receipt read; the rest of a capped replay asked from its cap or the whole gap read when the socket came back (#2770) |
 
 ### Allowed differences
 

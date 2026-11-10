@@ -15,6 +15,7 @@
   "status_other": "ゲートウェイが{status}を返しました",
   "said": "{head}：{said}",
   "models_unreadable": "ゲートウェイのモデル一覧の形式を認識できません",
+  "models_not_found": "モデル一覧のエンドポイントが見つかりません（404）。接続テストの失敗を意味するものではありません。既存のモデルを保持するか、モデルIDを手動で入力できます",
   "models_pagination": "モデル一覧を最後まで読み取れませんでした：ページ情報が無効か、ページ数が多すぎます",
   "response_unfinished": "Responsesリクエストが正常に完了しませんでした"
 }

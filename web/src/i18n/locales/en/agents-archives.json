@@ -12,5 +12,5 @@
   "load_failed": "Couldn't load archived agents",
   "retry": "Try again",
   "unsupported_title": "Archives aren't available",
-  "unsupported_body": "Update the hub and its managers to archive agents."
+  "unsupported_body": "Update the hub and its assistants to archive agents."
 }

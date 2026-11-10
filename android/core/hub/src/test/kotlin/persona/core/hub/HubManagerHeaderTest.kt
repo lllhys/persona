@@ -96,6 +96,56 @@ class HubManagerHeaderTest {
         }
     }
 
+    /** The current assistant's own routes: the assistant page's, the knowledge base, a new to-do. */
+    @Test fun theCurrentAssistantsPaths() {
+        fun current(path: String, method: String = "GET") = isCurrentAssistantPath("https://example.com/hub/api/v1/$path".toHttpUrl(), method)
+        assertTrue(current("assistant/schedule"))
+        assertTrue(current("kb/people"))
+        assertTrue(current("kb/people/p1", "PUT"))
+        assertTrue(current("kb-search?q=x"))
+        assertTrue(current("todos", "POST"))
+        // the lists every manager answers, and one thing's own routes (named by the stamp its list gave it)
+        assertFalse(current("todos"))
+        assertFalse(current("todos/t1", "PATCH"))
+        assertFalse(current("inbox"))
+        assertFalse(current("machines"))
+        assertFalse(current("assistant?space=health"))
+        AssistantManagerChoice.choose("hub", "m-3", "assistant")
+        val base = "https://example.com/api/v1/"
+        assertEquals("m-3", managerHeaderFor("${base}kb/projects".toHttpUrl(), "hub"))
+        assertEquals("m-3", managerHeaderFor("${base}todos".toHttpUrl(), "hub", "POST"))
+        assertNull(managerHeaderFor("${base}todos".toHttpUrl(), "hub"))
+        assertNull(managerHeaderFor("${base}kb/projects".toHttpUrl(), "another-hub"))
+        // a to-do the list showed as another manager's names that one, whichever is current
+        AssistantManagerChoice.noteItem(listOf("todos", "t1"), "m-2")
+        assertEquals("m-2", managerHeaderFor("${base}todos/t1".toHttpUrl(), "hub", "PATCH"))
+        AssistantManagerChoice.choose("hub", null, "assistant")
+        assertNull(managerHeaderFor("${base}kb/projects".toHttpUrl(), "hub"))
+        assertNull(managerHeaderFor("${base}todos".toHttpUrl(), "hub", "POST"))
+    }
+
+    /** The to-dos list is every manager's: each to-do keeps its manager, and an answer about one keeps the one it had. */
+    @Test fun toDosKeepTheirManager() = kotlinx.coroutines.runBlocking {
+        fun answer(body: String) = okhttp3.Response.Builder().request(Request.Builder().url("https://example.com/").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").body(body.toResponseBody()).build()
+        AssistantManagerChoice.choose("hub", "m-3", "assistant")
+        val api = HttpTasksApi({ path, method, _ ->
+            when {
+                method == "GET" -> answer("""{"todos":[{"id":"t1","title":"a","manager":"assistant"},{"id":"t2","title":"b","manager":"m-3"},{"id":"t3","title":"c"}]}""")
+                method == "POST" && path.endsWith("/todos") -> answer("""{"todo":{"id":"t9","title":"new"}}""")
+                else -> answer("""{"todo":{"id":"t2","title":"b2"}}""")
+            }
+        })
+        assertEquals(listOf("assistant", "m-3", null), api.todos().map { it.manager })
+        assertNull(AssistantManagerChoice.itemHeader(listOf("todos", "t1", "decisions")))
+        assertEquals("m-3", AssistantManagerChoice.itemHeader(listOf("todos", "t2", "decisions")))
+        // an answer about one comes back unstamped: it keeps its list's manager
+        assertEquals("m-3", api.patchTodo("t2", title = "b2").manager)
+        // a new one is the current assistant's
+        assertEquals("m-3", api.createTodo("new").manager)
+        assertEquals("m-3", AssistantManagerChoice.itemHeader(listOf("todos", "t9")))
+    }
+
     @Test fun assistantPaths() {
         assertTrue(isAssistantPath("https://example.com/api/v1/assistant".toHttpUrl()))
         assertTrue(isAssistantPath("https://example.com/persona/api/v1/assistant/tasks/1/run".toHttpUrl()))

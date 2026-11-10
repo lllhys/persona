@@ -49,6 +49,8 @@ class GroupRuntime internal constructor(
         /** No hub of the group accepts this phone any more. */
         fun onRevoked(group: GroupRuntime)
         fun onMemberRevoked(group: GroupRuntime, hubId: String, ownToken: Boolean)
+        /** A paired hub's Cloudflare Access service token (docs/operations/network.md "Behind Cloudflare Access"). */
+        fun access(hubId: String): HubAccess? = null
     }
 
     val id: String = group.id
@@ -123,6 +125,7 @@ class GroupRuntime internal constructor(
             clockMillis = SystemClock::elapsedRealtime,
             onMemberRevoked = { hubId, ownToken -> listener.onMemberRevoked(this, hubId, ownToken) },
             ways = ways,
+            access = listener::access,
         )
         live = connection
         connection.setForeground(foreground)

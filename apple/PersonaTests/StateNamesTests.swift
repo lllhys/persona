@@ -35,7 +35,7 @@ struct StateNamesTests {
     @Test func areTheGlossarysNames() {
         let want: [StateName: String] = [
             .needsYou: "需要你", .working: "工作中", .unread: "完成未看", .seen: "已看", .notRunning: "未运行", .unknown: "未知",
-            .waiting: "待唤醒", .awaitsReply: "待你回复", .done: "已完成", .followUp: "待跟进",
+            .waiting: "待唤醒", .awaitsReply: "待你回复", .done: "已完成", .followUp: "待跟进", .taskWaiting: "等待中",
         ]
         for s in StateName.allCases { #expect(s.text == want[s], "\(s)") }
         #expect(StateName.count(.needsYou, 2) == "2 个需要你")

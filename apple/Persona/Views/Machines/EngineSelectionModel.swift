@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// One engine per machine. Editing stays local until the hub accepts the PUT.
+/// One engine per machine, or none (the empty host set, #3302). Editing stays local until the hub accepts the PUT.
 @Observable final class EngineSelectionModel {
     struct Deps {
         var api: () -> APIClient?
@@ -24,19 +24,29 @@ import Observation
     }
 
     /// The machine's current engine: herdr when it was never chosen (2026-11-01 user: an engine must be picked, herdr
-    /// by default; no guessing from what happens to be detected).
+    /// by default; no guessing from what happens to be detected). An empty host set is no terminal engine, though
+    /// `engine` says herdr for it.
     static func initialChoice(_ machine: Machine, pairing: Bool) -> MachineEngine {
-        machine.engine
+        machine.engineHosts?.isEmpty == true ? .noEngine : machine.engine
     }
 
-    /// Older hubs and offline machines may not report detection; their known engines can still be configured.
+    /// Older hubs and offline machines may not report detection; their known engines can still be configured. No
+    /// terminal engine comes last, and only from a hub that reports host sets: an older one would refuse it.
     static func options(_ machine: Machine) -> [DetectedEngine] {
-        guard machine.engines.isEmpty else { return machine.engines }
-        return MachineEngine.allCases.map { .init(id: $0.rawValue, name: $0.name, available: false) }
+        var options = machine.engines.isEmpty
+            ? MachineEngine.allCases.map { DetectedEngine(id: $0.rawValue, name: $0.name, available: false) }
+            : machine.engines
+        if offersNoEngine(machine) {
+            options.append(.init(id: MachineEngine.noEngine.rawValue, name: MachineEngine.noEngine.name, available: true))
+        }
+        return options
     }
+
+    static func offersNoEngine(_ machine: Machine) -> Bool { machine.engineHosts != nil }
 
     static func canSelect(_ engine: MachineEngine, on machine: Machine) -> Bool {
-        MachineEngine.allCases.contains(engine) || machine.engines.contains { $0.id == engine.rawValue && $0.available }
+        if engine == .noEngine { return offersNoEngine(machine) }
+        return MachineEngine.allCases.contains(engine) || machine.engines.contains { $0.id == engine.rawValue && $0.available }
     }
 
     func choose(_ engine: MachineEngine) {
@@ -60,7 +70,7 @@ import Observation
             guard let api = deps.api() else { throw APIError(status: 0, message: String(localized: "Not connected to the hub yet")) }
             let saved = try await api.setEngine(machine: machineID, engine: selected)
             deps.updated(saved)
-            selected = saved.engine
+            selected = Self.initialChoice(saved, pairing: false)
             edited = false
             return true
         } catch {

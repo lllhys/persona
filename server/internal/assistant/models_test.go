@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -515,7 +516,7 @@ func TestModelUsesAreReadOnlyAndIgnoreDeprecatedOverrides(t *testing.T) {
 	for id, binding := range bindings {
 		setModel(t, s, id, binding)
 	}
-	ids := []string{"task.one"}
+	ids := []string{}
 	for _, p := range modelPurposes {
 		if p.Parent != "" && p.ID != purposeLarkAgent {
 			ids = append(ids, p.ID)
@@ -539,6 +540,193 @@ func TestModelUsesAreReadOnlyAndIgnoreDeprecatedOverrides(t *testing.T) {
 		if err != nil || stored.Binding != old {
 			t.Fatalf("deprecated record was destroyed: %+v %v", stored, err)
 		}
+	}
+}
+
+// One scheduled task can run on its own launcher, model and effort; the others keep following Main chat, and the
+// pre-#1570 records (model_config.task.<id>) never come back.
+func TestATaskCanOverrideMainChatAndOtherTasksFollowIt(t *testing.T) {
+	s, f, _ := modelService(t)
+	ctx := context.Background()
+	setTasks(s, Task{ID: "job", Title: "发布守护", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true},
+		Task{ID: "other", Title: "巡检", Repeat: repeatInterval, EveryMinutes: 60, Enabled: true})
+	f.zshrc = map[string][]proto.Launcher{"server": {{Name: "cheap", Model: "cheap-default"}}}
+	main := ModelBinding{Provider: "launcher.claude", Model: "claude-opus-5-5", Effort: "high"}
+	setModel(t, s, "assistant", main)
+	// What a task had before #1570: still there, and not what the task runs.
+	dormant := modelRecord{Revision: 7, Binding: ModelBinding{Provider: "launcher.cheap", Model: "long-ago"}}
+	if err := s.store().PutSetting(ctx, modelKey("task.job"), dormant); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := s.resolveModel(ctx, "task.job"); err != nil || b != main {
+		t.Fatalf("the dormant record came back: %+v %v", b, err)
+	}
+	p := purposeOf(t, s, "task.job")
+	if p.CategoryID != "assistant" || p.Parent != "assistant" || p.Revision != 0 || p.Override != (ModelBinding{}) ||
+		p.InheritedFrom != "主对话" || len(p.Fields) == 0 || !slices.Contains(p.ProviderIDs, "launcher.cheap") ||
+		p.Effective != main || p.MachineID != "server" {
+		t.Fatalf("task purpose: %+v", p)
+	}
+	if p := purposeOf(t, s, "task.other"); p.Override != (ModelBinding{}) || p.Effective != main {
+		t.Fatalf("a task without an override already differs: %+v", p)
+	}
+	// The task's own launcher, model and effort; its own record and revision.
+	if r := modelRequest(s, "PATCH", "task.job", `{"revision":0,"provider":"launcher.cheap","model":"cheap-model","effort":"low"}`); r.Code != http.StatusOK {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	if b, err := s.resolveModel(ctx, "task.job"); err != nil || b != (ModelBinding{Provider: "launcher.cheap", Model: "cheap-model", Effort: "low"}) {
+		t.Fatalf("the task's override did not apply: %+v %v", b, err)
+	}
+	if b, _ := s.resolveModel(ctx, "task.other"); b != main {
+		t.Fatalf("another task followed the first one's override: %+v", b)
+	}
+	if b, _ := s.resolveModel(ctx, "assistant"); b != main {
+		t.Fatalf("Main chat changed: %+v", b)
+	}
+	var old modelRecord
+	if _, err := s.store().Setting(ctx, modelKey("task.job"), &old); err != nil || old != dormant {
+		t.Fatalf("the dormant record was touched: %+v %v", old, err)
+	}
+	p = purposeOf(t, s, "task.job")
+	if p.Revision != 1 || p.Override.Provider != "launcher.cheap" || p.Override.Model != "cheap-model" || p.InheritedFrom != "" {
+		t.Fatalf("task purpose after the save: %+v", p)
+	}
+	// Back to Main chat with nulls, as any other purpose.
+	if r := modelRequest(s, "PATCH", "task.job", `{"revision":1,"provider":null,"model":null,"effort":null}`); r.Code != http.StatusOK {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	if b, err := s.resolveModel(ctx, "task.job"); err != nil || b != main {
+		t.Fatalf("clearing did not return to Main chat: %+v %v", b, err)
+	}
+	// The schedule tools' sparse fields: a launcher alone takes that launcher's default model, and "" clears.
+	text := func(v string) *string { return &v }
+	if err := s.setTaskModel(ctx, "other", text("cheap"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.resolveModel(ctx, "task.other"); b.Provider != "launcher.cheap" || b.Model != "" || b.Effort != "" {
+		t.Fatalf("tool launcher: %+v", b)
+	}
+	if err := s.setTaskModel(ctx, "other", text("no-such-launcher"), nil, nil); err == nil {
+		t.Fatal("an unknown launcher was accepted")
+	}
+	if err := s.setTaskModel(ctx, "other", text(""), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.resolveModel(ctx, "task.other"); b != main {
+		t.Fatalf("tool clear: %+v", b)
+	}
+	// A model alone pins the launcher the task runs on now, so a later Main chat change cannot pair it with another
+	// agent; clearing returns it to whatever Main chat is then.
+	if err := s.setTaskModel(ctx, "other", nil, text("pinned-model"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.resolveModel(ctx, "task.other"); b.Provider != "launcher.claude" || b.Model != "pinned-model" {
+		t.Fatalf("model-only did not pin its launcher: %+v", b)
+	}
+	later := ModelBinding{Provider: "launcher.cheap", Model: "cheap-default"}
+	setModel(t, s, "assistant", later)
+	if b, _ := s.resolveModel(ctx, "task.other"); b.Provider != "launcher.claude" || b.Model != "pinned-model" {
+		t.Fatalf("a later Main chat change moved the task: %+v", b)
+	}
+	if err := s.setTaskModel(ctx, "other", text(""), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.resolveModel(ctx, "task.other"); b != later {
+		t.Fatalf("clearing after the pin: %+v", b)
+	}
+}
+
+// The schedule tools take a task's launcher / model / effort when they create or edit it.
+func TestScheduleToolsSetATasksOwnModel(t *testing.T) {
+	s, f, _ := modelService(t)
+	ctx := context.Background()
+	f.zshrc = map[string][]proto.Launcher{"server": {{Name: "cheap", Model: "cheap-default"}}}
+	main := ModelBinding{Provider: "launcher.claude", Model: "claude-opus-5-5", Effort: "high"}
+	setModel(t, s, "assistant", main)
+	tool := func(name, args string) string {
+		t.Helper()
+		out, err := s.runTool(ctx, "server", "main", name, json.RawMessage(args))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return out
+	}
+	task := func(title string) Task {
+		t.Helper()
+		sc := s.loadSchedule(ctx)
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+		for _, t := range sc.tasks {
+			if t.Title == title {
+				return t
+			}
+		}
+		t.Fatalf("no task %q", title)
+		return Task{}
+	}
+	tool("schedule_routine", `{"title":"巡检","prompt":"看看","time":"09:00","launcher":"cheap","model":"cheap-model","effort":"low"}`)
+	rt := task("巡检")
+	if b, err := s.resolveModel(ctx, "task."+rt.ID); err != nil ||
+		b != (ModelBinding{Provider: "launcher.cheap", Model: "cheap-model", Effort: "low"}) {
+		t.Fatalf("routine model: %+v %v", b, err)
+	}
+	tool("schedule_followup", `{"title":"看一眼","prompt":"看看","at":"30m","new_conversation":true,"launcher":"cheap"}`)
+	fu := task("看一眼")
+	if b, _ := s.resolveModel(ctx, "task."+fu.ID); b.Provider != "launcher.cheap" || b.Model != "" || b.Effort != "" {
+		t.Fatalf("follow-up model: %+v", b)
+	}
+	// An unknown launcher creates no task that cannot run.
+	if _, err := s.runTool(ctx, "server", "main", "schedule_routine",
+		json.RawMessage(`{"title":"坏的","prompt":"看看","time":"10:00","launcher":"no-such-launcher"}`)); err == nil {
+		t.Fatal("an unknown launcher was accepted")
+	}
+	if _, ok := func() (Task, bool) {
+		sc := s.loadSchedule(ctx)
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+		for _, t := range sc.tasks {
+			if t.Title == "坏的" {
+				return t, true
+			}
+		}
+		return Task{}, false
+	}(); ok {
+		t.Fatal("a routine that could not take its launcher was left behind")
+	}
+	// Editing an existing routine checks the model before saving the rest of the change.
+	if _, err := s.runTool(ctx, "server", "main", "schedule_routine",
+		json.RawMessage(`{"id":"`+rt.ID+`","time":"10:30","launcher":"no-such-launcher"}`)); err == nil {
+		t.Fatal("an unknown launcher was accepted on an existing routine")
+	}
+	if got := task("巡检"); got.Time != "09:00" {
+		t.Fatalf("the refused edit was partly saved: %+v", got)
+	}
+	// A follow-up that continues this conversation keeps its launcher; its own needs new_conversation.
+	if _, err := s.runTool(ctx, "server", "main", "schedule_followup",
+		json.RawMessage(`{"title":"跟进的","prompt":"看看","at":"30m","launcher":"cheap"}`)); err == nil {
+		t.Fatal("a model override for a follow-up into this conversation was accepted")
+	}
+	if _, ok := func() (Task, bool) {
+		sc := s.loadSchedule(ctx)
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+		for _, t := range sc.tasks {
+			if t.Title == "跟进的" {
+				return t, true
+			}
+		}
+		return Task{}, false
+	}(); ok {
+		t.Fatal("a refused follow-up was saved")
+	}
+	// The routine has its own model; Main chat still does not.
+	if b, _ := s.resolveModel(ctx, "assistant"); b != main {
+		t.Fatalf("Main chat changed: %+v", b)
+	}
+	// Deleting it clears that, so a later task that got the same id cannot inherit it.
+	tool("delete_routine", `{"id":"`+rt.ID+`"}`)
+	if r, err := s.modelRecord(ctx, "task."+rt.ID); err != nil || r.Binding != (ModelBinding{}) {
+		t.Fatalf("deleted task kept its model configuration: %+v %v", r, err)
 	}
 }
 

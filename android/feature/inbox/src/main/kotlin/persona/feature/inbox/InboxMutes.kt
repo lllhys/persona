@@ -72,70 +72,59 @@ fun mutedBy(records: List<InboxRecord>, record: InboxRecord, option: InboxMuteOp
         .map { it.item.id }.toSet() + record.item.id
 
 /**
- * The "Muted" list's state: every mute, newest first, and with several managers each one's (read and taken back with it
- * named). Unmute takes one off at once and puts it back on failure.
+ * The "Muted" list's state: the current assistant's mutes, newest first (each manager keeps its own, read and taken
+ * back with it named). Unmute takes one off at once and puts it back on failure.
  */
 @Stable
 class InboxMutesModel(private val repository: InboxRepository) {
     var mutes by mutableStateOf<List<InboxMute>?>(null); private set
-    /** Several managers: each one's mutes, or why they couldn't be read, the default first; null with one. */
-    var shares by mutableStateOf<List<ManagerListShare<InboxMute>>?>(null); private set
 
-    /** Nothing to show: no mutes, and no manager whose couldn't be read. */
-    val isEmpty: Boolean get() = shares?.none { it.shown } ?: (mutes?.isEmpty() == true)
+    /** Nothing to show: no mutes. */
+    val isEmpty: Boolean get() = mutes?.isEmpty() == true
 
     private var reads = 0
+    private var shownOf: String? = null
 
-    /** Reads the list (only the newest read lands); throws when one manager's (or the one) couldn't be read at all. */
-    suspend fun load(roster: ManagerRoster? = null) {
+    /** Reads [manager]'s list (null: one manager, none named); only the newest read lands. Throws when it couldn't be read. */
+    suspend fun load(manager: String? = null) {
         val read = ++reads
-        if (roster != null && roster.isMulti) {
-            val each = readEach(roster) { id -> repository.inboxMutes(id).map { it.copy(manager = id) } }
-            if (read != reads) return
-            shares = each
-            mutes = each.flatMap { it.group.items }.newestFirst()
-            return
-        }
-        val list = try { repository.inboxMutes() }
+        // Another assistant's mutes never stay under this one's name.
+        if (manager != shownOf) { mutes = null; shownOf = manager }
+        val list = try { repository.inboxMutes(manager) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { if (read != reads) return; throw e }
         if (read != reads) return
-        mutes = list
-        shares = null
+        mutes = if (manager == null) list else list.map { it.copy(manager = manager) }
     }
 
     /** Takes [m] back (on its manager) at once; throws what the hub said, with the row back. */
     suspend fun unmute(m: InboxMute) {
         val same = { x: InboxMute -> x.id == m.id && x.manager == m.manager }
         mutes = mutes?.filterNot(same)
-        shares = shares?.map { it.withItems { list -> list.filterNot(same) } }
         try {
             repository.unmute(m.id, m.manager)
             // A reload read before the unmute reached the hub may have brought it back.
             mutes = mutes?.filterNot(same)
-            shares = shares?.map { it.withItems { list -> list.filterNot(same) } }
         }
         catch (e: Exception) {
             // Put back only this one: another unmute that went through meanwhile stays gone.
-            fun back(list: List<InboxMute>) = (list.filterNot(same) + m).newestFirst()
-            mutes = mutes?.let(::back)
-            shares = shares?.map { if (it.group.id == m.manager) it.withItems(::back) else it }
+            mutes = mutes?.let { list -> (list.filterNot(same) + m).newestFirst() }
             throw e
         }
     }
 }
 
 /**
- * "Muted" (the inbox's ⋯ menu): the repositories, chats and senders muted from an item's menu, in every source, newest
- * first; with several managers, under each one's name. A tap takes one back; nothing it covered comes back, only what
- * comes in later (iOS `InboxMutesView`).
+ * "Muted" (the inbox's ⋯ menu): the repositories, chats and senders the current assistant has muted from an item's
+ * menu, in every source, newest first. A tap takes one back; nothing it covered comes back, only what comes in later
+ * (iOS `InboxMutesView`).
  */
 @Composable
 internal fun InboxMutesSheet(repository: InboxRepository, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val feedback = LocalAppFeedback.current
     val res = LocalResources.current
-    val roster = LocalManagerRoster.current
+    val owner = currentAssistant().listOwner()
     val model = remember(repository) { InboxMutesModel(repository) }
     var failure by remember { mutableStateOf<String?>(null) }
     fun unmute(m: InboxMute) {
@@ -148,15 +137,17 @@ internal fun InboxMutesSheet(repository: InboxRepository, onDismiss: () -> Unit)
     fun load() {
         scope.launch {
             failure = null
-            try { model.load(roster) }
+            try { model.load(owner.id) }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (model.mutes == null) failure = res.getString(R.string.inbox_mutes_failed) else feedback?.failure(e) }
+            catch (e: Exception) {
+                if (model.mutes == null) failure = res.getString(if (owner.offline) R.string.inbox_mutes_offline else R.string.inbox_mutes_failed)
+                else feedback?.failure(e)
+            }
         }
     }
-    LaunchedEffect(repository, roster.readKey()) { load() } // a change of the managers reads it again
+    LaunchedEffect(repository, owner) { load() } // another assistant, or this one back online, reads it again
     JSheet(onDismiss, title = stringResource(R.string.inbox_mutes_title), scrollable = true) {
         val list = model.mutes
-        val shares = model.shares
         @Composable fun mute(m: InboxMute) =
             JRow(m.name, subtitle = listOf(m.sourceName ?: m.source, stringResource(m.tagName)).filter { it.isNotBlank() }.joinToString(" · "),
                 leadingIcon = PhIcons.Prohibit, subtitleLines = 1,
@@ -165,7 +156,6 @@ internal fun InboxMutesSheet(repository: InboxRepository, onDismiss: () -> Unit)
             failure != null -> JNotice(failure.orEmpty(), status = Status.NeedsYou, actionLabel = stringResource(R.string.inbox_retry), onAction = ::load)
             list == null -> JLoading()
             model.isEmpty -> JEmptyState(stringResource(R.string.inbox_mutes_empty_title), stringResource(R.string.inbox_mutes_empty_text), icon = PhIcons.Prohibit)
-            shares != null -> ManagerListShares(shares, R.string.inbox_mutes_offline, said = { stringResource(R.string.inbox_mutes_failed) }) { mute(it) }
             else -> JGroup(rows = list.map { m -> { mute(m) } })
         }
     }

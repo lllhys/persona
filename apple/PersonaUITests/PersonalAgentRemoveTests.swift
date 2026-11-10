@@ -1,7 +1,8 @@
 import XCTest
 
 /// Remove from List on the personal agents page (#138): a row's long-press menu takes it out (no swipe actions), the toast's Undo
-/// puts it back, and the folded Removed (N) section at the end brings one back with Restore. Against
+/// puts it back, and the folded Removed (N) section at the end brings one back with Restore. A failing source's notice shows
+/// above the Agents still listed (#3216). Against
 /// scripts/mock/mock_hub.py with MOCK_PERSONAL_AGENTS=1 (TEST_RUNNER_PERSONA_PERSONAL_HUB); screenshots in PERSONA_SHOTS.
 final class PersonalAgentRemoveTests: XCTestCase {
     private var app: XCUIApplication!
@@ -31,12 +32,12 @@ final class PersonalAgentRemoveTests: XCTestCase {
         try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name)\(style).png"))
     }
 
-    /// The personal agents page with every conversation listed (the mock forgets what earlier runs removed).
-    @MainActor private func open() throws {
+    /// The personal agents page in the mock's `state`, every conversation listed (the mock forgets what earlier runs removed).
+    @MainActor private func open(state: String = "configured") throws {
         guard let hub = ProcessInfo.processInfo.environment["PERSONA_PERSONAL_HUB"] else {
             throw XCTSkip("needs scripts/mock/mock_hub.py with MOCK_PERSONAL_AGENTS=1 (PERSONA_PERSONAL_HUB)")
         }
-        _ = try Data(contentsOf: URL(string: hub + "/mock/personal-agents?reset=1&state=configured")!)
+        _ = try Data(contentsOf: URL(string: hub + "/mock/personal-agents?reset=1&state=" + state)!)
         app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-tab", "dev", "-dev.openChat", ""]
@@ -45,6 +46,48 @@ final class PersonalAgentRemoveTests: XCTestCase {
         XCTAssertTrue(personal.waitForExistence(timeout: 30), app.debugDescription)
         personal.tap()
         XCTAssertTrue(row("代码评审").waitForExistence(timeout: 15), app.debugDescription)
+    }
+
+    /// A failing source's notice shows above the Agents still listed (#3216), and neither with every source working nor on an
+    /// empty list, which shows the source's hint on its own (the entry only shows with Agents, so the list empties while open).
+    @MainActor func testSourceNoticeOnlyAboveListedAgents() throws {
+        let notice = { self.app.descendants(matching: .any).matching(identifier: "personalAgents.sourceNotice").firstMatch }
+        try open(state: "partial")
+        XCTAssertTrue(notice().waitForExistence(timeout: 10), app.debugDescription)
+        shot("source-notice")
+        app.terminate()
+        try open(state: "partial_setup")
+        XCTAssertTrue(notice().waitForExistence(timeout: 10), "a source that isn't set up gets the notice too")
+        shot("source-notice-setup")
+        app.terminate()
+        try open()
+        XCTAssertFalse(notice().waitForExistence(timeout: 3), "no notice when every source works")
+        shot("all-healthy")
+        let hub = ProcessInfo.processInfo.environment["PERSONA_PERSONAL_HUB"]!
+        _ = try Data(contentsOf: URL(string: hub + "/mock/personal-agents?state=no_accounts")!)
+        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@",
+                                                        "No personal agent account", "还没有连接个人 Agent 账号")).firstMatch
+        XCTAssertTrue(hint.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertFalse(notice().exists, "an empty list shows the hint on its own")
+        shot("empty-hint")
+    }
+
+    @MainActor func testFailedPinSaveReportsAndRollsBack() throws {
+        try open()
+        let hub = ProcessInfo.processInfo.environment["PERSONA_PERSONAL_HUB"]!
+        _ = try Data(contentsOf: URL(string: hub + "/mock/personal-agents?prefs_fail=500")!)
+        let pin = app.buttons.matching(label("Pin", "置顶")).firstMatch
+        row("代码评审").press(forDuration: 1)
+        XCTAssertTrue(pin.waitForExistence(timeout: 5), app.debugDescription)
+        pin.tap()
+
+        let toast = app.descendants(matching: .any).matching(identifier: "toast").firstMatch
+        XCTAssertTrue(toast.waitForExistence(timeout: 5), "a refused preference save must be visible")
+        XCTAssertTrue(toast.label.contains("Couldn't save:") || toast.label.contains("没保存："), toast.label)
+        shot("prefs-save-failed")
+
+        row("代码评审").press(forDuration: 1)
+        XCTAssertTrue(pin.waitForExistence(timeout: 5), "the refused pin was rolled back, so the menu offers Pin again")
     }
 
     @MainActor func testRemoveAndUndoBringsItBack() throws {

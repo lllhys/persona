@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/devicewire"
@@ -126,6 +127,11 @@ func (m *Machine) configureNode(ctx context.Context, peer *rpc.Peer, hub *device
 			}
 		}
 	}
+	// A reconnect to an older hub must clear the previous hub's capabilities,
+	// including when the manager kept this node connection alive across the reconnect.
+	if _, ok := params["hub_features"]; !ok {
+		params["hub_features"] = []string{}
+	}
 	_ = peer.Call(ctx, "node.configure", params, nil)
 	var calls []devicewire.NodeCall
 	if hub != nil {
@@ -139,7 +145,14 @@ func (m *Machine) configureNode(ctx context.Context, peer *rpc.Peer, hub *device
 		if len(p) == 0 {
 			p = json.RawMessage(`{}`)
 		}
-		if err := peer.Call(ctx, c.Method, p, nil); err != nil {
+		err := peer.Call(ctx, c.Method, p, nil)
+		if f := c.Fallback; err != nil && f != nil && strings.Contains(err.Error(), "unknown method") {
+			if len(f.Params) == 0 {
+				f.Params = json.RawMessage(`{}`)
+			}
+			err = peer.Call(ctx, f.Method, f.Params, nil)
+		}
+		if err != nil {
 			m.d.logf("[%s] %s: %v", m.cfg.ID, c.Method, err)
 		}
 	}

@@ -29,6 +29,40 @@ class SessionItemsCacheTest {
     }
     @After fun close() = database.close()
 
+    @Test fun crossTurnAgentReportsKeepTheirLaunchAndEveryReportAcrossRestoration() = runBlocking {
+        val cache = SessionItemsCache(database, scope)
+        val session = SessionKey("computer", "parent")
+        val use = Item("launch", 2, role = "assistant", kind = "tool_use", toolUseId = "toolu_launch", toolName = "Agent")
+        fun report(seq: Int, status: String) = Item("report$seq", seq, role = "user", kind = "tool_result",
+            toolUseId = "toolu_launch", text = "Report $seq", fullSize = 8192,
+            task = persona.core.contracts.TaskNote(kind = "agent", status = status, toolUseId = "toolu_launch", taskId = "agent-a"))
+        val items = listOf(Item("u1", 1, role = "user", kind = "text", text = "Check tests"), use, report(3, "running"),
+            Item("u2", 4, role = "user", kind = "text", text = "Check styles"),
+            Item("u3", 5, role = "user", kind = "text", text = "Continue"), report(6, "running"), report(7, "completed"))
+        cache.save(session, items)
+        val restored = SessionItemsCache(database, scope).load(session)
+        assertEquals(items, restored.items)
+        val lines = persona.core.domain.lines.chatLines(restored.items.map { it.lineItem() })
+        val call = lines.lines.filterIsInstance<persona.core.domain.lines.ChatLine.Work>().flatMap { it.steps }
+            .filterIsInstance<persona.core.domain.lines.WorkItem.Tool>().single().call
+        assertEquals(listOf("report3", "report6", "report7"), call.results.map { it.id })
+        assertEquals(false, call.running)
+        assertEquals(8192, call.results.first().item.fullSize)
+    }
+
+    @Test fun newlyRetainedReportsKeepTheirEarlierLaunchesRecursively() = runBlocking {
+        val cache = SessionItemsCache(database, scope)
+        val session = SessionKey("computer", "parent")
+        fun user(seq: Int) = Item("u$seq", seq, role = "user", kind = "text", text = "Continue")
+        fun use(seq: Int, call: String) = Item("use-$call", seq, kind = "tool_use", toolUseId = call, toolName = "Agent")
+        fun report(seq: Int, call: String) = Item("report-$call", seq, kind = "tool_result", toolUseId = call, text = "Report",
+            task = persona.core.contracts.TaskNote(kind = "agent", status = "running", toolUseId = call))
+        val items = listOf(user(1), use(2, "earlier"), user(3), use(4, "later"), report(5, "earlier"),
+            user(6), user(7), report(8, "later"))
+        cache.save(session, items)
+        assertEquals(items, SessionItemsCache(database, scope).load(session).items)
+    }
+
     @Test fun ledgerAsksForTheFullScanOnlyWhenUnknownOrOverBudget() {
         val a = SessionKey("m", "a"); val b = SessionKey("m", "b"); val c = SessionKey("m", "c")
         // (session, bytes after its save) -> (full scan, total); budget 30, seeded with a = 10, b = 10.

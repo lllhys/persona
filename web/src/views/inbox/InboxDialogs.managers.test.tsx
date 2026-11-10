@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // "Hand to AI" with several managers (docs/assistant/managers.md "Clients"): the item goes to its manager's main
 // conversation by default (#1194), handed off through the item's manager so that conversation may write back to it, or
-// to a new conversation with that manager, and the conversation's next requests go there too; an item stamped with the
-// default (a hub with one manager stamps every item so) sends no header at all.
+// to a new conversation with that manager, and the conversation's next requests go there too; the current assistant
+// stays as it was, the conversation opening as itself on its own computer. An item stamped with the default (a hub with
+// one manager stamps every item so) sends no header at all.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ vi.mock("../../ui/atoms", async (orig) => ({ ...(await orig<typeof import("../..
 
 import { reloadInbox, resetInboxForTests, type InboxItem } from "../../lib/inbox";
 import { chooseManager, chosenManager, managerHeaderFor, resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
+import { adoptedConversation } from "../../lib/outbox";
 import { navigate } from "../../lib/router";
 import { HandOffDialog } from "./InboxDialogs";
 import { t } from "../../i18n";
@@ -118,22 +120,25 @@ describe("Hand to AI: Persona's main conversation", () => {
     expect(chosenManager()).toBeNull();
   });
 
-  it("hands another manager's item to that manager and shows its page", async () => {
+  it("hands another manager's item to that manager and opens its conversation, the current assistant unchanged", async () => {
     act(() => root.render(<HandOffDialog item={item("m-1")} onClose={() => {}} />));
     await send(handedOff);
     expect(handOffs()[0].header).toBe("m-1");
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "main-m1" }));
-    expect(chosenManager()).toBe("m-1");
+    expect(chosenManager()).toBeNull();
     expect(managerHeaderFor("/assistant/conversations/main-m1/feed")).toBe("m-1");
+    // its page finds it on its own computer
+    expect(adoptedConversation("main-m1")).toEqual({ machine: "mac", manager: "m-1" });
   });
 
-  it("hands the default's item to the default's manager while the page shows another", async () => {
+  it("hands the default's item to the default's manager while another assistant is current, which stays", async () => {
     chooseManager("m-1");
     act(() => root.render(<HandOffDialog item={item("assistant")} onClose={() => {}} />));
     await send(handedOff);
     expect(handOffs()[0].header).toBeNull();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "main-a" }));
-    expect(chosenManager()).toBeNull();
+    expect(chosenManager()).toBe("m-1");
+    expect(adoptedConversation("main-a")).toEqual({ machine: "mac", manager: "assistant" });
   });
 
   it("marks the item done once handed off when the user asks", async () => {
@@ -196,7 +201,7 @@ describe("Hand to AI: an older hub or manager", () => {
     expect(calls.find((c) => c.url === "/api/v1/assistant")).toMatchObject({ header: "m-1" });
     expect(calls.some((c) => c.url.endsWith("/assistant/conversations"))).toBe(false);
     expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "main-m1" });
-    expect(chosenManager()).toBe("m-1");
+    expect(chosenManager()).toBeNull();
   });
 
   it("marks the item done only once the message got there, when asked to", async () => {
@@ -268,14 +273,26 @@ describe("Hand to AI: a new conversation", () => {
     expect(handOffs()).toHaveLength(0);
   });
 
-  it("starts with the item's manager, shows its page and sends the conversation's requests there", async () => {
+  it("starts with the item's manager and sends the conversation's requests there, the current assistant unchanged", async () => {
     act(() => root.render(<HandOffDialog item={item("m-1")} onClose={() => {}} />));
     pick("Persona（新对话）");
     await send((c) => c.url.endsWith("/assistant/conversations"));
     expect(calls[0]).toMatchObject({ url: "/api/v1/inbox/lark:f1:1", header: "m-1" });
     expect(started().header).toBe("m-1");
-    expect(chosenManager()).toBe("m-1");
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "s-new" }));
+    expect(chosenManager()).toBeNull();
     expect(managerHeaderFor("/assistant/conversations/s-new/feed")).toBe("m-1");
+    expect(adoptedConversation("s-new")).toEqual({ machine: "mac", manager: "m-1" });
+  });
+
+  it("starts another manager's while a third is current, which stays", async () => {
+    chooseManager("m-2");
+    act(() => root.render(<HandOffDialog item={item("m-1")} onClose={() => {}} />));
+    pick("Persona（新对话）");
+    await send((c) => c.url.endsWith("/assistant/conversations"));
+    expect(started().header).toBe("m-1");
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "s-new" }));
+    expect(chosenManager()).toBe("m-2");
   });
 
   it("marks the item done by default", async () => {

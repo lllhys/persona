@@ -38,12 +38,15 @@ func (s *Service) supervises(ctx context.Context, id string) bool {
 	return s.isMain(ctx, id) || s.isLeader(ctx, id)
 }
 
-// digestTo is the conversation signal g goes to, with cfg the settings in effect: its task's supervisor when that is a
-// leader, unless the main conversation handles it (a leader's needs_user, a start to remedy, a task waiting for the
+// digestTo is the conversation signal g goes to, with cfg the settings in effect: the one it names (To), else its task's
+// supervisor when that is a leader, unless the main conversation handles it (a leader's needs_user, a start to remedy, a task waiting for the
 // user); else the main conversation.
 func (s *Service) digestTo(cfg Settings, g superviseSignal) string {
+	if g.To != "" {
+		return g.To
+	}
 	switch g.Kind {
-	case sigEscalated, sigFailed, sigStarted:
+	case sigEscalated, sigFailed, sigStarted, sigLeaderStuck:
 		return cfg.Main
 	}
 	t, ok := s.todoNow(g.Todo)
@@ -60,6 +63,11 @@ func (s *Service) digestTo(cfg Settings, g superviseSignal) string {
 // escalatedIn: one of the entries is a leader's needs_user.
 func escalatedIn(list []prompts.SuperviseEntry) bool {
 	return slices.ContainsFunc(list, func(e prompts.SuperviseEntry) bool { return e.Kind == sigEscalated })
+}
+
+// askedIn: one of the entries is a card that came to the supervisor before the user (ask_route.go).
+func askedIn(list []prompts.SuperviseEntry) bool {
+	return slices.ContainsFunc(list, func(e prompts.SuperviseEntry) bool { return e.Kind == sigAsk })
 }
 
 // escalateToMain tells the main conversation that leader task t needs the user (task_review needs_user from its leader):
@@ -121,8 +129,8 @@ func (s *Service) setLeaders(ctx context.Context, v json.RawMessage) (*ownChange
 		}
 		list = append(list, id)
 	}
-	if len(list) > 20 {
-		return nil, errors.New("at most 20 leader conversations")
+	if len(list) > leadersMost {
+		return nil, fmt.Errorf("at most %d leader conversations", leadersMost)
 	}
 	before := cfg.Leaders
 	if slices.Equal(list, before) || len(list) == 0 && len(before) == 0 { // nil and [] are both none

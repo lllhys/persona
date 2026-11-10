@@ -1,0 +1,618 @@
+//go:build linux
+
+package sandbox
+
+import (
+	"bufio"
+	"bytes"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestLinuxAgentSandboxForReal runs the Darwin must-fail / must-work contract under real bubblewrap 0.8.x. The data
+// directory and its explicit alias are masked views; the control uses the same user/mount namespace with no views, so
+// every refusal is caused by the profile rather than by an absent tool or an unwritable fixture.
+func TestLinuxAgentSandboxForReal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	sup := AgentProbe()
+	if st := AgentSupport(sup); st.State != AgentActive {
+		t.Skip("no Linux agent sandbox here: " + st.Why)
+	}
+	t.Logf("agent probe: %+v", sup)
+	f := newAgentFixture(t)
+	D, alias := f.dir, f.alias
+	self, _ := os.Executable()
+	self = realPath(self)
+	bin := filepath.Join(D, "bin", "personad")
+	if b, err := os.ReadFile(self); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(bin, b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(f.home, "link-to-key")
+	if err := os.Symlink(filepath.Join(D, "secret.key"), elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	for rel, body := range map[string]string{
+		"hub.json.d/inside":            "{}", // a whole directory whose top-level name starts with a DataSecrets entry
+		"extensions/staging/old/token": "t",
+		"node-plugins/old/token":       "t",
+		"notes":                        "home",
+	} {
+		path := filepath.Join(D, rel)
+		if rel == "notes" {
+			path = filepath.Join(f.home, rel)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(f.home, "public-dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.home, "public-dir", "note"), []byte("public-dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.home, "public-dir", "old"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.home, "public-dir", "old", "token"), []byte("t"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{
+		"plugins":                               "../public-dir",
+		"innocent-key":                          "secret.key",
+		"innocent-settings":                     "launcher-settings/other-claude-settings.json",
+		"our-settings-link":                     "launcher-settings/claude-ours.json",
+		"public-link":                           "../notes",
+		"public-dir-link":                       "../public-dir",
+		filepath.Join("extensions", "innocent"): "../managers",
+		filepath.Join("launcher-settings", "link-settings.json"): "other-claude-settings.json",
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(D, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sock := func(path string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				conn.Close()
+			}
+		}()
+	}
+	nodeSock := filepath.Join(D, "node.sock")
+	proxySock := filepath.Join(D, "extensions", "run", "notes", "p.sock")
+	edgeSock := filepath.Join(D, "run", "e.sock")
+	sock(nodeSock)
+	sock(proxySock)
+	sock(edgeSock)
+
+	work := filepath.Join(f.home, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := f.plan()
+	plan.Cwd = work
+	plan.LauncherSettings = append(plan.LauncherSettings, filepath.Join(D, "launcher-settings", "link-settings.json"))
+	prefix, err := LinuxAgent(sup.Bwrap, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("bwrap profile: %s", strings.Join(prefix, " "))
+	control := []string{sup.Bwrap, "--die-with-parent", "--unshare-user", "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--chdir", work}
+	run := func(prefix []string, script string) (string, error) {
+		args := append([]string(nil), prefix[1:]...)
+		args = append(args, "--", "/bin/sh", "-c", script)
+		cmd := exec.Command(prefix[0], args...)
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "HOME="+f.home)
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	q := shellQuote
+	mustFail := map[string]string{
+		"cat secret.key":                     "cat " + q(D+"/secret.key"),
+		"cat secret.key through .state-link": "cat " + q(alias+"/secret.key"),
+		"cat secret.key through a link":      "cat " + q(elsewhere),
+		"cat secret through a view link":     "cat " + q(D+"/innocent-key"),
+		"cat managers through a nested link": "cat " + q(D+"/extensions/innocent/m1/manager.json"),
+		"cat settings through a view link":   "cat " + q(D+"/innocent-settings"),
+		"cat an allowed settings symlink":    "cat " + q(D+"/launcher-settings/link-settings.json"),
+		"cat secret.key.bak":                 "cat " + q(D+"/secret.key.bak"),
+		"cat handles.key":                    "cat " + q(D+"/handles.key"),
+		"cat launch.key":                     "cat " + q(D+"/launch.key"),
+		"cat hub.json":                       "cat " + q(D+"/hub.json"),
+		"cat link.json":                      "cat " + q(D+"/link.json"),
+		"cat hub.json.bak":                   "cat " + q(D+"/hub.json.bak"),
+		"cat .hub.json.12345":                "cat " + q(D+"/.hub.json.12345"),
+		"cat hub.json.tmp-12345":             "cat " + q(D+"/hub.json.tmp-12345"),
+		"cat hub.json.d/inside":              "cat " + q(D+"/hub.json.d/inside"),
+		"cat link-tls/id.key":                "cat " + q(D+"/link-tls/id.key"),
+		"cat tls/hub.key":                    "cat " + q(D+"/tls/hub.key"),
+		"cat tls/.tls-1":                     "cat " + q(D+"/tls/.tls-1"),
+		"cat managers/m1/manager.json":       "cat " + q(D+"/managers/m1/manager.json"),
+		"cat extensions/data":                "cat " + q(D+"/extensions/data/notes/token"),
+		"cat extensions/staging":             "cat " + q(D+"/extensions/staging/old/token"),
+		"cat plugins":                        "cat " + q(D+"/plugins/old/token"),
+		"cat public through a plugins link":  "cat " + q(D+"/plugins/note"),
+		"cat node-plugins":                   "cat " + q(D+"/node-plugins/old/token"),
+		"cat relay-tunnel.token":             "cat " + q(D+"/relay-tunnel.token"),
+		"cat docker/db-password":             "cat " + q(D+"/docker/db-password"),
+		"cat edge.token":                     "cat " + q(D+"/edge.token"),
+		"cat edge.secret":                    "cat " + q(D+"/edge.secret"),
+		"cat edge.password":                  "cat " + q(D+"/edge.password"),
+		"cat another launcher's settings":    "cat " + q(f.theirs),
+		"write our launcher settings":        "echo x >> " + q(f.ours),
+		"cp secret.key":                      "cp " + q(D+"/secret.key") + " " + q(work+"/k"),
+		"create a top-level secret backup":   "echo new > " + q(D+"/hub.json.new") + " && cat " + q(D+"/hub.json.new"),
+		"mv the data directory":              "mv " + q(D) + " " + q(D+"2") + " && mv " + q(D+"2") + " " + q(D),
+		"mv the folder above it":             "mv " + q(f.home) + " " + q(f.home+"2") + " && mv " + q(f.home+"2") + " " + q(f.home),
+		"rm the switch":                      "rm " + q(D+"/"+AgentOnFile) + " && touch " + q(D+"/"+AgentOnFile),
+		"dial an extension's proxy":          q(self) + " agent-dial " + q(proxySock),
+		"dial the hub's edge socket":         q(self) + " agent-dial " + q(edgeSock),
+		"mv extensions/ and read its data":   "mv " + q(D+"/extensions") + " " + q(D+"/ext2") + " && cat " + q(D+"/ext2/data/notes/token") + " && mv " + q(D+"/ext2") + " " + q(D+"/extensions"),
+	}
+	if _, err := exec.LookPath("python3"); err == nil {
+		mustFail["python reads secret.key"] = "python3 -c " + q("open('"+D+"/secret.key').read()")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	t.Cleanup(server.Close)
+	mustWork := map[string]string{
+		"cat the switch":            "cat " + q(D+"/"+AgentOnFile),
+		"cat mcp.json":              "cat " + q(D+"/mcp.json"),
+		"cat through .state-link":   "cat " + q(alias+"/claude-settings.json"),
+		"cat our launcher settings": "cat " + q(f.ours),
+		"cat our settings via link": "cat " + q(D+"/our-settings-link"),
+		"cat a public file symlink": "cat " + q(D+"/public-link"),
+		"cat a public dir symlink":  "cat " + q(D+"/public-dir-link/note"),
+		"cat data/talk.key":         "cat " + q(D+"/data/talk.key"),
+		"cat data/proj/link.json":   "cat " + q(D+"/data/proj/link.json"),
+		"cat data/proj/edge.token":  "cat " + q(D+"/data/proj/edge.token"),
+		"write assistant/":          "echo x > " + q(D+"/assistant/x") + " && cat " + q(D+"/assistant/x"),
+		"write knowledge base":      "echo x > " + q(D+"/data/new") + " && cat " + q(D+"/data/new"),
+		"read and write the home":   "cat " + q(f.home+"/notes") + " && echo x > " + q(f.home+"/x") + " && mkdir -p " + q(f.home+"/d") + " && mv " + q(f.home+"/x") + " " + q(f.home+"/y"),
+		"write the working dir":     "echo cwd > cwd-file && cat cwd-file",
+		"dial node.sock":            q(self) + " agent-dial " + q(nodeSock),
+		"personad --version":        q(self) + " --version",
+		"<D>/bin/personad":          q(bin) + " --version",
+		"git":                       "git init -q . && git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m x && git log --oneline",
+	}
+	if _, err := exec.LookPath("curl"); err == nil {
+		mustWork["network"] = "curl --noproxy '*' -sS -o /dev/null -m 5 " + q(server.URL)
+	} else {
+		t.Log("skip network: curl is not installed")
+	}
+	if _, err := exec.LookPath("ssh"); err == nil {
+		mustWork["ssh"] = "ssh -V"
+	}
+	if _, err := exec.LookPath("cc"); err == nil {
+		mustWork["compiler"] = "printf 'int main(void){return 0;}\\n' > a.c && cc a.c -o a.out && ./a.out"
+	}
+
+	t.Logf("running %d must-fail and %d must-work commands, then the unmasked controls", len(mustFail), len(mustWork))
+	t.Log("documented gap: replacing the data-directory symlink is checked separately below, not counted as a refusal")
+	for name, script := range mustFail {
+		if out, err := run(prefix, script); err == nil {
+			t.Errorf("%s: worked in the sandbox: %s", name, out)
+		}
+	}
+	for name, script := range mustWork {
+		if out, err := run(prefix, script); err != nil {
+			t.Errorf("%s: failed in the sandbox: %v %s", name, err, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.home, "y")); err != nil {
+		t.Errorf("home write did not reach the host: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(D, "data", "new")); err != nil {
+		t.Errorf("knowledge-base write did not reach the host: %v", err)
+	}
+
+	// Control: every refusal above must succeed with the same namespaces and no data-directory views. The destructive
+	// move/remove commands restore their fixture as part of the command, exactly as in the Darwin test.
+	for name, script := range mustFail {
+		if out, err := run(control, script); err != nil {
+			t.Errorf("control %s: failed with no views: %v %s", name, err, out)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(work, "k")); err != nil || string(b) != "k" {
+		t.Errorf("control cp: %q, %v", b, err)
+	}
+	// The control created hub.json.new only after the profile was generated. It is still absent from a fresh mount of
+	// that profile: coverage comes from the name rules and the read-only view root, not a one-time list of old files.
+	if out, err := run(prefix, "cat "+q(D+"/hub.json.new")); err == nil {
+		t.Errorf("secret created after profile generation was readable: %s", out)
+	}
+
+	// WrapAgent's real preflight leaves bwrap as the direct supervisor of the agent in the same host pid namespace:
+	// the node-started pid remains the agent's PPID, and no hidden pid translation or extra intermediary is involved.
+	wrapped, env, st := WrapAgent(plan, []string{"/bin/sh", "-c", `printf "%s %s" "$$" "$PPID"`}, withoutKey(os.Environ(), AgentEnv))
+	if st.State != AgentActive {
+		t.Fatalf("WrapAgent did not wrap: %+v", st)
+	}
+	cmd := exec.Command(wrapped[0], wrapped[1:]...)
+	cmd.Dir = work
+	cmd.Env = env
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("pid command: %v: %s", err, output.String())
+	}
+	fields := strings.Fields(output.String())
+	if len(fields) != 2 {
+		t.Fatalf("pid command returned %q", output.String())
+	}
+	agentPid, parseErr := strconv.Atoi(fields[0])
+	if parseErr != nil || agentPid <= 0 || fields[1] != strconv.Itoa(pid) {
+		t.Errorf("agent is not a direct host-pid-namespace child of node-started bwrap pid %d: %q", pid, output.String())
+	}
+
+	// The remaining alias-replacement gap is real, but replacing the link must not expose the secret through either
+	// name. Recreating the same relative link leaves the host fixture equivalent to its original state.
+	replaceAlias := "rm " + q(alias) + " && ln -s .persona " + q(alias) + " && printf 'alias=replaced\\n'"
+	out, err := run(prefix, replaceAlias+"; cat "+q(alias+"/secret.key"))
+	if err == nil || !strings.Contains(out, "alias=replaced") {
+		t.Errorf("alias replacement was not exercised: %v %s", err, out)
+	}
+	if out, err := run(prefix, "cat "+q(D+"/secret.key")); err == nil {
+		t.Errorf("real data path exposed after alias replacement: %s", out)
+	}
+	if out, err := run(control, replaceAlias+"; cat "+q(alias+"/secret.key")); err != nil {
+		t.Errorf("control alias replacement: %v %s", err, out)
+	}
+
+	// Special read-only entries never follow a symlink to a different file. The regular switch was checked above;
+	// replace it only after all other cases and verify that its linked form is closed instead.
+	switchPath := filepath.Join(D, AgentOnFile)
+	if err := os.Remove(switchPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("mcp.json", switchPath); err != nil {
+		t.Fatal(err)
+	}
+	linkedPrefix, err := LinuxAgent(sup.Bwrap, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(linkedPrefix, "cat "+q(switchPath)); err == nil {
+		t.Errorf("a symlinked switch file was imported into the view: %s", out)
+	}
+	if out, err := run(control, "cat "+q(switchPath)); err != nil {
+		t.Errorf("control symlinked switch: %v %s", err, out)
+	}
+
+	// A symlink at a partially closed directory is closed as a whole: neither its public entries nor the entries that
+	// would have been closed in a real extensions/ directory are imported. Controls prove both targets are readable.
+	external := filepath.Join(f.home, "external-extensions")
+	if err := os.MkdirAll(filepath.Join(external, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for rel, body := range map[string]string{"public-note": "public", "data/token": "closed"} {
+		if err := os.WriteFile(filepath.Join(external, rel), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(filepath.Join(D, "extensions"), filepath.Join(f.home, "extensions-real")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../external-extensions", filepath.Join(D, "extensions")); err != nil {
+		t.Fatal(err)
+	}
+	extensionsPrefix, err := LinuxAgent(sup.Bwrap, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"public-note", "data/token"} {
+		path := filepath.Join(D, "extensions", rel)
+		if out, err := run(extensionsPrefix, "cat "+q(path)); err == nil {
+			t.Errorf("extensions directory symlink imported %s: %s", rel, out)
+		}
+		if out, err := run(control, "cat "+q(path)); err != nil {
+			t.Errorf("control extensions directory symlink %s: %v %s", rel, err, out)
+		}
+	}
+}
+
+// Linux has no probe/profile success cache: a missing bwrap can be installed, a removed bwrap cannot leave a stale
+// active result, and every distinct cwd is preflighted rather than adding a permanent full-profile key.
+func TestLinuxAgentPreflightAlwaysRuns(t *testing.T) {
+	f := newAgentFixture(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "bwrap")
+	count := filepath.Join(dir, "calls")
+	writeFake := func() {
+		script := "#!/bin/sh\nprintf 'call\\n' >> " + shellQuote(count) + "\nexit 0\n"
+		if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := func() int {
+		b, err := os.ReadFile(count)
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Count(b, []byte("\n"))
+	}
+	plan := f.plan()
+	plan.Probe = func() Support { return Support{OS: "linux", Bwrap: fake} }
+	argv := []string{"/bin/echo", "ok"}
+	if _, _, st := WrapAgent(plan, argv, nil); st.State != AgentUnavailable {
+		t.Fatalf("missing fake bwrap: %+v", st)
+	}
+	writeFake()
+	if _, _, st := WrapAgent(plan, argv, nil); st.State != AgentActive {
+		t.Fatalf("installed fake bwrap: %+v", st)
+	}
+	if err := os.Remove(fake); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, st := WrapAgent(plan, argv, nil); st.State != AgentUnavailable {
+		t.Fatalf("removed fake bwrap retained a stale success: %+v", st)
+	}
+	writeFake()
+	if _, _, st := WrapAgent(plan, argv, nil); st.State != AgentActive {
+		t.Fatalf("reinstalled fake bwrap: %+v", st)
+	}
+	if got := calls(); got != 2 {
+		t.Fatalf("successful preflights before cwd sweep: %d, want 2", got)
+	}
+	for i := 0; i < 120; i++ {
+		cwd := filepath.Join(f.home, "cwd-"+strconv.Itoa(i))
+		if err := os.Mkdir(cwd, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		plan.Cwd = cwd
+		if _, _, st := WrapAgent(plan, argv, nil); st.State != AgentActive {
+			t.Fatalf("cwd %d: %+v", i, st)
+		}
+	}
+	if got := calls(); got != 122 {
+		t.Fatalf("120 cwd changes were cached instead of preflighted: total calls %d, want 122", got)
+	}
+}
+
+// The first Linux slice intentionally has a static view. Once bwrap is ready, replacing node.sock on the host leaves
+// the sandbox connected to the old inode and a new top-level public file absent. A file created inside an already-bound
+// directory remains visible. This pins why a node restart requires restarting its sandboxed agents.
+func TestLinuxAgentSandboxSnapshotForReal(t *testing.T) {
+	sup := AgentProbe()
+	if st := AgentSupport(sup); st.State != AgentActive {
+		t.Skip("no Linux agent sandbox here: " + st.Why)
+	}
+	f := newAgentFixture(t)
+	work := filepath.Join(f.home, "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := f.plan()
+	plan.Cwd = work
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := realPath(exe)
+	nodeSock := filepath.Join(f.dir, "node-restart.sock")
+	publicFile := filepath.Join(f.dir, "public-after")
+	nestedFile := filepath.Join(f.dir, "data", "public-after")
+	listen := func(path, generation string) net.Listener {
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				_, _ = conn.Write([]byte(generation))
+				_ = conn.Close()
+			}
+		}()
+		return ln
+	}
+	_ = listen(nodeSock, "old")
+	prefix, err := LinuxAgent(sup.Bwrap, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	script := "set -e; " + shellQuote(self) + " agent-socket-read " + shellQuote(nodeSock) + "; printf '\\nready\\n'; " +
+		"IFS= read -r _; " + shellQuote(self) + " agent-socket-read " + shellQuote(nodeSock) + "; printf '\\n'; " +
+		"if [ -e " + shellQuote(publicFile) + " ]; then printf 'top=present\\n'; else printf 'top=missing\\n'; fi; " +
+		"if [ -e " + shellQuote(nestedFile) + " ]; then printf 'nested=present\\n'; else printf 'nested=missing\\n'; fi"
+	args := append([]string(nil), prefix[1:]...)
+	args = append(args, "--", "/bin/sh", "-c", script)
+	cmd := exec.Command(prefix[0], args...)
+	cmd.Dir = work
+	cmd.Env = os.Environ()
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := make(chan string, 8)
+	go func() {
+		defer close(lines)
+		reader := bufio.NewReader(stdout)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			lines <- line
+		}
+	}()
+	next := func(want string) string {
+		t.Helper()
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatalf("sandbox output ended before %q: %s", want, stderr.String())
+			}
+			got := strings.TrimSpace(line)
+			if got != want {
+				t.Fatalf("sandbox output %q, want %q: %s", got, want, stderr.String())
+			}
+			return got
+		case <-time.After(10 * time.Second):
+			t.Fatalf("waiting for %q: %s", want, stderr.String())
+		}
+		return ""
+	}
+	next("old")
+	next("ready")
+	retired := nodeSock + ".retired"
+	if err := os.Rename(nodeSock, retired); err != nil {
+		t.Fatal(err)
+	}
+	_ = listen(nodeSock, "new")
+	if err := os.WriteFile(publicFile, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nestedFile, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readAgentSocket(nodeSock); err != nil || got != "new" {
+		t.Fatalf("host replacement socket: %q, %v", got, err)
+	}
+	if _, err := stdin.Write([]byte("continue\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	next("old") // the file bind still names the old inode, not the host's new listener
+	next("top=missing")
+	next("nested=present")
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("snapshot shell: %v: %s", err, stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("snapshot shell did not exit")
+	}
+	t.Log("after host replacement: sandbox socket=old, top-level file=missing, file in bound data/=present; host socket=new")
+}
+
+// Verify two Linux-specific escape hypotheses on the real host: another same-UID process's /proc root and a nested
+// user/mount namespace attempting to umount the data-directory mask. Each has an unmasked control that really reads
+// the fixture secret, so a disabled tool or an invalid path cannot produce a false pass.
+func TestLinuxAgentSandboxNamespaceBoundariesForReal(t *testing.T) {
+	sup := AgentProbe()
+	if st := AgentSupport(sup); st.State != AgentActive {
+		t.Skip("no Linux agent sandbox here: " + st.Why)
+	}
+	if _, err := exec.LookPath("unshare"); err != nil {
+		t.Skip("unshare is not installed")
+	}
+	if _, err := exec.LookPath("umount"); err != nil {
+		t.Skip("umount is not installed")
+	}
+	f := newAgentFixture(t)
+	work := filepath.Join(f.home, "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := f.plan()
+	plan.Cwd = work
+	prefix, err := LinuxAgent(sup.Bwrap, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = work
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	bwrap := func(script string) (string, error) {
+		args := append([]string{prefix[0]}, prefix[1:]...)
+		args = append(args, "--", "/bin/sh", "-c", script)
+		return run(args...)
+	}
+
+	t.Run("proc_root", func(t *testing.T) {
+		procSecret := filepath.Join("/proc", strconv.Itoa(os.Getpid()), "root"+f.dir, "secret.key")
+		if out, err := run("/bin/cat", procSecret); err != nil {
+			t.Fatalf("host /proc-root control: %v %s", err, out)
+		}
+		if out, err := bwrap("cat " + shellQuote(procSecret)); err == nil {
+			t.Errorf("secret was readable through /proc/<pid>/root: %s", out)
+		} else {
+			t.Logf("/proc/<same-UID-pid>/root secret read refused: %s", out)
+		}
+	})
+
+	t.Run("nested_namespace", func(t *testing.T) {
+		if out, err := exec.Command("unshare", "-rm", "/bin/true").CombinedOutput(); err != nil {
+			t.Skipf("the host cannot create the nested control namespace: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		nestedScript := `printf 'nested-userns=ready\n'; if umount "$1"; then printf 'umount=success\n'; else printf 'umount=failed\n'; fi; if cat "$1/secret.key"; then printf '\nsecret=readable\n'; exit 0; else printf 'secret=closed\n'; exit 1; fi`
+		nestedArgs := []string{"unshare", "-rm", "/bin/sh", "-c", nestedScript, "probe", f.dir}
+		if out, err := run(nestedArgs...); err != nil || !strings.Contains(out, "secret=readable") {
+			t.Fatalf("nested unshare control: %v %s", err, out)
+		}
+		args := append([]string{prefix[0]}, prefix[1:]...)
+		args = append(args, "--", nestedArgs[0])
+		args = append(args, nestedArgs[1:]...)
+		out, err := run(args...)
+		if err == nil || strings.Contains(out, "secret=readable") {
+			t.Errorf("nested unshare/umount exposed the secret: %v %s", err, out)
+		}
+		if !strings.Contains(out, "nested-userns=ready") || !strings.Contains(out, "secret=closed") {
+			t.Fatalf("nested namespace did not exercise the masked path: %v %s", err, out)
+		}
+		t.Logf("nested unshare/umount left the secret closed: %s", out)
+	})
+}

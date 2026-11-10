@@ -30,10 +30,11 @@ func TestTunnelNeedsATarget(t *testing.T) {
 			"contributes":{"tunnels":[{"id":"office","name":"Office"}]}` + config + `}`
 	}
 	for name, tc := range map[string]struct{ config, want string }{
-		"no configuration":    {"", "needs target_host"},
-		"host not required":   {`,"configuration":{"type":"object","properties":{"target_host":{"type":"string"}}}`, "needs target_host"},
-		"host not a string":   {`,"configuration":{"type":"object","properties":{"target_host":{"type":"integer"}},"required":["target_host"]}`, "needs target_host"},
-		"port not an integer": {`,"configuration":{"type":"object","properties":{"target_host":{"type":"string"},"target_port":{"type":"string"}},"required":["target_host"]}`, "target_port must be an integer"},
+		"no configuration":        {"", "needs target_host"},
+		"host not required":       {`,"configuration":{"type":"object","properties":{"target_host":{"type":"string"}}}`, "needs target_host"},
+		"host not a string":       {`,"configuration":{"type":"object","properties":{"target_host":{"type":"integer"}},"required":["target_host"]}`, "needs target_host"},
+		"port not an integer":     {`,"configuration":{"type":"object","properties":{"target_host":{"type":"string"},"target_port":{"type":"string"}},"required":["target_host"]}`, "target_port must be an integer"},
+		"ssh port not an integer": {`,"configuration":{"type":"object","properties":{"target_host":{"type":"string"},"ssh_port":{"type":"string"}},"required":["target_host"]}`, "ssh_port must be an integer"},
 	} {
 		_, err := Parse([]byte(manifest(tc.config)))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {

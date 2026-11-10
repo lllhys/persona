@@ -100,6 +100,8 @@ func TestEveryEventTopicHasItsScopeSettled(t *testing.T) {
 		"kb.forgotten":    ScopeKBRead,
 		"todo.changed":    ScopeTodosRead,
 		"todo.decision":   ScopeTodosRead,
+		"leader.changed":  ScopeLeadersRead,
+		"leader.report":   ScopeLeadersRead,
 		"inbox.changed":   "",
 		"agent.needs_you": "",
 		"agent.finished":  "",

@@ -147,6 +147,8 @@
   "stale": "{machines} 未更新",
   "stale_mark": "未更新",
   "launchers_failed": "没有拿到供应商列表：{error}",
+  "devices": "电脑",
+  "machine_keys": "单独的 Key",
   "search_settings": "搜索设置",
   "search_in_page": "页面内",
   "search_no_results": "没有匹配的设置",

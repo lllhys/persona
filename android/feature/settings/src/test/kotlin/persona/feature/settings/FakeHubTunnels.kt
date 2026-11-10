@@ -55,4 +55,10 @@ internal class FakeHubTunnels(vararg hubs: HubTunnelInfo) : HubTunnelSettings {
         if (saveFails) error("disk full")
         hubs.update { list -> list.map { if (it.hubId == hubId) it.copy(proxy = route) else it } }
     }
+
+    override suspend fun saveAccess(hubId: String, access: persona.core.contracts.api.HubAccess?) {
+        calls += "saveAccess ${access?.clientId}"
+        if (saveFails) error("disk full")
+        hubs.update { list -> list.map { if (it.hubId == hubId) it.copy(access = access) else it } }
+    }
 }

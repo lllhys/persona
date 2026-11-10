@@ -47,8 +47,15 @@ final class OnboardingChecklistModel {
         }
     }
 
-    /// Steps left: computer / claude / model not done yet (trying a message does not count, 5.1).
+    /// Steps left: computer / claude / model that block the main conversation (trying a message does not count, 5.1).
     static func left(_ r: AssistantReadiness?) -> Int { r?.stepsLeft ?? 0 }
+
+    /// What Settings' row says under the count: the first step's own words from the hub (「{machine} is offline」), or
+    /// the general line when the hub sent none.
+    static func leftSummary(_ r: AssistantReadiness?) -> String {
+        if let title = r?.stepsToDo.first?.title, !title.isEmpty { return title }
+        return String(localized: "Connect a computer and a model so Persona can answer")
+    }
 
     /// Every row done: the checklist can close with Get started.
     static func allDone(_ r: AssistantReadiness?) -> Bool {
@@ -232,7 +239,7 @@ struct ChecklistSettingsRow: View {
                         ThemedIcon(Theme.Icon.todo).font(Theme.Font.heading).foregroundStyle(Theme.caution)
                         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                             Text("\(n) steps to go").font(Theme.Font.heading).foregroundStyle(Color.primary).lineLimit(1)
-                            Text("Connect a computer and a model so Persona can answer").font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                            Text(OnboardingChecklistModel.leftSummary(model.readiness.current)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 0)
                         ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong).foregroundStyle(.tertiary)

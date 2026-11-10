@@ -1077,7 +1077,7 @@ func TestSnapshotScheduleTellsMisses(t *testing.T) {
 	}
 	sc.mu.Unlock()
 
-	_, routines, routinesTotal, misses, total := h.snapshotSchedule(context.Background(), loc, now)
+	_, _, routines, routinesTotal, misses, total := h.snapshotSchedule(context.Background(), loc, now)
 	if len(routines) != 2 || routinesTotal != 2 || routines[0].Rule != "工作日 09:00" || routines[0].LastStatus != runOK ||
 		routines[1].LastStatus != runFailed || !strings.Contains(routines[1].LastWhy, "API Error: 503") {
 		t.Fatalf("routines: %+v (%d)", routines, routinesTotal)
@@ -1124,7 +1124,7 @@ func TestSnapshotScheduleLateRecordedRunAndTotals(t *testing.T) {
 	}
 	sc.mu.Unlock()
 
-	_, routines, routinesTotal, misses, total := h.snapshotSchedule(context.Background(), loc, now)
+	_, _, routines, routinesTotal, misses, total := h.snapshotSchedule(context.Background(), loc, now)
 	if len(routines) != 8 || routinesTotal != 10 {
 		t.Fatalf("daily tasks: %d shown of %d, want 8 of 10", len(routines), routinesTotal)
 	}

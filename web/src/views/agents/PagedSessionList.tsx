@@ -1,5 +1,5 @@
 // Bounded collection views: filters/counts belong to the server; only the loaded prefix lives in React.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../../i18n";
 import { api, errorText } from "../../lib/api";
@@ -9,7 +9,11 @@ import { SESSION_LIST_METRICS } from "../../ui/list-metrics";
 import { SearchField } from "../../ui/SearchField";
 import { STATE_LABEL } from "../../lib/state-labels";
 import type { AgentState } from "../../lib/types";
-import { Button } from "../../ui/atoms";
+import { Button, cx, Menu, useMenu, type MenuItem } from "../../ui/atoms";
+import { Icon } from "../../ui/icons";
+import { SegmentedTrack } from "../../ui/Segmented";
+import { StatusMark } from "../../ui/StatusMark";
+import { baseName } from "../../lib/format";
 
 export interface PagedSessionListProps<T> {
   root: SessionList<T>;
@@ -38,15 +42,13 @@ export function PagedSessionList<T>({ root, path, identity, compare, removeIdent
   const [state, setState] = useState("");
   const [dimension, setDimension] = useState<"machine" | "project" | "group" | "">("");
   const [value, setValue] = useState("");
-  const [groupQuery, setGroupQuery] = useState("");
-  const groupOptionsId = useId();
   const [machine, setMachine] = useState("");
   const [provider, setProvider] = useState("");
   const [providerQuery, setProviderQuery] = useState("");
   useEffect(() => {
-    const timer = setTimeout(() => { setQ(query.trim()); setProvider(providerQuery.trim()); setValue(groupQuery.trim()); }, SESSION_LIST_METRICS.searchDelay);
+    const timer = setTimeout(() => { setQ(query.trim()); setProvider(providerQuery.trim()); }, SESSION_LIST_METRICS.searchDelay);
     return () => clearTimeout(timer);
-  }, [query, providerQuery, groupQuery]);
+  }, [query, providerQuery]);
   const filters: ListFilters = useMemo(() => ({
     ...(q ? { q } : {}), ...(state ? { state } : {}), ...(provider ? { provider } : {}),
     ...(dimension && value ? { [dimension === "machine" ? "machine_id" : dimension]: value } : {}),
@@ -160,47 +162,60 @@ export function PagedSessionList<T>({ root, path, identity, compare, removeIdent
 
   const counts = facets ?? rootPage.counts;
   const stateTotals = scopeCounts?.state ?? {};
-  const groups = useMemo(() => dimension ? Object.entries(counts?.[dimension] ?? {}).filter(([key]) => key && key.toLowerCase().includes(groupQuery.toLowerCase())).sort(([a], [b]) => a.localeCompare(b)).slice(0, SESSION_LIST_METRICS.groupOptions) : [], [dimension, counts, groupQuery]);
+  // the most used groups first: the menu lists a bounded number of them
+  const groups = useMemo(() => dimension ? Object.entries(counts?.[dimension] ?? {}).filter(([key]) => key).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).slice(0, SESSION_LIST_METRICS.groupOptions) : [], [dimension, counts]);
+  const machines = useMemo(() => Object.entries(rootPage.counts?.machine ?? {}).filter(([id]) => id).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)), [rootPage.counts]);
+  const dimensions: { key: typeof dimension | "repo"; label: string }[] = personal
+    ? [{ key: "", label: t("paged-agents.recent") }, { key: "group", label: t("paged-agents.account") }]
+    : [{ key: "", label: t("paged-agents.recent") }, { key: "machine", label: t("paged-agents.machine") }, { key: "project", label: t("paged-agents.project") }, { key: "group", label: t("paged-agents.group") },
+      ...(onRepo ? [{ key: "repo" as const, label: t("lib-agent-groups.seg_repo") }] : [])];
+  const groupName = (key: string) => dimension === "project" ? baseName(key) || key : label?.(dimension, key) ?? key;
+  const allOf = t(dimension === "machine" ? "paged-agents.all_machines" : dimension === "project" ? "paged-agents.all_projects" : personal ? "paged-agents.all_accounts" : "paged-agents.all_spaces");
+  const chooseDimension = (d: typeof dimension | "repo") => {
+    // The repo tree cannot be a paged filter (it needs every session): it switches to the full By repo view.
+    if (d === "repo") { onRepo?.(); return; }
+    setDimension(d); setValue(""); setMachine("");
+  };
   const states = personal ? ["unread", "idle"] : ["needs_you", "working", "unread", "idle", "offline", "unknown"];
-  const control = "relative z-10 min-w-0 rounded-control bg-inset px-2 py-1 text-xs text-ink shadow-hairline";
   return (
     <div data-paged-sessions={personal ? "personal" : "runtime"} data-loaded-sessions={page.rows.length} data-has-more={page.hasMore}>
       <div className="space-y-2 px-1 py-2">
         <SearchField value={query} onChange={setQuery} placeholder={t("paged-agents.search")} />
-        <div role="radiogroup" aria-label={t("sidebar.quick_filters")} className="flex flex-wrap gap-1">
-          {["", ...states.filter((s) => (stateTotals[s] ?? 0) > 0 || state === s)].map((s) => (
-            <button key={s} type="button" role="radio" aria-checked={state === s} onClick={() => setState(s)} className={`${control} whitespace-nowrap ${state === s ? "bg-surface font-medium" : "text-ink-3"}`}>
-              {s ? STATE_LABEL[s as AgentState] : t("paged-agents.all")}{s && scopeCounts ? ` ${stateTotals[s] ?? 0}` : ""}
-            </button>
-          ))}
+        <SegmentedTrack role="radiogroup" label={t("paged-agents.group_by")} className="flex gap-0.5 rounded-full p-0.5" thumbClassName="rounded-full bg-surface shadow-btn">
+          {dimensions.map((d) => {
+            const on = d.key === dimension;
+            return (
+              <button key={d.key || "recent"} type="button" role="radio" aria-checked={on} data-selected={on} onClick={() => chooseDimension(d.key)}
+                className={cx("touch-hit relative z-[1] flex h-6 min-w-0 flex-auto items-center justify-center whitespace-nowrap rounded-full px-1.5 text-[11.5px] transition-colors duration-150", on ? "font-medium text-ink" : "text-ink-2 hover:text-ink")}>
+                <span className="truncate">{d.label}</span>
+              </button>
+            );
+          })}
+        </SegmentedTrack>
+        <div role="radiogroup" aria-label={t("sidebar.quick_filters")} className="flex flex-wrap gap-0.5">
+          {["", ...states.filter((s) => (stateTotals[s] ?? 0) > 0 || state === s)].map((s) => {
+            const on = state === s;
+            const n = s && scopeCounts ? stateTotals[s] ?? 0 : undefined;
+            const name = s ? STATE_LABEL[s as AgentState] : t("paged-agents.all");
+            return (
+              <button key={s} type="button" role="radio" aria-checked={on} aria-label={n === undefined ? name : `${name} ${n}`} onClick={() => setState(s)}
+                className={cx("touch-hit relative z-10 flex h-6 items-center gap-1 whitespace-nowrap rounded-full px-[7px] text-[11.5px] transition-[background-color,color,box-shadow] duration-150", on ? "bg-surface font-medium text-ink shadow-btn" : "text-ink-2 hover:bg-hover hover:text-ink")}>
+                {s && <StatusMark state={s as AgentState} size="sm" />}
+                {name}
+                {n !== undefined && <span className={cx("tabular-nums", on ? "text-ink-2" : "text-ink-3")}>{n}</span>}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <select
-            aria-label={t("paged-agents.group_by")}
-            className={control}
-            value={dimension}
-            onChange={(e) => {
-              // The repo tree cannot be a paged filter (it needs every session): it switches to the full By repo view.
-              if (e.target.value === "repo") { onRepo?.(); return; }
-              setDimension(e.target.value as typeof dimension); setValue(""); setGroupQuery(""); setMachine("");
-            }}
-          >
-            <option value="">{t("paged-agents.recent")}</option>
-            {!personal && <option value="machine">{t("paged-agents.machine")}</option>}
-            {!personal && <option value="project">{t("paged-agents.project")}</option>}
-            <option value="group">{t(personal ? "paged-agents.account" : "paged-agents.group")}</option>
-            {onRepo && <option value="repo">{t("lib-agent-groups.by_repo")}</option>}
-          </select>
-          {dimension === "group" && !personal && <select className={control} aria-label={t("paged-agents.machine")} value={machine} onChange={(e) => { setMachine(e.target.value); setValue(""); setGroupQuery(""); }}>
-            <option value="">{t("paged-agents.all_machines")}</option>
-            {Object.entries(rootPage.counts?.machine ?? {}).filter(([id]) => id).map(([id, n]) => <option key={id} value={id}>{label?.("machine", id) ?? id} ({n})</option>)}
-          </select>}
-          {dimension && <>
-            <input aria-label={t("paged-agents.group_filter")} placeholder={t("paged-agents.all")} list={groupOptionsId} className={`${control} max-w-full flex-1`} value={groupQuery} onChange={(e) => setGroupQuery(e.target.value)} />
-            <datalist id={groupOptionsId}>{groups.map(([key, n]) => <option key={key} value={key}>{label?.(dimension, key) ?? key} ({n})</option>)}</datalist>
-          </>}
-          {personal && <input className={control} aria-label={t("paged-agents.provider")} placeholder={t("paged-agents.provider")} value={providerQuery} onChange={(e) => setProviderQuery(e.target.value)} />}
-        </div>
+        {(dimension || personal) && <div className="flex flex-wrap gap-1">
+          {dimension === "group" && !personal && <PickChip label={t("paged-agents.machine")} header={t("paged-agents.machine")} value={machine} shown={machine ? label?.("machine", machine) ?? machine : t("paged-agents.all_machines")}
+            items={[{ key: "", label: t("paged-agents.all_machines") }, ...machines.map(([id, n]) => ({ key: id, label: label?.("machine", id) ?? id, hint: String(n) }))]}
+            onChoose={(id) => { setMachine(id); setValue(""); }} />}
+          {dimension && <PickChip label={t("paged-agents.group_filter")} header={dimensions.find((d) => d.key === dimension)?.label} value={value} shown={value ? groupName(value) : allOf} grow
+            items={[{ key: "", label: allOf }, ...groups.map(([key, n]) => ({ key, label: groupName(key), hint: String(n), detail: dimension === "project" && groupName(key) !== key ? key : undefined }))]}
+            onChoose={setValue} />}
+          {personal && <SearchField value={providerQuery} onChange={setProviderQuery} placeholder={t("paged-agents.provider")} tone="inset" icon={false} className="min-w-0 flex-1" />}
+        </div>}
         <p className="text-xs text-ink-3" data-session-total>{t("paged-agents.count", { count: page.total })}</p>
       </div>
       {(facetError || scopeError) && <p role="alert" className="px-2 text-xs text-red">{facetError || scopeError}</p>}
@@ -217,4 +232,18 @@ export function PagedSessionList<T>({ root, path, identity, compare, removeIdent
       {page.hasMore && !page.loading && !page.error && <Button onClick={() => void list.more().catch(() => {})}>{t("paged-agents.more")}</Button>}
     </div>
   );
+}
+
+/** A pill that names what is chosen and opens the choices in the design system's menu (no native select). */
+function PickChip({ label, header = label, value, shown, items, onChoose, grow = false }: { label: string; header?: string; value: string; shown: string; items: { key: string; label: string; hint?: string; detail?: string }[]; onChoose: (key: string) => void; grow?: boolean }) {
+  const menu = useMenu();
+  const rows: MenuItem[] = items.map((it, i) => ({ ...it, radio: true, checked: it.key === value, divider: i === 1, onSelect: () => onChoose(it.key) }));
+  return <>
+    <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={Boolean(menu.anchor)} title={shown} onClick={menu.open}
+      className={cx("touch-hit relative z-10 flex h-6 min-w-0 items-center gap-1 whitespace-nowrap rounded-full bg-inset px-2 text-[11.5px] shadow-hairline transition-colors duration-150 hover:bg-hover", value ? "font-medium text-ink" : "text-ink-2", grow && "flex-1")}>
+      <span className="min-w-0 flex-1 truncate text-left">{shown}</span>
+      <Icon name="chevron" size={11} className="shrink-0 text-ink-3" />
+    </button>
+    {menu.anchor && <Menu items={rows} anchor={menu.anchor} onClose={menu.close} header={header} width={260} />}
+  </>;
 }

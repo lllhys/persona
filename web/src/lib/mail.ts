@@ -175,10 +175,12 @@ export function loadMailAccounts(manager?: string): Promise<MailAccount[]> {
   return p;
 }
 
-/** The accounts of the manager whose item is shown (ItemManager; none: the default's), the last known ones at once and
- *  the hub's answer when it comes. */
-export function useMailAccounts(): MailAccount[] {
-  const manager = useItemManager();
+/** The accounts of the manager whose item is shown (ItemManager; none: the default's), or of `owner.manager` when given
+ *  (a new mail on the Inbox page: the current assistant's), the last known ones at once and the hub's answer when it
+ *  comes. */
+export function useMailAccounts(owner?: { manager: string | undefined }): MailAccount[] {
+  const shown = useItemManager();
+  const manager = owner ? owner.manager : shown;
   const key = accountsKey(manager);
   const [state, setState] = useState(() => ({ key, list: known.get(key) ?? [] }));
   useEffect(() => {

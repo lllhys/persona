@@ -194,3 +194,21 @@ func TestBackgroundTasksKeepsPlan(t *testing.T) {
 		t.Fatalf("plan after the appended call: %+v", p)
 	}
 }
+
+// A foreground command backgrounded by hand (a message sent mid-turn, #3278) is background work in the session's scan
+// too, which reads only the lines that name background work: a Lark turn that ends meanwhile waits for it.
+func TestBackgroundTasksSeesManuallyBackgrounded(t *testing.T) {
+	lines := []string{
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-11-10T09:25:52Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"python3 slow.py","description":"Run a slow test"}}]}}`,
+		`{"type":"user","uuid":"u1","timestamp":"2026-11-10T09:26:07Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"Command was manually backgrounded by user with ID: beg3p1s7d. Output is being written to: /tmp/tasks/beg3p1s7d.output. If it is still running after 30m in the background, it will be stopped and you will be notified."}]}}`,
+	}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := &Node{bgScans: map[string]*bgScan{}}
+	n.backgroundTasks(path)
+	if got := n.bgScans[path].meta.Background; len(got) != 1 || got[0].ID != "beg3p1s7d" || got[0].Kind != "shell" {
+		t.Fatalf("background tasks: %+v", got)
+	}
+}

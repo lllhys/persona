@@ -202,7 +202,8 @@ type (
 
 var ErrNotFound = errors.New("not found")
 
-// Get reads one entity. recentChars bounds a chat's latest messages (0: none).
+// Get reads one entity. recentChars bounds a chat's latest messages in bytes, a recording's transcript in characters
+// (0: none).
 func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 	if kind == KindRecording {
 		id, _ = RecordingID(id) // the phone's UUID in any case
@@ -414,27 +415,30 @@ func (e *Engine) apply(kind, id string, u Update) (string, error) {
 		p.Dirs = addUnique(p.Dirs, u.Dirs...)
 		p.People = addUnique(p.People, u.People...)
 		for _, pid := range u.People {
-			if person, ok := e.Store.Person(pid); ok {
+			_, _, err := e.Store.updatePerson(pid, true, nil, func(person *Person) bool {
 				person.Projects = addUnique(person.Projects, p.Slug)
 				if u.Lock == nil || *u.Lock {
 					person.LockedFields = addUnique(person.LockedFields, "projects")
 				}
-				if err := e.Store.putEntity(KindPerson, person.ID, person, &person.Tagging, true); err != nil {
-					return "", err
-				}
+				return true
+			})
+			if err != nil {
+				return "", err
 			}
 		}
 		for _, cid := range u.Chats {
-			if c, ok := e.Store.Chat(cid); ok {
-				p.Chats = addUnique(p.Chats, c.ID)
+			c, ok, err := e.Store.editChat(cid, func(c *Chat) {
 				c.Projects = addUnique(c.Projects, p.Slug)
 				if u.Lock == nil || *u.Lock {
 					c.LockedFields = addUnique(c.LockedFields, "projects")
 				}
+			})
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				p.Chats = addUnique(p.Chats, c.ID)
 				p.People = addUnique(p.People, c.People...)
-				if err := e.Store.putEntity(KindChat, c.ID, c, &c.Tagging, true); err != nil {
-					return "", err
-				}
 			}
 		}
 		if u.Log != "" {
@@ -467,31 +471,39 @@ func (e *Engine) apply(kind, id string, u Update) (string, error) {
 		e.index(KindProject, p.Slug, p.Name, p.Tagging, p.OneLine, p.Updated)
 		return p.Slug, nil
 	case KindChat:
-		c, ok := e.Store.Chat(id)
+		var linked []*Project
+		for _, slug := range u.Projects {
+			if pr, ok := e.Store.Project(slug); ok {
+				linked = append(linked, pr)
+			}
+		}
+		// The chat is read again under chatMu and only the user's fields change: what an ingest wrote meanwhile stays.
+		c, ok, err := e.Store.editChat(id, func(c *Chat) {
+			tagUpdate(u, &c.Tagging)
+			protectUpdate(u, &c.Tagging)
+			if u.Name != "" {
+				c.Name = u.Name
+			}
+			for _, pr := range linked {
+				c.Projects = addUnique(c.Projects, pr.Slug)
+			}
+			c.People = removeStrings(c.People, u.RemovePeople)
+			c.Projects = removeStrings(c.Projects, u.RemoveProjects)
+		})
+		if err != nil {
+			return "", err
+		}
 		if !ok {
 			return "", ErrNotFound
 		}
-		tagUpdate(u, &c.Tagging)
-		protectUpdate(u, &c.Tagging)
-		if u.Name != "" {
-			c.Name = u.Name
-		}
-		for _, slug := range u.Projects {
-			if pr, ok := e.Store.Project(slug); ok {
-				c.Projects = addUnique(c.Projects, pr.Slug)
-				pr.Chats = addUnique(pr.Chats, c.ID)
-				if u.Lock == nil || *u.Lock {
-					pr.LockedFields = addUnique(pr.LockedFields, "chats")
-				}
-				if err := e.Store.putEntity(KindProject, pr.Slug, pr, &pr.Tagging, true); err != nil {
-					return "", err
-				}
+		for _, pr := range linked {
+			pr.Chats = addUnique(pr.Chats, c.ID)
+			if u.Lock == nil || *u.Lock {
+				pr.LockedFields = addUnique(pr.LockedFields, "chats")
 			}
-		}
-		c.People = removeStrings(c.People, u.RemovePeople)
-		c.Projects = removeStrings(c.Projects, u.RemoveProjects)
-		if err := e.Store.putEntity(KindChat, c.ID, c, &c.Tagging, true); err != nil {
-			return "", err
+			if err := e.Store.putEntity(KindProject, pr.Slug, pr, &pr.Tagging, true); err != nil {
+				return "", err
+			}
 		}
 		if u.Summary != "" {
 			if err := e.Store.putSummary(KindChat, c.ID, u.Summary, true); err != nil {
@@ -508,14 +520,10 @@ func (e *Engine) apply(kind, id string, u Update) (string, error) {
 		if !ok {
 			return "", ErrNotFound
 		}
-		tagUpdate(u, &p.Tagging)
-		protectUpdate(u, &p.Tagging)
-		if u.Note != "" {
-			p.Note = oneLine(u.Note)
-		}
+		var linked []string
 		for _, slug := range u.Projects {
 			if pr, ok := e.Store.Project(slug); ok {
-				p.Projects = addUnique(p.Projects, pr.Slug)
+				linked = append(linked, pr.Slug)
 				pr.People = addUnique(pr.People, p.ID)
 				if u.Lock == nil || *u.Lock {
 					pr.LockedFields = addUnique(pr.LockedFields, "people")
@@ -525,10 +533,23 @@ func (e *Engine) apply(kind, id string, u Update) (string, error) {
 				}
 			}
 		}
-		p.Chats = removeStrings(p.Chats, u.RemoveChats)
-		p.Projects = removeStrings(p.Projects, u.RemoveProjects)
-		if err := e.Store.putEntity(KindPerson, p.ID, p, &p.Tagging, true); err != nil {
+		// Changed on the person as read again under personMu: what the pipeline linked meanwhile stays.
+		p, _, err := e.Store.updatePerson(id, true, nil, func(p *Person) bool {
+			tagUpdate(u, &p.Tagging)
+			protectUpdate(u, &p.Tagging)
+			if u.Note != "" {
+				p.Note = oneLine(u.Note)
+			}
+			p.Projects = addUnique(p.Projects, linked...)
+			p.Chats = removeStrings(p.Chats, u.RemoveChats)
+			p.Projects = removeStrings(p.Projects, u.RemoveProjects)
+			return true
+		})
+		if err != nil {
 			return "", err
+		}
+		if p == nil {
+			return "", ErrNotFound // forgotten meanwhile
 		}
 		if err := e.unlink(KindPerson, p.ID, u); err != nil {
 			return "", err

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,8 @@ type Node struct {
 	engEpoch uint64
 	peer     *rpc.Peer
 	logger   *log.Logger
+	// hubPersonaContracts is connection-local: Attach makes a fresh Node on each reconnect.
+	hubPersonaContracts atomic.Bool
 	// lcu drives amontlabs/lcu for the computer-use plugin when that backend is selected (lcu_mcp.go).
 	lcuMu   sync.Mutex
 	lcuSess *lcuSession
@@ -164,6 +167,12 @@ type Node struct {
 	// usageRetried: when a conversation's message was last sent again after its transcript's usage was repaired
 	// (assistant_usage.go): once in a while at most. Under mu; nil until the first.
 	usageRetried map[string]time.Time
+	// recoveries: a conversation's bounded model-failure recovery, surviving the process replaced by a model switch.
+	// recoveryClosed stops the ended connection's Node from starting another attempt while its processes hand over.
+	recoveries     map[string]*assistantTurnRecovery
+	recoveryClosed bool
+	// adoptedFailures: failures a handover carried here, resumed once this connection's session state is loaded.
+	adoptedFailures []adoptedFailure
 
 	// runtimes: agent runtimes without a terminal, connected on runtime.sock (runtimes.go); runtimeSock overrides the
 	// socket path (tests).
@@ -174,10 +183,10 @@ type Node struct {
 	runtimeHost *RuntimeHost
 	// keeper: a resident node's conversations between hub connections (assistant_keep.go); nil without one.
 	keeper *assistantKeeper
-	// replayed is closed once what standby took while no manager was connected went to this one (spool.go): new
+	// replayed is closed once what standby took while no manager was connected went to this one (spool_replay.go): new
 	// hooks wait for it, so the manager hears them after the older ones. nil (tests' Nodes): nothing waits.
 	replayed chan struct{}
-	// ahead: the sessions and panes of live hooks that went before the replay (spool.go).
+	// ahead: the sessions and panes of live hooks that went before the replay (spool_replay.go).
 	ahead replayAhead
 	// spool is the resident node's (Attach), nil elsewhere: a node that serves by itself neither keeps nor replays.
 	spool *spool
@@ -374,8 +383,8 @@ func (n *Node) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 }
 
 // startState loads the session state for this connection and, on a resident node's, replays what its standby took
-// (spool.go): the replay waits for the state, and new hooks for the replay (serveSock). A first try that fails is
-// tried again on this connection (reloadState).
+// (spool_replay.go): the replay waits for the state, and new hooks for the replay (serveSock). A first try that
+// fails is tried again on this connection (reloadState).
 func (n *Node) startState(ctx context.Context, adopted []*assistantProc) {
 	n.stateReady, n.stateMissed = make(chan struct{}), make(chan struct{})
 	// Before anything lists or takes a hook: nothing is written or cached on a guess about a session not loaded yet.
@@ -388,6 +397,7 @@ func (n *Node) startState(ctx context.Context, adopted []*assistantProc) {
 			close(n.stateMissed)
 		}
 		n.resumeAssistants(adopted)
+		n.resumeAdoptedFailures(ok)
 		if !ok && n.reloadState(ctx) {
 			n.ultracodeStateReloaded() // stored observations read in again; what was seen meanwhile of Persona's sessions written
 			close(n.stateReady)
@@ -493,6 +503,10 @@ func (n *Node) fetchState(ctx context.Context) bool {
 // writeClaudeConfig writes the files the sessions Persona starts load (hooks, MCP, skills; generatedFiles).
 func (n *Node) writeClaudeConfig() error { return writeGeneratedConfig(n.dir, n.bin) }
 
+// hubSupportsPersonaContracts snapshots the hub capability for one process start.
+// Until the authenticated hub's configuration arrives, keep the legacy MCP alias.
+func (n *Node) hubSupportsPersonaContracts() bool { return n.hubPersonaContracts.Load() }
+
 func (n *Node) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	if strings.HasPrefix(method, "node.update.") {
 		return n.handleUpdate(ctx, method, params)
@@ -572,6 +586,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		DismissLost    bool            `json:"dismiss_lost"`
 		ResumeOnly     bool            `json:"resume_only"`
 		IsMain         bool            `json:"is_main"`
+		Interject      bool            `json:"interject_background"`
 		AtItemID       string          `json:"at_item_id"` // session.fork: the reply to branch off at
 		Refresh        bool            `json:"refresh"`    // launchers.models: ask again, not the kept list
 		Configured     bool            `json:"configured"` // launchers.models, .probe, .http, .model.check: hub.json names this launcher
@@ -636,6 +651,13 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			return res, err
 		}
 	}
+	// A Persona-managed provider whose secrets this computer has not fetched yet: fetched before anything runs it
+	// (managed.go; the manager refuses one out of this computer's scope).
+	if name := managedUser(method, p.Launcher, p.Name); name != "" {
+		if err := n.ensureManaged(ctx, name); err != nil {
+			return nil, err
+		}
+	}
 	switch method {
 	case "session.attach":
 		return ok(n.attachCodex(ctx, p.SessionID))
@@ -688,7 +710,10 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		return map[string]any{"engine": n.engine(), "hosts": c.Hosts, "default": c.Default}, nil
 	case "node.configure":
 		var c struct {
-			ClaudeDirs []string `json:"claude_dirs"`
+			// HubFeatures comes from the authenticated hub through devices.connected. Partial
+			// configuration updates omit it; a full handover without it means an older hub.
+			HubFeatures *[]string `json:"hub_features"`
+			ClaudeDirs  []string  `json:"claude_dirs"`
 			// ClaudeDirsBlocked: patterns of config directories kept out (claudedirs.go); nil leaves them as they are.
 			ClaudeDirsBlocked *[]string          `json:"claude_dirs_blocked"`
 			Codex             *proto.CodexConfig `json:"codex"`
@@ -722,6 +747,9 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		}
 		if err := json.Unmarshal(params, &c); err != nil {
 			return nil, err
+		}
+		if c.HubFeatures != nil || c.MachineID != "" {
+			n.hubPersonaContracts.Store(c.HubFeatures != nil && slices.Contains(*c.HubFeatures, nodeproto.PersonaContracts))
 		}
 		if c.ClaudeDirs != nil || c.Keep == nil { // a call that only changes what is kept leaves the directories
 			n.setKnownClaudeDirs(c.ClaudeDirs)
@@ -781,15 +809,25 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		}
 		shell, rcFile := launcherShell()
 		return map[string]any{"launchers": typedLaunchers(ls), "shell": shell, "rc_file": rcFile}, err
-	case "launchers.managed":
+	case "launchers.managed", "launchers.catalog": // the providers added in Persona (managed.go): all with their secrets, or this computer's scope
 		var c struct {
 			Launchers []proto.ManagedLauncher `json:"launchers"`
 		}
 		if err := json.Unmarshal(params, &c); err != nil {
 			return nil, err
 		}
-		n.setManaged(c.Launchers)
+		if method == "launchers.catalog" {
+			n.setCatalog(c.Launchers)
+		} else {
+			n.setManaged(c.Launchers)
+		}
 		return map[string]any{"ok": true}, nil
+	case "launchers.own_service": // whether a harness has a usable service of its own here (ownservice.go)
+		var a struct {
+			Agent string `json:"agent"`
+		}
+		_ = json.Unmarshal(params, &a)
+		return n.ownService(ctx, a.Agent), nil
 	case "launchers.model.check":
 		if err := n.runnableLauncher(ctx, p.Name, p.Configured); err != nil {
 			return nil, err
@@ -900,7 +938,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 			sctx = withGuest(ctx, p.Guest.Tools)
 		}
-		id, err := n.assistantSend(sctx, p.SessionID, p.Cwd, p.Launcher, p.Text, p.Images, p.PermissionMode, p.Effort, modelExecution{Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: assistantRuntimeOf(p.Runtime), IsMain: p.IsMain})
+		id, err := n.assistantSend(sctx, p.SessionID, p.Cwd, p.Launcher, p.Text, p.Images, p.PermissionMode, p.Effort, modelExecution{Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: assistantRuntimeOf(p.Runtime), IsMain: p.IsMain, Interject: p.Interject})
 		return map[string]any{"session_id": id}, err
 	case "assistant.guest_prepare": // a guest conversation's directory (assistant_guest.go)
 		return n.assistantGuestPrepare(params)
@@ -928,7 +966,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 			return n.sendEchoed(p.SessionID, opts.ClientMsgID, p.Text, len(p.Images), after, func() error { // echo.go
 				if n.isAssistantSession(p.SessionID) {
-					_, err := n.assistantSend(ctx, p.SessionID, "", p.Launcher, p.Text, p.Images, "", "", modelExecution{Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: n.sessionRuntime(p.SessionID, p.Runtime, p.ModelFingerprint != ""), IsMain: p.IsMain})
+					_, err := n.assistantSend(ctx, p.SessionID, "", p.Launcher, p.Text, p.Images, "", "", modelExecution{Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: n.sessionRuntime(p.SessionID, p.Runtime, p.ModelFingerprint != ""), IsMain: p.IsMain, Interject: p.Interject})
 					return err
 				}
 				return n.send(ctx, p.SessionID, p.Text, p.Images, opts)
@@ -1435,6 +1473,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			return ok(nil)
 		}
 		if n.isAssistantSession(p.SessionID) {
+			defer n.typing.lock(p.SessionID)()
 			n.stopAssistant(p.SessionID)
 			return ok(nil)
 		}
@@ -1528,6 +1567,17 @@ func nonNil(items []proto.Item) []proto.Item {
 		return []proto.Item{}
 	}
 	return items
+}
+
+// managedUser is the launcher a method runs (or asks a CLI about) that may need a managed provider's secrets.
+func managedUser(method, launcher, name string) string {
+	switch method {
+	case "session.start", "assistant.send", "assistant.warm", "session.send":
+		return launcher
+	case "launchers.check", "claude.auth_status", "launchers.models", "launchers.http", "launchers.probe", "launchers.model.check":
+		return name
+	}
+	return ""
 }
 
 func (n *Node) info(ctx context.Context) proto.NodeInfo {

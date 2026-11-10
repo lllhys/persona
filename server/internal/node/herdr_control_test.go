@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -186,6 +187,8 @@ func TestHerdrStartCreatesTheWorkspaceAndResumes(t *testing.T) {
 // its id: `claude --resume` would answer "No conversation found" (issue #861).
 func TestHerdrResumeWithoutTranscriptStartsUnderItsID(t *testing.T) {
 	n, f, home := herdrNode(t)
+	n.starts.add(startID, &startRec{done: make(chan struct{}), session: proto.Session{SessionID: startID, Starting: true}})
+	n.starts.finish(startID, errors.New("claude did not become ready"))
 	cwd := mkdir(t, filepath.Join(home, "fresh"))
 	f.reply("workspace.list", map[string]any{"workspaces": []any{}})
 	f.reply("workspace.create", map[string]any{"workspace": map[string]any{"workspace_id": "w7"},
@@ -194,6 +197,9 @@ func TestHerdrResumeWithoutTranscriptStartsUnderItsID(t *testing.T) {
 	f.setScreen("w7:p1", screenFixture(t, "claude-2.1.312-empty-162.txt"))
 	if _, err := request(t, n, "session.start", map[string]any{"cwd": cwd, "launcher": "claude", "resume_session_id": startID}); err != nil {
 		t.Fatal(err)
+	}
+	if err := n.starts.wait(t.Context(), startID); err != nil {
+		t.Fatalf("a successful recovery must not reject subsequent messages with the old start error: %v", err)
 	}
 	want := call("pane.send_input", map[string]any{"pane_id": "w7:p1", "keys": []string{"Enter"},
 		"text": startCmd("claude", "--session-id "+startID, personaDir(home))})
@@ -488,12 +494,17 @@ func TestHerdrStartThroughTheFirstRunScreens(t *testing.T) {
 // before anything is created.
 func TestHerdrStartOfALiveSessionAndWithoutHerdr(t *testing.T) {
 	n, f, home := herdrNode(t)
+	n.starts.add(startID, &startRec{done: make(chan struct{}), session: proto.Session{SessionID: startID, Starting: true}})
+	n.starts.finish(startID, errors.New("claude did not become ready"))
 	seedAgents(t, n, f, claudeAgent(startID, proto.StatusIdle, "w1:p1", "w1:t1", "w1", home, ""))
 	res, err := request(t, n, "session.start", map[string]any{"cwd": home, "resume_session_id": startID})
 	if s := decodeSessions(t, []any{res["session"]}); err != nil || s[0].PaneID != "w1:p1" {
 		t.Fatalf("%+v %v", s, err)
 	}
 	assertTrace(t, f.trace(), []string{call("session.snapshot", nil)})
+	if err := n.starts.wait(t.Context(), startID); err != nil {
+		t.Fatalf("a running session kept a failed start: %v", err)
+	}
 
 	f.reset()
 	f.reply("workspace.list", herdrFail{Code: "internal", Message: "down"})

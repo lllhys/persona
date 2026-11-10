@@ -62,7 +62,7 @@ struct PersonalAgentEntityQuery: EntityQuery, EntityStringQuery {
 
     private static func all() async throws -> [PersonalAgentEntity] {
         do {
-            return try await IntentSupport.client().personalAgentSessions().map(PersonalAgentEntity.init)
+            return try await IntentSupport.selectedClient().personalAgentSessions().map(PersonalAgentEntity.init)
         } catch {
             throw IntentFailureSentence(IntentFailure.sentence(for: error, host: IntentSupport.host()))
         }
@@ -97,7 +97,7 @@ struct AgentTaskIntent: AppIntent {
         let body = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { throw IntentFailureSentence(String(localized: "What should the agent do?")) }
         do {
-            let api = try IntentSupport.client()
+            let api = try IntentSupport.selectedClient()
             let target: PersonalAgentEntity
             if let agent { target = agent } else {
                 let all = try await api.personalAgentSessions().map(PersonalAgentEntity.init)
@@ -132,7 +132,7 @@ struct AgentsStatusIntent: AppIntent {
 
     nonisolated func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
         do {
-            let all = try await IntentSupport.client().personalAgentSessions().map(PersonalAgentEntity.init)
+            let all = try await IntentSupport.selectedClient().personalAgentSessions().map(PersonalAgentEntity.init)
             let text = PersonalAgentIntentText.status(all)
             return .result(value: text, dialog: IntentSupport.dialog(text))
         } catch {

@@ -43,10 +43,10 @@ describe("收件箱事件：分区", () => {
     expect(ids(s.tiers.fyi)).toEqual([conclusion.id]);
     expect(ids(s.tiers.noise)).toEqual([noise.id]);
     expect(s.done).toHaveLength(2);
-    // the badge counts Needs you only (urgent included, it is status action): In progress is the AI's
-    expect(badgeCount(fixture.items)).toBe(4);
+    // Pending sections do not determine whether an item has been read.
+    expect(badgeCount(fixture.items)).toBe(fixture.items.filter((it) => !it.done_at && !it.read).length);
     expect(badgeCount([urgent])).toBe(1);
-    expect(badgeCount([waiting, agentWorking])).toBe(0);
+    expect(badgeCount([waiting, agentWorking])).toBe(2);
   });
   it("falls back to the tier for an older hub (a working item stays under 需要你, empty tier = 需要你)", () => {
     const old = fixture.items.map(legacy);

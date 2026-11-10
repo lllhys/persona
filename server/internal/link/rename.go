@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -209,8 +210,11 @@ func (l *link) keepMachineName(name string, c *Config, o Options) {
 		f.MachineName = name
 		return nil
 	})
-	if err == nil {
+	switch {
+	case err == nil:
 		c.MachineName = name
+	case errors.Is(err, errPairedAgain):
+		l.pairedAgain()
 	}
 }
 

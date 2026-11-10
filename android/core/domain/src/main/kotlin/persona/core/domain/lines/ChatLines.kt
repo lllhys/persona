@@ -88,7 +88,14 @@ private fun ChatRow.positionItem(): LineItem? = item ?: when (val step = steps.l
 }
 
 internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
-    val results = items.filter { it.kind == "tool_result" && it.item.toolUseId != null }.associateBy { it.item.toolUseId }
+    val taskCalls = TaskIndex.build(items).calls
+    fun resultCall(item: LineItem): String? = when {
+        item.kind == "tool_result" -> item.item.toolUseId ?: taskCalls[item.id]
+        item.kind == "notice" && item.task?.kind == "agent" -> taskCalls[item.id]
+        else -> null
+    }
+    val results = items.mapNotNull { item -> resultCall(item)?.let { it to item } }
+        .groupBy({ it.first }, { it.second })
     val images = items.filter { it.kind == "image" && it.item.toolUseId != null && it.item.image != null }
         .groupBy { it.item.toolUseId }
     val rows = mutableListOf<ChatRow>()
@@ -108,7 +115,8 @@ internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
             "tool_use" -> {
                 flushThoughts(run.isEmpty())
                 val callId = it.item.toolUseId
-                run += WorkItem.Tool(ToolCall(it, results[callId], images[callId].orEmpty()))
+                val reports = results[callId].orEmpty()
+                run += WorkItem.Tool(ToolCall(it, reports.lastOrNull(), images[callId].orEmpty(), reports))
             }
             "thinking" -> thoughts += it
             "fold" -> {
@@ -117,7 +125,7 @@ internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
             }
             "tool_result" -> Unit
             else -> {
-                if (it.kind == "image" && it.item.toolUseId != null) continue
+                if (resultCall(it) != null || (it.kind == "image" && it.item.toolUseId != null)) continue
                 flushThoughts(run.isEmpty())
                 flushRun()
                 val type = when (it.kind) {

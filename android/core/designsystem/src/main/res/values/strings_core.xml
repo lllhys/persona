@@ -215,6 +215,7 @@
     <string name="designsystem_core_engine_herdr">herdr in a terminal</string>
     <string name="designsystem_core_engine_herdr_app">Terminals opened in the desktop app</string>
     <string name="designsystem_core_engine_orca">Terminals in Orca</string>
+    <string name="designsystem_core_engine_tern">Terminals in Tern</string>
     <string name="designsystem_core_engine_paseo">Agents in Paseo</string>
     <string name="designsystem_core_engine_cindy">Agents in Cindy</string>
     <string name="designsystem_core_engine_offline">Offline, no detection info yet</string>
@@ -362,6 +363,8 @@
     <string name="designsystem_core_endpoint_protocol">Unexpected response format</string>
     <string name="designsystem_core_endpoint_rejected">The hub refused the request</string>
     <string name="designsystem_core_endpoint_rate_limited">Too many requests. Try again later</string>
+    <string name="designsystem_core_endpoint_access_required">This hub is behind Cloudflare Access and needs a service token</string>
+    <string name="designsystem_core_endpoint_access_rejected">Cloudflare Access rejected the service token</string>
     <string name="designsystem_core_endpoint_failed">Connection failed</string>
     <string name="designsystem_core_address_empty">Enter an address</string>
     <string name="designsystem_core_address_spaces">The address can’t contain spaces</string>

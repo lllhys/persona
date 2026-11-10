@@ -146,7 +146,9 @@ export function buildTerminalTree(res: PanesResponse | undefined, sessions: read
         .map((t) => ({
           id: t.id,
           label: t.label || t.id,
-          panes: [...(panesOf.get(t.id) ?? [])]
+          // a tab id is unique only within its workspace, and a host with no tabs (botmux) leaves it empty on every pane
+          panes: (panesOf.get(t.id) ?? [])
+            .filter((p) => p.workspace_id === w.id)
             .sort((a, b) => paneNumber(a) - paneNumber(b) || a.pane.localeCompare(b.pane))
             .map((p): TermPane => {
               const session = p.session_id ? byId.get(p.session_id) : undefined;

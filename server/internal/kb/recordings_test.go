@@ -30,11 +30,11 @@ func TestRecordingIdempotentAndOrdered(t *testing.T) {
 	start := now.Add(-time.Hour)
 	// Upper case is the same recording.
 	for range 2 { // a replay changes nothing
-		if st, err := e.PutRecording(strings.ToUpper(recID), recUpload(2, start, false, "第一段", "第二段"), now); err != nil || st != RecordingStored {
+		if st, err := e.PutRecording(strings.ToUpper(recID), recUpload(2, start, false, "第一段", "第二段"), now); err != nil || st.Status != RecordingStored {
 			t.Fatalf("put: %v %v", st, err)
 		}
 	}
-	if st, _ := e.PutRecording(recID, recUpload(1, start, false, "旧的"), now); st != RecordingStale {
+	if st, _ := e.PutRecording(recID, recUpload(1, start, false, "旧的"), now); st.Status != RecordingStale {
 		t.Fatalf("an older revision: %v, want stale", st)
 	}
 	if ids := e.Store.IDs(KindRecording); len(ids) != 1 || ids[0] != recID {
@@ -180,7 +180,7 @@ func TestRecordingRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Past the retention: not stored at all.
-	if st, _ := e.PutRecording("33333333-3333-4333-8333-333333333333", recUpload(1, now.AddDate(0, 0, -15), true, "太旧"), now); st != RecordingExpired {
+	if st, _ := e.PutRecording("33333333-3333-4333-8333-333333333333", recUpload(1, now.AddDate(0, 0, -15), true, "太旧"), now); st.Status != RecordingExpired {
 		t.Fatalf("an old upload: %v, want expired", st)
 	}
 	_, _ = e.DeleteRecording("44444444-4444-4444-8444-444444444444", now.AddDate(0, 0, -9))
@@ -227,8 +227,8 @@ func TestRecordingRetentionDST(t *testing.T) {
 						if expired {
 							want = RecordingExpired
 						}
-						if status, err := e.PutRecording(recID, recUpload(1, start, false, "boundary"), now); err != nil || status != want {
-							t.Fatalf("upload: %s, %v; want %s", status, err, want)
+						if status, err := e.PutRecording(recID, recUpload(1, start, false, "boundary"), now); err != nil || status.Status != want {
+							t.Fatalf("upload: %s, %v; want %s", status.Status, err, want)
 						}
 						if _, kept := e.Store.Recording(recID); kept == expired {
 							t.Fatalf("recording kept = %v, expired = %v", kept, expired)
@@ -238,8 +238,8 @@ func TestRecordingRetentionDST(t *testing.T) {
 						e := goldenEngine(t, nil)
 						e.RecordingDaysFunc = func() int { return days }
 						// Seed while fresh so upload expiry cannot hide a pruning bug.
-						if status, err := e.PutRecording(recID, recUpload(1, start, false, "boundary"), start); err != nil || status != RecordingStored {
-							t.Fatalf("seed: %s, %v", status, err)
+						if status, err := e.PutRecording(recID, recUpload(1, start, false, "boundary"), start); err != nil || status.Status != RecordingStored {
+							t.Fatalf("seed: %s, %v", status.Status, err)
 						}
 						const deletedID = "44444444-4444-4444-8444-444444444444"
 						if _, err := e.DeleteRecording(deletedID, start); err != nil {

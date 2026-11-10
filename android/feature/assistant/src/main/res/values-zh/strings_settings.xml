@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="assistant_settings_title">助手</string>
+    <string name="assistant_settings_title">助手资料</string>
     <string name="assistant_settings_summary">Persona 在「%1$s」上运行。</string>
     <string name="assistant_settings_load_failed">读不到助手的设置，请检查连接后下拉重试。</string>
     <string name="assistant_settings_retry">重试</string>
@@ -34,7 +34,7 @@
     <string name="assistant_settings_you_header">了解你</string>
     <string name="assistant_settings_notes">关于我</string>
     <string name="assistant_settings_notes_filled">已填写</string>
-    <string name="assistant_settings_notes_from_hub">管理者配置</string>
+    <string name="assistant_settings_notes_from_hub">助手配置</string>
     <string name="assistant_settings_notes_empty">未填写</string>
     <string name="assistant_settings_memory">记忆</string>
     <string name="assistant_settings_memory_none">没有</string>
@@ -64,7 +64,7 @@
     <string name="assistant_settings_reach_phone_subtitle">在手机上问你、给你推送</string>
     <string name="assistant_settings_reach_caption">发飞书消息、发邮件、新建日程这类会替你出面的操作，都先在手机上问你。</string>
     <string name="assistant_settings_notes_intro">告诉 Persona 你的情况：代码放在哪、常用哪些工具查工作数据、哪些机器或目录别碰、你习惯的汇报方式。它每次开新对话都会读到，改了以后新对话生效。</string>
-    <string name="assistant_settings_notes_hub_notice">现在 Persona 读到的是管理者配置文件（manager.json）里写的内容。在这里保存以后，以这里为准。</string>
+    <string name="assistant_settings_notes_hub_notice">现在 Persona 读到的是助手配置文件（manager.json）里写的内容。在这里保存以后，以这里为准。</string>
     <string name="assistant_settings_notes_placeholder">比如：代码在 ~/code 下；周报每周五下班前给我草稿。</string>
     <string name="assistant_settings_notes_unsaved_title">关于我还没保存</string>
     <string name="assistant_settings_notes_unsaved_text">离开前要保存修改吗？</string>

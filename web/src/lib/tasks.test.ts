@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseAPIError } from "./api-errors";
-import { agentStatus, agentsWorking, agentSummary, buildTaskIndex, loopCadence, loopLabel, loopNext, loopShortLabel, loopTask, nestedSubagents, stableSubagents, subagentEnded, subagentTree, taskBadge, taskPill, wakeSummary } from "./tasks";
+import { agentStatus, agentsWorking, agentSummary, attachedAgentNotices, buildTaskIndex, loopCadence, loopLabel, loopNext, loopShortLabel, loopTask, nestedSubagents, stableSubagents, subagentEnded, subagentTree, taskBadge, taskPill, terminalCalls, wakeSummary } from "./tasks";
 import type { Item, Subagent } from "./types";
 
 describe("buildTaskIndex", () => {
@@ -29,6 +29,14 @@ describe("buildTaskIndex", () => {
     const x = buildTaskIndex(items);
     expect(x.calls.get("n1#0")).toBe("call1");
     expect(x.notes.get("call1")?.map((n) => n.detail)).toEqual(["## Summary"]);
+  });
+
+  it("leaves unassociated notices visible, including an Agent call with no association id", () => {
+    const use: Item = { id: "call#0", seq: 1, role: "assistant", kind: "tool_use", tool_name: "Agent" };
+    const notice: Item = { id: "notice#0", seq: 2, role: "system", kind: "notice", task: { kind: "agent", status: "completed", task_id: "unrelated", detail: "An unrelated report" } };
+    expect(attachedAgentNotices([use, notice])).toEqual(new Set());
+    expect(buildTaskIndex([use, notice]).reports.size).toBe(0);
+    expect(attachedAgentNotices([{ ...notice, task: { ...notice.task!, tool_use_id: "unloaded-call" } }])).toEqual(new Set());
   });
 
   it("badges a call still running, with its events", () => {
@@ -122,6 +130,19 @@ describe("a subagent call's card", () => {
     expect(agentStatus(res("Async agent launched successfully.\nagentId: x (This is an internal ID for your use)"), undefined, true)).toBe("running");
     expect(agentStatus(res("Async agent launched successfully."), undefined, false)).toBe("completed");
     expect(agentStatus(res("42 passed"), undefined, true)).toBe("completed");
+  });
+
+  it("uses the latest nonterminal evidence instead of a past completion for working bars", () => {
+    const finished: Item = { ...res("Done"), task: { kind: "agent", status: "completed", tool_use_id: "c" } };
+    const resumed: Item = { ...res("Working again"), id: "resumed#0", seq: 3, task: { kind: "agent", status: "running", tool_use_id: "c" } };
+    expect(terminalCalls([finished, resumed]).has("c")).toBe(false);
+  });
+
+  it("does not infer completion from an unknown subagent status", () => {
+    const result: Item = { ...res("Interim detail"), task: { kind: "agent", status: "future-status", tool_use_id: "c" } };
+    expect(agentStatus(result, meta(false), false)).toBe("running");
+    expect(terminalCalls([result]).has("c")).toBe(false);
+    expect(taskBadge([result.task!]).text).toBe("后台 · 运行中");
   });
 
   it("does not flip a finished call back to running when the list still says running (#5602)", () => {

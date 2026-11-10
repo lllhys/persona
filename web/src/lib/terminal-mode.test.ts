@@ -9,6 +9,7 @@ import {
   endText,
   fullBytes,
   fullGrid,
+  inHerdrClient,
   otherMode,
   parseMode,
   parsePreference,
@@ -54,6 +55,15 @@ describe("which mode a terminal opens in", () => {
     expect(pickMode({ ...base, supported: false, own: "full" })).toBe("pane"); // an old hub has no "Full view" to open
     expect(otherMode("pane")).toBe("full");
     expect(otherMode("full")).toBe("pane");
+  });
+  it("offers 完整界面 only for what herdr's client can show", () => {
+    expect(inHerdrClient("sid-1", "w2:p1")).toBe(true); // an agent in a herdr pane
+    expect(inHerdrClient("pane:w2:p1", undefined)).toBe(true); // a herdr shell
+    expect(inHerdrClient("sid-1", undefined)).toBe(true); // nothing says it is another host's: as before
+    expect(inHerdrClient("sid-2", "botmux:id1")).toBe(false); // a botmux session, in botmux's own tmux
+    expect(inHerdrClient("pane:botmux:id1", undefined)).toBe(false); // the same, by its pane's address
+    expect(inHerdrClient("pane:orca:t1:l1", undefined)).toBe(false);
+    expect(inHerdrClient("sid-3", "herdr-core:t1")).toBe(false);
   });
 });
 

@@ -102,7 +102,7 @@
   "source": "contacts"
  },
  "phone_device_info": {
-  "description": "Describe the phone: model identifier and name, iOS version, battery percentage and charging state, low power mode, free and total storage in bytes, current network type (wifi/cellular/wired/offline), timezone and locale. Cheap and safe to call when you need context about the device.",
+  "description": "Describe the phone: model identifier and name, iOS version, battery percentage and charging state, low power mode, free and total storage in bytes, current network type (wifi/cellular/wired/offline), timezone and locale, and the Persona app's version, build number and build channel (debug/release). Cheap and safe to call when you need context about the device.",
   "properties": {},
   "required": [],
   "source": "device"

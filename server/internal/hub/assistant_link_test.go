@@ -233,7 +233,7 @@ func TestAssistantLinkScheduleCalls(t *testing.T) {
 	link := assistantLink{h}
 	ctx := context.Background()
 	raw, err := link.DeviceCall(ctx, assistant.DeviceCall{Device: assistant.DeviceAll, Method: assistant.DeviceDevicesList})
-	if err != nil || string(raw) != `{"complete":false,"devices":[{"id":"server","name":"server","kind":"local","home":"/home/me","online":false,"reachable":true}],"others":[],"phone_online":false}` {
+	if err != nil || string(raw) != `{"apps":[],"complete":false,"devices":[{"id":"server","name":"server","kind":"local","home":"/home/me","online":false,"reachable":true}],"others":[],"phone_online":false}` {
 		t.Fatalf("devices.list: %s %v", raw, err)
 	}
 	// (What the model configuration asks of the extensions, plugins.*, is the manager's: extmgr answers it in its process.)

@@ -327,7 +327,9 @@ struct RecordingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if library.entries.contains(where: \.isRolling) {
-                await RecordingHealthSignals.requestAccess()
+                #if os(iOS)
+                await RecordingHealthSignals.requestAccess() // HealthKit bookmarks are iOS only
+                #endif
                 await keeper.run()
             }
         }

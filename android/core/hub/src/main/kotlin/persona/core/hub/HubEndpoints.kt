@@ -126,6 +126,8 @@ fun endpointResultLabel(error: HubError?): CoreText = CoreText.of(when (error) {
     HubError.Protocol -> Key.EndpointProtocol
     HubError.PairingExpired -> Key.EndpointRejected
     HubError.RateLimited -> Key.EndpointRateLimited
+    HubError.AccessRequired -> Key.EndpointAccessRequired
+    HubError.AccessRejected -> Key.EndpointAccessRejected
     else -> Key.EndpointFailed
 })
 

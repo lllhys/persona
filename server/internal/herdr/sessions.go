@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,9 +28,7 @@ const listTimeout = 5 * time.Second
 
 // ListSessions is `herdr session list --json`: every session of the account, running or stopped.
 func (c *Client) ListSessions(ctx context.Context) ([]SessionInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, listTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, c.Bin, "session", "list", "--json").Output()
+	out, err := c.sessionList(ctx, listTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("herdr session list: %w", err)
 	}

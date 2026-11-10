@@ -27,7 +27,8 @@ func messagesRef(raw string) []message {
 	return out
 }
 
-// sinceRef is Store.Since as it was before (verbatim), for the same comparison.
+// sinceRef is Store.Since as it was before (verbatim but for the cut, which now lands on a line start: cutTail), for
+// the same comparison: it reads every day oldest first, Since only the newest it keeps.
 func (s *Store) sinceRef(chatID string, t time.Time, max int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -69,11 +70,7 @@ func (s *Store) sinceRef(chatID string, t time.Time, max int) string {
 			fmt.Fprintf(&b, "## %s\n%s\n", d, strings.Join(keep, "\n"))
 		}
 	}
-	out := b.String()
-	if len(out) > max {
-		out = "…\n" + out[len(out)-max:]
-	}
-	return out
+	return cutTail(b.String(), max)
 }
 
 // longDay is a day file with one message of n continuation lines (a pasted log) between two short ones.

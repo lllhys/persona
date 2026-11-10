@@ -133,6 +133,19 @@ branch, unrelated histories, no commit yet, guarded files and files too big for 
   an old node; no default branch and no merge base (both offer Uncommitted); a commit or branch that isn't there; any
   other failure with Retry. A chat that takes no messages shows the review read-only.
 
+## iOS: the review page
+
+`apple/Persona/Views/Session/ReviewPage.swift`, logic in `ReviewModel.swift` (`ReviewLogic`), API in `apple/Shared/GitReview.swift`. iPhone and iPad only: the Mac app is frozen (`docs/apple/mac.md`).
+
+- **Opening it:** ⋯ › **Review Changes** in an Agent's chat (the scope the session last used), or **Review** over the Git pane's change list (Uncommitted). Both only when the hub has `git_review` and the session has a folder. It is a sheet over the chat.
+- **What it draws:** every file's diff in one page with the extension code page's parts (`CodeDiffFileHeader`, `CodeHunkHeader`, `CodeDiffRow`). Generated and big files start folded; a big file waits for **Load Diff** and is asked for on its own with the base pinned (one `path`, so a renamed big file shows as added). Secrets, binaries, empty files and mode-only changes say so.
+- **Scopes:** a segmented control picks Uncommitted / Branch / Since a Commit; Since a Commit lists the 30 latest commits (`git/log`). The choice is kept per session (`StateCache` `review-scopes`), with a line saying what the files are compared with.
+- **Comments:** a tap on a line's numbers opens the comment under it, and another tap in the same file moves the range's end ("Comment on lines 9–11 · Tap another line number to change the range"). It has **Start a Review** / **Add to Review** (a draft), **Comment Now** (a card over the chat's message box, `AppModel.composerComments`), **Suggest Change** (a `suggestion` block of the picked new lines) and **Cancel**. The page is a page-sized sheet, on the iPad too.
+- **Drafts** are kept per session on the device (`StateCache` `review-drafts`), drawn under their last line with **Delete**; an old-side draft from another diff shows as outdated.
+- **Finish Review** opens the summary: **Send Review** sends one message (drafts in file then line order as `Code comment N` blocks, then the summary; a failed send stays in the chat to resend); **Add to Message Box** puts the drafts over the box as cards and the summary in it; **Discard Drafts** asks first. The page closes after either.
+- **When the agent changes files** (`fs_changed` for Git) a bar offers **Refresh**. **States:** reading, nothing changed (Uncommitted offers the branch, Branch offers Uncommitted), not a repository, an old node, no default branch and no merge base (both offer Uncommitted), a commit that isn't there, any other failure with Retry; a chat that takes no messages shows the review read-only.
+- **Not yet on iOS:** the lines between hunks, word diffs, Hide whitespace, viewed marks and keyboard keys.
+
 The comment block names its diff in the `Diff:` line (`lib/comments.ts` `DiffScope` kind `review`):
 
 | Scope | `Diff:` |

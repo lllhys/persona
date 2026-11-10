@@ -8,7 +8,7 @@
   "minutes": "{count} 分钟",
   "settings_footer": "同一个账号在电脑上和网关里都出现时，只显示一次，并标出两个来源。",
   "sources": "来源（{count}）",
-  "footer": "Key 只存在 hub 机器上管理者的 manager.json 里（权限 0600），这个页面和接口都读不出来。换了地址，Key 要重新填。hub 去网关读数据时，只发两个只读请求：一个查账号列表，一个查已经存下的额度（refresh=false）。",
+  "footer": "Key 只存在 hub 机器上助手的 manager.json 里（权限 0600），这个页面和接口都读不出来。换了地址，Key 要重新填。hub 去网关读数据时，只发两个只读请求：一个查账号列表，一个查已经存下的额度（refresh=false）。",
   "empty_title": "还没有来源",
   "empty_detail": "添加一个中转（账号池）或兼容的网关后，它的账号会出现在侧边栏的用量条里。没有来源时一切照旧。",
   "status_off": "已停用",

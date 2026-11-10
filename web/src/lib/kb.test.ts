@@ -385,4 +385,17 @@ describe("recordingView", () => {
   it("falls back to offsets without a start", () => {
     expect(recordingView("recordings", { complete: true }, [{ start: 3723, end: 3730, text: "x" }])!.lines[0].clock).toBe("1:02:03");
   });
+  it.each([
+    [{}, undefined, undefined],
+    [{ attendance: "off" }, undefined, undefined],
+    [{ attendance: "observer" }, undefined, undefined],
+    [{ attendance: "listener" }, "listener", undefined],
+    [{ attendance: "participant", attending_session: { machine_id: "macbook", session_id: "s1" } }, "participant", { machineId: "macbook", sessionId: "s1" }],
+    [{ attendance: "participant", attending_session: { machine_id: "macbook", session_id: "" } }, "participant", undefined],
+    [{ attendance: "listener", attending_session: null }, "listener", undefined],
+  ])("reads the attendance of %j", (meta, attendance, attendingSession) => {
+    const v = recordingView("recordings", meta, [])!;
+    expect(v.attendance).toBe(attendance);
+    expect(v.attendingSession).toEqual(attendingSession);
+  });
 });

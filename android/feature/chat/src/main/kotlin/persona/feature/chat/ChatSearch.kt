@@ -76,7 +76,7 @@ internal suspend fun searchChat(res: Resources, items: List<Item>, query: String
 internal data class ChatSearchTarget(val rowId: String, val expand: Set<String> = emptySet())
 
 private fun WorkItem.containsItem(id: String): Boolean = when (this) {
-    is WorkItem.Tool -> call.use.id == id || call.result?.id == id
+    is WorkItem.Tool -> call.use.id == id || call.results.any { it.id == id }
     is WorkItem.Thought -> item.id == id
     is WorkItem.Narration -> item.id == id
     is WorkItem.Folded -> item.id == id

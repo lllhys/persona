@@ -68,7 +68,7 @@
     <string name="settings_src_mail_google_failed">Googleログインに失敗しました</string>
     <string name="settings_src_mail_connect_failed">接続できませんでした</string>
     <string name="settings_src_mail_google_unsupported">このAndroid版にはハブのGoogleコールバックが登録されていないため、このスマートフォンではGoogleログインを完了できません。代わりにGmailの「アプリパスワード」で追加するか（Googleアカウント › セキュリティ › 2段階認証プロセス › アプリパスワード）、iPhoneでGoogleアカウントにログインしてください。</string>
-    <string name="settings_src_mail_google_not_configured">ハブでGoogleログインが設定されていません（マネージャーのmanager.jsonのgoogle.client_id）。代わりにGmailの「アプリパスワード」で追加してください。</string>
+    <string name="settings_src_mail_google_not_configured">ハブでGoogleログインが設定されていません（アシスタントのmanager.jsonのgoogle.client_id）。代わりにGmailの「アプリパスワード」で追加してください。</string>
     <string name="settings_src_mail_google_start_failed">Googleログインを開始できませんでした</string>
     <string name="settings_src_mail_connect">接続</string>
     <string name="settings_src_mail_google_connecting">Gmailに接続中…</string>
@@ -98,7 +98,7 @@
     <string name="settings_src_lark_title">Lark</string>
     <string name="settings_src_lark_status_header">接続状態</string>
     <string name="settings_src_lark_last_event">最新のリアルタイムメッセージ</string>
-    <string name="settings_src_lark_not_configured_caption">ハブはまだLarkに接続されていません。ハブのマシンで Lark ゲートウェイを実行し、マネージャーのmanager.jsonのlarkに設定してください（docs/extensions/feishu.md）。</string>
+    <string name="settings_src_lark_not_configured_caption">ハブはまだLarkに接続されていません。ハブのマシンで Lark ゲートウェイを実行し、アシスタントのmanager.jsonのlarkに設定してください（docs/extensions/feishu.md）。</string>
     <string name="settings_src_lark_caption">Larkアカウントはハブのマシンの Lark ゲートウェイでログインします。チャットと受信トレイはこのアカウントを共有するため、再ログインは不要です。</string>
     <string name="settings_src_lark_accounts_header">アカウント</string>
     <string name="settings_src_lark_quarantined">開けません。Lark ゲートウェイで再試行するか削除してください</string>

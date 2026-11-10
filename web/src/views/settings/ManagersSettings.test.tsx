@@ -83,8 +83,8 @@ const type = (value: string) =>
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
-describe("设置 › 管理者", () => {
-  it("列出每个管理者：默认、在哪、在线 / 最后同步 / 安装中", async () => {
+describe("设置 › 助手", () => {
+  it("列出每个助手：默认、在哪、在线 / 最后同步 / 安装中", async () => {
     await render();
     await answer(0, ROSTER);
     expect(row("助手")?.textContent).toContain("默认");
@@ -97,7 +97,7 @@ describe("设置 › 管理者", () => {
   it("没有名册的旧 hub：说升级 hub", async () => {
     await render();
     await refuse(0, new ApiError(404, "not found", { error: "not found" }));
-    expect(text()).toContain("这台 hub 的版本还不支持管理者");
+    expect(text()).toContain("这台 hub 的版本还不支持助手");
   });
 
   it("名册变了（managers 推送）就重读", async () => {
@@ -120,9 +120,9 @@ describe("设置 › 管理者", () => {
   });
 
   it.each([
-    ["zh-Hans", "机器人凭据被多个管理者共用", "助手和工作使用同一个飞书机器人 App ID。", "工作和家里使用同一个微信账号。", "包含离线管理者", "请为每个管理者配置独立的机器人或微信账号"],
-    ["en", "Shared bot credentials", "助手 and 工作 use the same Lark bot app ID.", "工作 and 家里 use the same WeChat account.", "including offline managers", "Configure a separate bot or WeChat account for each manager"],
-    ["ja", "ボットの認証情報が共有されています", "助手、工作が同じLarkボットのApp IDを使用しています。", "工作、家里が同じWeChatアカウントを使用しています。", "オフラインのマネージャーを含む", "マネージャーごとに別のボットまたはWeChatアカウントを設定してください"],
+    ["zh-Hans", "机器人凭据被多个助手共用", "助手和工作使用同一个飞书机器人 App ID。", "工作和家里使用同一个微信账号。", "包含离线助手", "请为每个助手配置独立的机器人或微信账号"],
+    ["en", "Shared bot credentials", "助手 and 工作 use the same Lark bot app ID.", "工作 and 家里 use the same WeChat account.", "including offline assistants", "Configure a separate bot or WeChat account for each assistant"],
+    ["ja", "ボットの認証情報が共有されています", "助手、工作が同じLarkボットのApp IDを使用しています。", "工作、家里が同じWeChatアカウントを使用しています。", "オフラインのアシスタントを含む", "アシスタントごとに別のボットまたはWeChatアカウントを設定してください"],
   ])("shows shared bot warnings in %s with manager names and guidance", async (lang, title, feishu, wechat, offline, guidance) => {
     await initI18n(lang);
     await render();
@@ -158,7 +158,7 @@ describe("设置 › 管理者", () => {
   it("新建：起名字 → 安装码和命令，能复制", async () => {
     await render();
     await answer(0, ROSTER);
-    await click(button("新建管理者"));
+    await click(button("新建助手"));
     expect(button("创建")?.disabled).toBe(true);
     await type("  书房 ");
     await click(button("创建"));
@@ -180,12 +180,12 @@ describe("设置 › 管理者", () => {
   it("没有命令的 hub：只给码和一句说明", async () => {
     await render();
     await answer(0, ROSTER);
-    await click(button("新建管理者"));
+    await click(button("新建助手"));
     await type("书房");
     await click(button("创建"));
     await answer(1, { manager: { id: "m-9", name: "书房", online: false }, code: "mi_abc", expires_at: soon(10) });
     expect(text()).not.toContain("装成服务");
-    expect(text()).toContain("用这个安装码装好管理者");
+    expect(text()).toContain("用这个安装码装好助手");
   });
 
   it("默认的不能删，说为什么；别的确认后删，hub 拒绝时说大白话", async () => {
@@ -193,7 +193,7 @@ describe("设置 › 管理者", () => {
     await answer(0, ROSTER);
     await click(row("助手"));
     expect(button("删除")?.disabled).toBe(true);
-    expect(text()).toContain("hub 自己运行的管理者不能删除");
+    expect(text()).toContain("hub 自己运行的助手不能删除");
     expect(button("换个地方装")).toBeUndefined();
     await click(button("完成"));
 
@@ -204,7 +204,7 @@ describe("设置 › 管理者", () => {
     await click(button("删除"));
     expect(calls[1]).toMatchObject({ path: "/managers/m-1", method: "DELETE" });
     await refuse(1, new ApiError(409, "make another manager the default first", { error: "x", code: "default_manager" }));
-    expect(text()).toContain("这是默认管理者，先把别的设为默认再删除");
+    expect(text()).toContain("这是默认助手，先把别的设为默认再删除");
   });
 
   it("换个地方装先警告，再给新码", async () => {
@@ -212,7 +212,7 @@ describe("设置 › 管理者", () => {
     await answer(0, ROSTER);
     await click(row("工作"));
     await click(button("换个地方装"));
-    expect(text()).toContain("原来那处的管理者立即停止工作");
+    expect(text()).toContain("原来那处的助手立即停止工作");
     await click(button("换个地方装"));
     expect(calls[1]).toMatchObject({ path: "/managers/m-1/code", method: "POST" });
     await answer(1, { code: "mi_new", expires_at: soon(10) });
@@ -255,7 +255,7 @@ describe("设置 › 管理者", () => {
     expect(calls[1]).toMatchObject({ path: "/managers/m-1/code", method: "POST" });
     await refuse(1, new ApiError(404, "no manager", { error: "no manager", code: "no_manager" }));
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    expect(text()).toContain("这个管理者已经不在了");
+    expect(text()).toContain("这个助手已经不在了");
   });
 
   it("改名、设为默认", async () => {
@@ -277,7 +277,7 @@ describe("设置 › 管理者", () => {
     await click(row("工作"));
     const sw = () => document.body.querySelector<HTMLButtonElement>('[role="switch"][aria-label="推送通知"]');
     expect(sw()?.getAttribute("aria-checked")).toBe("true");
-    expect(text()).toContain("关掉后，这台设备不再收到这个管理者的推送");
+    expect(text()).toContain("关掉后，这台设备不再收到这个助手的推送");
     prefsAnswer = (json) => ({ input: true, done: "long", ...(json as object) });
     await click(sw()!);
     expect(prefsCalls.at(-1)).toEqual({ method: "PUT", json: { muted_managers: ["m-1"] } });

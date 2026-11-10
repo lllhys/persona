@@ -8,7 +8,10 @@
         <item quantity="other">Checked %1$d places</item>
     </plurals>
     <plurals name="chat_assistant_dispatched">
-        <item quantity="one">Dispatched %1$d task · See Progress</item>
-        <item quantity="other">Dispatched %1$d tasks · See Progress</item>
+        <item quantity="one">Dispatched %1$d task</item>
+        <item quantity="other">Dispatched %1$d tasks</item>
     </plurals>
+    <string name="chat_assistant_dispatched_one">Dispatched: %1$s</string>
+    <string name="chat_assistant_dispatch_open">Open</string>
+    <string name="chat_assistant_dispatch_open_line">· %1$s</string>
 </resources>

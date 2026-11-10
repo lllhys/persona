@@ -50,14 +50,19 @@ struct SessionlessCardTests {
         #expect(model.pendingInteractions.isEmpty)
     }
 
+    /// The badge counts the section's rows (#3580): a session's two cards are one row, a sessionless card one of its own.
     @Test func theBadgeCountsWhatNeedsYouLists() {
         let model = AppModel()
         model.applySessions([MachineRef(group: "", id: "m"): [session("s")]])
-        let cards = [card("on-session", kind: .permission, session: "s"), card("script", kind: .question, cwd: "/srv/deploy")]
+        let cards = [card("on-session", kind: .permission, session: "s"), card("also-on-session", kind: .question, session: "s"),
+                     card("script", kind: .question, cwd: "/srv/deploy")]
         model.replaceInteractions("", cards)
         let listed = AgentsNeedsYou.cards(model.pendingInteractions, session: model.session)
-        #expect(listed.map(\.id).sorted() == ["on-session", "script"])
-        #expect(model.badges.agents == listed.count)
+        #expect(listed.map(\.id).sorted() == ["also-on-session", "on-session", "script"])
+        let rows = AgentsNeedsYou.rows(cards: listed, waiting: AgentsNeedsYou.waiting(model.allSessions))
+        // The device's saved agents (another run's) may wait too: machine m's rows are this test's.
+        #expect(rows.filter { $0.key.machineID == "m" }.map(\.id).sorted() == ["agent:m/s", "card:script"])
+        #expect(model.badges.agents == rows.count)
     }
 
     @Test func aSessionlessRowSaysWhereItComesFrom() {

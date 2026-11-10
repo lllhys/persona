@@ -35,10 +35,10 @@
   "about_save_failed": "「自分について」を保存できませんでした：{error}",
   "about_saved": "「自分について」を保存しました。新しいチャットから反映されます",
   "about_me": "自分について",
-  "from_hub": "マネージャーの設定から",
+  "from_hub": "アシスタントの設定から",
   "about_placeholder": "例：コードの場所、よく使う skills、触ってほしくないマシンやディレクトリ、報告のスタイルなど",
   "about_note": "この内容は Persona への指示の最後に追加されます。変更は新しいチャットから反映されます。",
-  "about_note_hub": "現在はマネージャーの設定の内容を使っています。ここで保存すると、こちらが優先されます。",
+  "about_note_hub": "現在はアシスタントの設定の内容を使っています。ここで保存すると、こちらが優先されます。",
   "revert": "元に戻す",
   "memory_saved": "メモリを保存しました",
   "deleted": "「{title}」を削除しました",
@@ -59,5 +59,12 @@
   "default_permissions_unset": "未設定（従来の動作）",
   "task_models": "タスクのモデル",
   "main_chat_model": "メインチャットのモデル",
-  "default_permissions_unconfirmed": "アシスタントがこの権限設定を確認できませんでした。再読み込みしてからお試しください。"
+  "default_permissions_unconfirmed": "アシスタントがこの権限設定を確認できませんでした。再読み込みしてからお試しください。",
+  "meetings_title": "会議",
+  "meeting_attendance": "会議での Persona",
+  "meeting_attendance_off": "オフ",
+  "meeting_attendance_listener": "聞き手",
+  "meeting_attendance_participant": "参加者",
+  "meeting_attendance_footer": "スマートフォンで会議の録音を始めるときに、あらかじめ選ばれる Persona の役割です。毎回変更できます。聞き手のときは回答をスマートフォンの画面に表示し、参加者のときは読み上げもします。回答には会議の資料（これまでの議事録、プロジェクトの進捗、各 ToDo の担当者）だけを使います。",
+  "meeting_attendance_unconfirmed": "アシスタントがこの会議の設定を確認できませんでした。再読み込みしてからお試しください。"
 }

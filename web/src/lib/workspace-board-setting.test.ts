@@ -83,3 +83,34 @@ describe("workspace board switch: an older answer does not put back an old value
     expect(getWorkspaceBoardSetting()).toEqual({ enabled: true, canWrite: true });
   });
 });
+
+describe("workspace board switch: a read asked for while one is out", () => {
+  it("a hello while a read is out reads the switch again after it, so a change missed meanwhile is not lost", async () => {
+    const held = heldHub();
+    const first = refreshWorkspaceBoardSetting();
+    await settle();
+    const again = refreshWorkspaceBoardSetting(); // the hub came back (hello) after another device turned the board on
+    held[0].answer({ enabled: false, can_write: true });
+    await settle();
+    expect(held.map((h) => h.method)).toEqual(["GET", "GET"]);
+    held[1].answer({ enabled: true, can_write: true });
+    await Promise.all([first, again]); // both wait for the read after: callers see the newest value
+    expect(getWorkspaceBoardSetting()).toEqual({ enabled: true, canWrite: true });
+  });
+
+  it("hellos while a read is out add one read after it, not one each", async () => {
+    const held = heldHub();
+    const first = refreshWorkspaceBoardSetting();
+    await settle();
+    void refreshWorkspaceBoardSetting();
+    void refreshWorkspaceBoardSetting();
+    held[0].answer({ enabled: true, can_write: true });
+    await settle();
+    expect(held).toHaveLength(2);
+    held[1].answer({ enabled: false, can_write: true });
+    await first;
+    await settle();
+    expect(held).toHaveLength(2);
+    expect(getWorkspaceBoardSetting().enabled).toBe(false);
+  });
+});

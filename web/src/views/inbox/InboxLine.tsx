@@ -3,7 +3,8 @@
 // drawn when the item has neither.
 import { useEffect, useState } from "react";
 import { fetchInboxTree, itemRoute, parentRoute, type InboxItem, type InboxParent, type InboxTree } from "../../lib/inbox";
-import { navigate, type Route } from "../../lib/router";
+import { openFromInbox } from "../../lib/inbox-nav";
+import type { Route } from "../../lib/router";
 import { t } from "../../i18n";
 import { cx } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
@@ -37,7 +38,7 @@ export function LineList({ rows }: { rows: LineRow[] }) {
             <button
               type="button"
               disabled={!r.route}
-              onClick={() => r.route && navigate(r.route)}
+              onClick={() => r.route && openFromInbox(r.route)}
               className={cx(
                 "flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] whitespace-nowrap",
                 r.route ? "text-ink hover:bg-field" : "cursor-default text-ink-3",

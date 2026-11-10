@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -44,6 +45,11 @@ func TestFoldPreservesSupervisionVisibility(t *testing.T) {
 		{"invalid-disposition", "mcp__persona__supervision_finish", `{"visibility":"user"}`, `not JSON`, false, false},
 		{"failed", "mcp__persona__notify_user", `{}`, "Not sent.", true, false},
 		{"accepted-review", "mcp__persona__task_review", `{"verdict":"accepted"}`, "Accepted.", false, true},
+		{"legacy-notification", "mcp__" + compat.MCPServer + "__notify_user", `{}`, "Notification sent.", false, true},
+		{"legacy-question", "mcp__" + compat.MCPServer + "__ask_user", `{}`, "The user answered.", false, true},
+		{"legacy-explicit", "mcp__" + compat.MCPServer + "__supervision_finish", `{}`, `{"visibility":"user"}`, false, true},
+		{"legacy-accepted-review", "mcp__" + compat.MCPServer + "__task_review", `{"verdict":"accepted"}`, "Accepted.", false, true},
+		{"legacy-failed", "mcp__" + compat.MCPServer + "__notify_user", `{}`, "Not sent.", true, false},
 		{"decision-review", "task_review", `{"verdict":"needs_user"}`, "Decision card sent.", false, true},
 		{"rework", "task_review", `{"verdict":"rework"}`, "Sent back.", false, false},
 		{"other-server-notification", "mcp__example__notify_user", `{}`, "Not a Persona notification.", false, false},

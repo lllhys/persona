@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -483,6 +484,8 @@ func (n *Node) setAgentsAt(agents []host.Agent, epoch uint64, heard map[string]b
 		}
 		if named := n.codexByTitle(a, id, m); named != "" {
 			id = named
+		} else if strings.LastIndex(a.Title, " | ") > 0 {
+			id = "" // an unrecognised current title must not reuse a stale pane binding either
 		}
 		if id != "" {
 			id = n.codexPublicID(home, id)

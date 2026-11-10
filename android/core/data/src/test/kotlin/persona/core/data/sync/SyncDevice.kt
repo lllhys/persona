@@ -79,7 +79,7 @@ internal class SyncDevice(val name: String, private val run: SyncRun, private va
     val sessions = HubSessionsRepository(transport, connection, scope)
     val interactions = HubInteractionCenter(transport, connection, scope, sessions = sessions.sessions, clock = clock)
     val sender = OutboxMessageSender(HubScope("sync-hub", "generation-1"), disk.outbox, messages, scope) { run.nowMillis() }
-    val chats = HubChatRepository(transport, connection, cache, sessions, scope, now = clock,
+    val chats = HubChatRepository(transport, connection, cache, sessions, scope,
         transcript = sender::observeTranscript)
     /** What the chat page holds: the repository's snapshot, and the taps on its cards (ChatScreen's state). */
     var snapshot = ChatSnapshot()
@@ -304,7 +304,9 @@ internal class SyncDevice(val name: String, private val run: SyncRun, private va
         }
 
         override suspend fun reconcile(request: MessageRequest, createdAt: Long, allowTextMatch: Boolean): MessageEvidence? {
-            val receipt = run.read("/ops", get("/ops")) { run.receipt(request.opId) ?: JsonNull }
+            val receipt = run.read("/ops", buildJsonObject { put("get", "/ops"); put("id", run.keyOfOp(request.opId)) }) {
+                run.receipt(request.opId) ?: JsonNull
+            }
             if (receipt is JsonObject && receipt.str("state") in setOf("done", "failed", "unknown")) {
                 val result = SyncReply(receipt.obj("result")!!).sendResult()
                 if (result != MessageTransportResult.Accepted) return MessageEvidence.Receipt(result)

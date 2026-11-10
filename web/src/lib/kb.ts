@@ -114,6 +114,34 @@ export interface KBSegment {
   text: string;
 }
 
+/** One question asked in an attended meeting (docs/assistant/meeting-minutes.md "Attending a meeting", `Ask`). `state`,
+ *  `question_source` and `error` are open sets: an unknown value is shown generically. */
+export interface RecordingAsk {
+  id: string;
+  question: string;
+  question_source: string;
+  at?: number;
+  state: string;
+  answer: string;
+  lang?: string;
+  speak?: boolean;
+  sources?: { kind: string; id: string; name: string; when?: string }[] | null;
+  error?: string;
+  asked_at: string;
+  answered_at?: string;
+}
+
+/** `GET /api/v1/recordings/{id}/live`: how far the attending session has been fed, and the meeting's questions. */
+export interface RecordingLive {
+  next: number;
+  fed: number;
+  attendance: string;
+  attending_session?: { machine_id: string; session_id: string; main?: boolean };
+  /** Open set: attendee_unavailable, attendee_not_allowed, live_full today. */
+  problem?: string;
+  asks?: RecordingAsk[] | null;
+}
+
 /** A line a search found: `path` relative to the data dir, `n` its line number in that file. */
 export interface KBFound {
   path: string;
@@ -555,6 +583,10 @@ export interface RecordingView {
   partial: boolean;
   /** A line per segment and bookmark, at its clock time, in order. */
   lines: { seconds: number; clock: string; text: string; bookmark?: boolean }[];
+  /** Persona attends the meeting in this role (#2981); absent when off. */
+  attendance?: "listener" | "participant";
+  /** The session that attends; absent: the main chat. */
+  attendingSession?: { machineId: string; sessionId: string };
 }
 
 /** Local wall-clock time shared by minutes and transcript; offsets when the start is unknown. */
@@ -596,6 +628,9 @@ export function recordingView(kind: string, meta?: Record<string, unknown> | nul
   const lines = at.map((x) => x.line);
   const secs = Number(meta?.duration);
   const device = str(meta?.device) === "watch" ? t("lib-kb.device_watch") : t("lib-kb.device_phone");
+  const role = str(meta?.attendance);
+  const attending = meta?.attending_session as { machine_id?: unknown; session_id?: unknown } | null | undefined;
+  const machineId = str(attending?.machine_id), sessionId = str(attending?.session_id);
   return {
     startedAt: Number.isFinite(t0) ? started : undefined,
     duration: Number.isFinite(secs) && secs > 0 ? durationLabel(secs) : undefined,
@@ -603,6 +638,9 @@ export function recordingView(kind: string, meta?: Record<string, unknown> | nul
     language: str(meta?.language) || undefined,
     partial: meta?.complete !== true,
     lines,
+    ...(role === "listener" || role === "participant" ? { attendance: role } : {}),
+    // Both ids or none: anything else names no session, and the main chat attends.
+    ...(machineId && sessionId ? { attendingSession: { machineId, sessionId } } : {}),
   };
 }
 

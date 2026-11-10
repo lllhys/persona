@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -243,6 +245,9 @@ func (s *Service) dispatchStart(ctx context.Context, machine, session string, ar
 	s.addDispatched(ctx, dispatchTask{FromMachine: machine, FromSession: session, Machine: s.canonical(am.ID),
 		Session: res.Session.SessionID, Cwd: a.Cwd, Title: title, At: now})
 	s.logf("dispatch %s/%s -> %s/%s in %s", machine, short(session), am.ID, short(res.Session.SessionID), a.Cwd)
+	child := res.Session
+	child.Cwd = cmp.Or(child.Cwd, a.Cwd)
+	s.superviseDispatched(ctx, am, child, a.Prompt, cmp.Or(from.From, short(session)), cmp.Or(from.FromMachine, machine))
 	return fmt.Sprintf("Started on %s in %s: session %s.%s It works on its own and the user can watch it in the apps. "+
 		"Read its state and final reply with dispatch_read (session_id %s, wait_seconds up to 50).",
 		am.Name, a.Cwd, res.Session.SessionID, note, res.Session.SessionID), nil
@@ -371,4 +376,26 @@ func (s *Service) dispatchOverview(ctx context.Context, machine string, mine []d
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// superviseDispatched makes dispatched session c on am a supervised task of the main conversation, as agent_supervise
+// makes one (adoptAgent): a todo whose notes say which agent handed it out, its card in the main conversation's feed,
+// and the supervision messages and task_review of any task the main conversation hands out. The calling agent still
+// reads the result with dispatch_read. Without a main conversation, or when the todo cannot be made, the task runs
+// untracked as before; the start itself has succeeded either way.
+func (s *Service) superviseDispatched(ctx context.Context, am Device, c proto.Session, prompt, from, fromMachine string) {
+	main := s.settings(ctx).Main
+	if main == "" || c.SessionID == "" {
+		return
+	}
+	notes := i18n.T(s.lang(ctx), "assistant-tasks.dispatch_notes", i18n.Args{"from": from,
+		"from_machine": fromMachine, "machine": am.Name, "cwd": c.Cwd}) + "\n\n" + prompt
+	todo, made, err := s.adoptAgent(context.WithoutCancel(ctx), main, am, c, "", prompt, notes, nil, 0, false)
+	if err != nil {
+		s.logf("dispatch %s on %s: task: %v", short(c.SessionID), am.ID, err)
+		return
+	}
+	if made {
+		s.taskCard(ctx, main, todo.ID)
+	}
 }

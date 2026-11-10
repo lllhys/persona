@@ -271,6 +271,28 @@ func (h *Hub) rejectMachine(ctx context.Context, id, actor, action string) error
 	return nil
 }
 
+// dropPending ends a pending computer that went without a reject (dropped with the manager that kept it,
+// ownership_moves.go releaseMachines), as rejectMachine ends one: its Persona Link credentials and pairing codes are
+// revoked, and its row and its place among the pending go. A failure is logged; the expiry removes it later.
+func (h *Hub) dropPending(ctx context.Context, id, why string) {
+	ts := h.trustStore()
+	if ts == nil || !h.machinePending(id) {
+		return
+	}
+	revoked, err := h.revokeComputer(ctx, id)
+	if err == nil {
+		err = ts.ForgetMachineTrust(ctx, id)
+	}
+	if err != nil {
+		h.logf("[%s] %s, but it still waits to be confirmed: %v", id, why, err)
+		return
+	}
+	h.setPendingLocal(id, time.Time{}, false)
+	detail, _ := json.Marshal(map[string]any{"credentials_revoked": revoked, "why": why})
+	h.machineAudit(ctx, id, "remove", "hub", detail)
+	h.broadcastMachines()
+}
+
 // machineAudit writes one audit row; a failure is logged, the change stands.
 func (h *Hub) machineAudit(ctx context.Context, id, action, actor string, detail json.RawMessage) {
 	ts := h.trustStore()

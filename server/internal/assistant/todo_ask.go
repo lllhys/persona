@@ -26,10 +26,11 @@ type todoAsk struct {
 }
 
 // listedTodo is a to-do as GET /api/v1/todos lists it: with its ask while one waits (none: no `ask`, which a client that
-// does not know it never reads).
+// does not know it never reads), and, while it is open and nobody works on it, why (`orphaned`, tasks_orphan.go).
 type listedTodo struct {
 	Todo
-	Ask *todoAsk `json:"ask,omitempty"`
+	Ask      *todoAsk    `json:"ask,omitempty"`
+	Orphaned *TodoOrphan `json:"orphaned,omitempty"`
 }
 
 // todoAsks are the open asks by to-do id, in the request's language: the ones the briefing lists (not passed, not ended,

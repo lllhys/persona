@@ -72,6 +72,11 @@
   --shadow-overlay: 0 0 0 1px var(--line), 0 8px 28px #0001;
   --shadow-nav-preview: 0 12px 40px #00000014;
   --shadow-inset-field: inset 0 1px 2px #0000001f;
+  /* The on/off switch (ui/atoms.tsx Switch, #3675): iOS's green and a translucent grey track (a little darker than iOS's in light), so the off track shows on
+     every background; the knob is white with a soft shadow and no ring. */
+  --switch-on: #34c759;
+  --switch-off: #78788033;
+  --shadow-knob: 0 2px 4px #00000026, 0 1px 1px #0000000f;
 }
 
 .dark {
@@ -116,6 +121,9 @@
   --shadow-overlay: 0 0 0 1px var(--line-strong), 0 8px 28px #00000057;
   --shadow-nav-preview: 0 12px 40px #00000060;
   --shadow-inset-field: inset 0 1px 2px #0006;
+  --switch-on: #30d158;
+  --switch-off: #78788052;
+  --shadow-knob: 0 2px 4px #00000066, 0 1px 1px #00000033;
 }
 
 /* Source messages share the chat's typography and neutral surfaces in every theme. */
@@ -202,6 +210,10 @@
 
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-link: cubic-bezier(0.16, 1, 0.3, 1);
+  --sidebar-fold-open: 250ms;
+  --sidebar-fold-close: 200ms;
+  --sidebar-fold-open-ease: ease-out;
+  --sidebar-fold-close-ease: ease-in;
 
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -320,11 +332,20 @@ button:disabled { cursor: default; }
 .path-link { color: var(--accent-ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; transition: text-decoration-color .15s; }
 .path-link:hover { text-decoration-color: currentColor; }
 .prose-j strong { font-weight: 600; }
-.prose-j blockquote { margin: .7em 0; padding: .1em 0 .1em .9em; border-left: 2px solid var(--line-strong); color: var(--ink-2); }
+/* A quote as Telegram draws it (#2984, ui/ReplyBlocks.tsx ReplyQuote): the accent bar on a faint accent card, room on the right for its mark. */
+.prose-j blockquote { margin: .7em 0; padding: .45em 2em .45em .85em; border-left: 3px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--ink-2); }
+.prose-j blockquote > div > :first-child { margin-top: 0; }
+.prose-j blockquote > div > :last-child { margin-bottom: 0; }
 .prose-j hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
 .prose-j code { font-family: var(--font-mono); font-size: .86em; background: var(--field); border-radius: 5px; padding: .12em .36em; box-shadow: var(--shadow-hairline); }
 .prose-j pre { margin: .7em 0; background: var(--inset); border-radius: 10px; box-shadow: var(--shadow-hairline); padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; }
 .prose-j pre code { background: none; box-shadow: none; padding: 0; font-size: inherit; }
+/* A code block with its title bar (#2984, CodeBar): the box is the wrap's, the pre sits in it. */
+.prose-j .code-block { margin: .7em 0; background: var(--inset); border-radius: 10px; box-shadow: var(--shadow-hairline); overflow: hidden; }
+.prose-j .code-block > pre { margin: 0; background: none; border-radius: 0; box-shadow: none; }
+/* Inline code a click copies (#2984): the body's color on its gray; in a link (a path that opens) the link's. */
+.prose-j code[data-copy-code] { cursor: pointer; }
+.prose-j code[data-copy-code]:hover { background: var(--hover-2); }
 .prose-j table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: separate; border-spacing: 0; margin: .8em 0; font-size: 13px; border-radius: 10px; box-shadow: var(--shadow-hairline); }
 /* The copy button's wrap is what the edge rule above sees, so pass that rule through to the table. The wrap
    adds no margin, padding or border; the table keeps its own box, scroll and margin collapse. */
@@ -436,6 +457,15 @@ select:not([multiple], [size], .appearance-none) {
   --seg-track: color-mix(in srgb, var(--ink) 7%, transparent); --seg-dur: 200ms;
 }
 @theme inline { --color-seg-track: var(--seg-track); }
+@theme inline { --color-switch-on: var(--switch-on); --color-switch-off: var(--switch-off); --shadow-knob: var(--shadow-knob); }
+/* The switch's keyboard focus ring follows its pill (the rule for every button rounds to 6 px) and stands clear of the
+   track; a mouse click shows none (:focus-visible). Forced colors drop the fills, so the track and knob get system colors. */
+.switch:focus-visible { border-radius: 9999px; outline-offset: 2px; }
+@media (forced-colors: active) {
+  .switch { border: 1px solid ButtonText; }
+  .switch > span { background: ButtonText; }
+  .switch[aria-checked="true"] > span { background: Highlight; }
+}
 .status-mark { --mark-size: var(--mark-dot); --mark-spin-size: var(--mark-spin); display: inline-block; flex-shrink: 0; box-sizing: border-box; width: var(--mark-size); height: var(--mark-size); border-radius: 9999px; }
 .status-mark[data-size="sm"] { --mark-size: var(--mark-dot-sm); --mark-spin-size: var(--mark-spin-sm); }
 .status-mark[data-shape="dot"] { background: var(--mark-color); }

@@ -587,6 +587,7 @@ func (s *Service) startRoutes() {
 			guestTools, in.ReportTasks = in.Guest.Tools, false // it hands nothing out
 		}
 		origin, ref := requestOrigin(r, in.Purpose)
+		sentence := in.Prompt // as the owner wrote it, for the route (route.go)
 		if in.Guest == nil {
 			in.Prompt = s.withWorkspaces(ctx, in.Prompt) // as SendParams does for the next messages
 		}
@@ -600,6 +601,10 @@ func (s *Service) startRoutes() {
 		}
 		if in.ReportTasks && !in.Main {
 			s.markReporter(ctx, sess.MachineID, sess.SessionID)
+		}
+		// The owner's New chat: is it a direction? In the background; nothing waits for it (route.go).
+		if origin == OriginUser && !in.Main && in.Guest == nil && in.Space == "" && in.Purpose == "" && !in.ReportTasks {
+			go s.routeNewChat(sess.MachineID, sess.SessionID, sentence)
 		}
 		apierr.WriteJSON(w, map[string]any{"session": sess})
 	})
@@ -735,6 +740,9 @@ func (s *Service) sendParams(ctx context.Context, p SendParams) (map[string]any,
 func (s *Service) sendModel(ctx context.Context, machine, sid string, p map[string]any) error {
 	cfg := s.settings(ctx)
 	p["is_main"] = cfg.Main != "" && cfg.Main == sid && cfg.MachineID == machine
+	if cfg.InterjectBackground != nil && *cfg.InterjectBackground {
+		p["interject_background"] = true
+	}
 	followsSetting := cfg.Main != "" && cfg.Main == sid && cfg.MachineID == machine || s.isTaskConversation(ctx, machine, sid)
 	picked := false // a model picked with this message
 	if m, ok := p["model"].(string); ok && strings.TrimSpace(m) != "" {

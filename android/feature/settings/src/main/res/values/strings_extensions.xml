@@ -163,7 +163,7 @@
     <string name="settings_ext_list_footer">Extensions can only be installed, upgraded and removed on the hub machine (personad extension). Here you can turn them on or off, change settings and enter secrets.</string>
     <string name="settings_ext_save">Save</string>
     <string name="settings_ext_saved_restart">Saved. The extension will restart.</string>
-    <string name="settings_ext_read_only">This extension is set in its manager\'s manager.json. Turn it on or off and change its settings there, then restart the manager.</string>
+    <string name="settings_ext_read_only">This extension is set in its assistant\'s manager.json. Turn it on or off and change its settings there, then restart the assistant.</string>
     <string name="settings_ext_enabled">Enabled</string>
     <string name="settings_ext_enabled_note">When turned off, it stops running and the connectors and other things it provides turn off too. Its settings and secrets are kept.</string>
     <string name="settings_ext_unavailable">Unavailable</string>
@@ -357,4 +357,10 @@
     <string name="settings_ext_open_image">View image</string>
     <string name="settings_ext_chosen_count">%1$d selected</string>
     <string name="settings_ext_pick_time">Time</string>
+    <!-- Source subscriptions (#2041): the entry rows -->
+    <string name="settings_subscriptions_title">Subscriptions</string>
+    <string name="settings_subscriptions_row">Subscriptions</string>
+    <string name="settings_subscriptions_counts_on">%1$d on</string>
+    <string name="settings_subscriptions_counts_failing">%1$d on · %2$d failing</string>
+    <string name="settings_subscriptions_counts_none">Available</string>
 </resources>

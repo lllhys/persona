@@ -193,6 +193,7 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.EngineHerdr -> R.string.designsystem_core_engine_herdr
     CoreText.Key.EngineHerdrApp -> R.string.designsystem_core_engine_herdr_app
     CoreText.Key.EngineOrca -> R.string.designsystem_core_engine_orca
+    CoreText.Key.EngineTern -> R.string.designsystem_core_engine_tern
     CoreText.Key.EnginePaseo -> R.string.designsystem_core_engine_paseo
     CoreText.Key.EngineCindy -> R.string.designsystem_core_engine_cindy
     CoreText.Key.EngineOffline -> R.string.designsystem_core_engine_offline
@@ -334,6 +335,8 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.EndpointProtocol -> R.string.designsystem_core_endpoint_protocol
     CoreText.Key.EndpointRejected -> R.string.designsystem_core_endpoint_rejected
     CoreText.Key.EndpointRateLimited -> R.string.designsystem_core_endpoint_rate_limited
+    CoreText.Key.EndpointAccessRequired -> R.string.designsystem_core_endpoint_access_required
+    CoreText.Key.EndpointAccessRejected -> R.string.designsystem_core_endpoint_access_rejected
     CoreText.Key.EndpointFailed -> R.string.designsystem_core_endpoint_failed
     CoreText.Key.AddressEmpty -> R.string.designsystem_core_address_empty
     CoreText.Key.AddressSpaces -> R.string.designsystem_core_address_spaces

@@ -7,15 +7,27 @@ import (
 	"net/http"
 )
 
-// addOwnedLocalMachine reserves the owner durably before the entry can reach any
-// manager. A crash between the writes leaves either an unused owner reservation
-// or an entry with its owner already stored, never a carrier-owned local process.
-// It is exposed only through the authenticated admin machine endpoint.
+// addOwnedLocalMachine adds a dedicated local machine: only ever owner's, never the carrier's (OwnerRequired). It is
+// exposed only through the authenticated admin machine endpoint.
 func (h *Hub) addOwnedLocalMachine(ctx context.Context, mc *MachineConfig, owner string) error {
 	if mc.Kind != "local" || owner == "" || owner == devicesOwner {
 		return refuseAdd(http.StatusBadRequest, "invalid_manager", errors.New("a local machine requires an explicit non-carrier manager"))
 	}
-	mc.OwnerRequired = true
+	return h.addMachineTo(ctx, mc, owner, "admin")
+}
+
+// addMachineTo adds mc as manager owner's (not the carrier) from the start: the owner is reserved durably before the
+// entry can reach any manager. A crash between the writes leaves either an unused owner reservation or an entry with
+// its owner already stored, never one the carrier ran first. A local machine is a dedicated one (OwnerRequired); any
+// other is owner's as one moved to it is (moveMachine): owner offline, it waits in hub.json until owner connects. by
+// is who added it, for the log.
+func (h *Hub) addMachineTo(ctx context.Context, mc *MachineConfig, owner, by string) error {
+	if owner == "" || owner == devicesOwner {
+		return refuseAdd(http.StatusBadRequest, "invalid_manager", errors.New("a machine added to a manager names one other than the carrier"))
+	}
+	if mc.Kind == "local" {
+		mc.OwnerRequired = true
+	}
 	h.moving.managers.RLock()
 	defer h.moving.managers.RUnlock()
 	d := &h.devices
@@ -48,7 +60,7 @@ func (h *Hub) addOwnedLocalMachine(ctx context.Context, mc *MachineConfig, owner
 	d.mu.Lock()
 	d.assign = next
 	d.mu.Unlock()
-	if err := h.addMachineMoving(mc, "admin"); err != nil {
+	if err := h.addMachineMoving(mc, by); err != nil {
 		// The entry was not published. Restore the reservation without a cancelled
 		// request preventing cleanup; if storage is down, keep the durable-safe owner.
 		if rollbackErr := store.PutSetting(context.WithoutCancel(ctx), machineOwnersKey, previous); rollbackErr != nil {

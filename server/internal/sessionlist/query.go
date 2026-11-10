@@ -111,6 +111,7 @@ func (f filters) matches(r *record) bool {
 		(f.Group == "" || f.Group == v.Group) &&
 		(f.Source == "" || f.Source == v.Source) &&
 		(f.PaneSource == "" || f.PaneSource == v.PaneSource) &&
+		(f.Manager == "" || f.Manager == r.owner) &&
 		(f.Provider == "" || f.Provider == v.Provider) &&
 		(f.Q == "" || strings.Contains(r.search, f.Q))
 }

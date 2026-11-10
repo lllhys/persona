@@ -184,6 +184,20 @@ func TestMicrosoftSignInAndRotation(t *testing.T) {
 }
 
 // What the user is told when Microsoft or Exchange says no.
+func TestMicrosoftSignInOnDomainsWithIMAPPresets(t *testing.T) {
+	for _, domain := range []string{"outlook.com", "hotmail.com", "live.com", "company.example"} {
+		req := outlookServers
+		req.Email, req.Provider, req.Auth = "me@"+domain, ProviderOutlook, AuthOAuth2
+		a, err := buildAccount(req)
+		if err != nil {
+			t.Fatalf("%s: %v", domain, err)
+		}
+		if a.Provider != ProviderOutlook || a.Auth != AuthOAuth2 || a.SMTPHost != outlookServers.SMTPHost {
+			t.Errorf("%s: provider %q, auth %q, smtp %q", domain, a.Provider, a.Auth, a.SMTPHost)
+		}
+	}
+}
+
 func TestMicrosoftErrorsSayWhatToDo(t *testing.T) {
 	for _, tc := range []struct {
 		code, desc string

@@ -1,6 +1,6 @@
 import XCTest
 
-/// The phone's Progress tray with more tasks than fit (#1094, then #2879): every task going on is listed in the tray
+/// The In Progress tray with more tasks than fit (#1094, #2879, #3393): every task going on is listed in the tray
 /// above the action bar, scrolling up and down inside it, while All stays at the tray's top, always in reach. Against
 /// scripts/mock/mock_hub.py with MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASKS_DOCK=many (PERSONA_MOCK_HUB).
 final class TaskDockTests: XCTestCase {
@@ -20,7 +20,7 @@ final class TaskDockTests: XCTestCase {
         app.launchArguments = ["-pairURL", pair]
         app.launchPinned()
 
-        let progress = app.openActionTray("progress")
+        let progress = app.openActionTray("running")
         let tasks = app.trayTasks
         app.waitForRows(tasks, atLeast: 6, timeout: 10)
         XCTAssertGreaterThanOrEqual(tasks.count, 6, "want six or more tasks:\n\(app.debugDescription)")

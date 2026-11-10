@@ -108,6 +108,22 @@ class AssistantConversationTest {
         assertEquals(2, (visible.filterIsInstance<ChatLine.Extra>().single { it.payload is DispatchHint }.payload as DispatchHint).count)
     }
 
+    @Test fun theDispatchedLineCarriesEachTaskToOpenInPlanOrder() {
+        // #3700: the line opens the dispatched tasks themselves, so it carries their to-dos and titles; a task that did not
+        // start has no to-do, and a to-do's current title wins over the plan's
+        val plan = TaskPlan("p", "main", listOf(PlanTask("First", todoId = "t"), PlanTask("Second", todoId = "s"),
+            PlanTask("Failed", error = "machine offline")), "started", "2026-11-10T10:00:00Z")
+        val todos = listOf(Todo("t", "First, renamed", origin = "main", planId = "p"), Todo("s", "Second", origin = "main", planId = "p"))
+        val feed = listOf(FeedItem("p-event", "main", plan.createdAt, "plan", "p"))
+        val hint = AssistantTaskCards.lines(emptyList(), feed, mapOf("p" to plan), todos)
+            .filterIsInstance<ChatLine.Extra>().single { it.payload is DispatchHint }.payload as DispatchHint
+        assertEquals(listOf(DispatchedTask("t", "First, renamed"), DispatchedTask("s", "Second"), DispatchedTask(null, "Failed")), hint.tasks)
+        val one = TaskPlan("q", "main", listOf(PlanTask("Only", todoId = "o")), "started", "2026-11-10T11:00:00Z")
+        val single = AssistantTaskCards.lines(emptyList(), listOf(FeedItem("q-event", "main", one.createdAt, "plan", "q")), mapOf("q" to one), emptyList())
+            .filterIsInstance<ChatLine.Extra>().single { it.payload is DispatchHint }.payload as DispatchHint
+        assertEquals(listOf(DispatchedTask("o", "Only")), single.tasks)
+    }
+
     @Test fun aReusedTodoChoosesItsCurrentPlanOverBothHeldCacheSlots() {
         val old = TaskPlan("old", "main", listOf(PlanTask("Previous run", todoId = "t")), "started", "2026-11-09T10:00:00Z")
         val current = TaskPlan("new", "main", listOf(PlanTask("Current run", todoId = "t")), "started", "2026-11-10T10:00:00Z")

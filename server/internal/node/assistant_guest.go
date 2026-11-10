@@ -92,11 +92,11 @@ func (n *Node) guestOf(id string) []string {
 
 // guestMCPAndTools are a guest conversation's process flags: Persona's MCP server alone, told it is a guest's, no
 // built-in tools, and only its tools allowed.
-func (n *Node) guestMCPAndTools(id string, tools []string) (mcpJSON string, toolFlags []string) {
+func (n *Node) guestMCPAndTools(id string, tools []string, legacyMCP bool) (mcpJSON string, toolFlags []string) {
 	env := assistantMCPEnv(id, n.dir)
 	env["PERSONA_GUEST"] = "1"
-	mcp, _ := json.Marshal(map[string]any{"mcpServers": compat.AddMCPAliases(map[string]any{"persona": map[string]any{"command": n.bin, "args": []string{"mcp"}, "env": env}})})
-	allowed := compat.MCPToolNames(tools)
+	mcp, _ := json.Marshal(map[string]any{"mcpServers": compat.MCPRegistrationServers(map[string]any{"persona": map[string]any{"command": n.bin, "args": []string{"mcp"}, "env": env}}, legacyMCP)})
+	allowed := compat.MCPAllowedToolNames(tools, legacyMCP)
 	return string(mcp), []string{"--mcp-config", string(mcp), "--strict-mcp-config", "--tools", "", "--allowedTools", strings.Join(allowed, ",")}
 }
 

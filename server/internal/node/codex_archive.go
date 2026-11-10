@@ -27,6 +27,10 @@ func (n *Node) listedCodexSource(id string, src codexSource, pass *codexListPass
 	}
 	// A live app-server thread may not have written a rollout yet. A remembered
 	// identity alone (after deletion or disconnection) is not an offline session.
-	_, _, err := n.codexOwner(id)
-	return src, err != errCodexNoOwner
+	if _, _, err := n.codexOwner(id); err != errCodexNoOwner {
+		return src, true
+	}
+	// Nor is one without a rollout, unless the Codex App's sidebar lists it and its database has it (codex_appdb.go).
+	_, app := codexAppThreadOf(src)
+	return src, app
 }

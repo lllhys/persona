@@ -119,7 +119,7 @@
   "op_title_uninstall": "Uninstalling",
   "op_retry": "Retry",
   "op_dismiss": "Dismiss",
-  "op_gone": "It's no longer running: its manager doesn't have it any more (it may have restarted). You can start it again.",
+  "op_gone": "It's no longer running: its assistant doesn't have it any more (it may have restarted). You can start it again.",
   "op_cancel": "Cancel",
   "op_review": "Review",
   "op_error": "Why: {error}",
@@ -130,5 +130,5 @@
   "market_unread": "Extensions show up here once the market can be read.",
   "token_create_hint": "No token yet? Create one on GitHub: the name, purpose and a one-year expiry are filled in and no permissions are needed. Click Generate token, then paste it above.",
   "token_create": "Create on GitHub",
-  "for_manager": "For the manager “{name}”: only its copy changes (each manager has its own extensions)."
+  "for_manager": "For the assistant “{name}”: only its copy changes (each assistant has its own extensions)."
 }

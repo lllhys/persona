@@ -203,7 +203,7 @@ describe("收件箱事件：详情", () => {
 describe("收件箱事件：已处理", () => {
   it("says the manager filed it, and draws the chain's 已处理 entry with its check, no link", async () => {
     act(() => root.render(<EventBody item={managerDone} onSource={() => {}} />));
-    expect(host.querySelector("[data-event-manager-done]")?.textContent).toBe("管理者处理了");
+    expect(host.querySelector("[data-event-manager-done]")?.textContent).toBe("助手处理了");
     expect(host.querySelector("[data-suggestion]")).toBeNull();
     const done = host.querySelector('[data-chain-entry="done"]')!;
     expect(done.textContent).toContain("管理者看完，不用管");
@@ -229,7 +229,7 @@ describe("收件箱事件：列表", () => {
     expect(row(urgent.id).querySelector('[data-event-mark="preparing"]')?.textContent).toContain("AI 正在准备建议");
     expect(row(waiting.id).querySelector('[data-event-mark="working"]')?.textContent).toBe("等对方回复");
     expect(row(failed.id).querySelector('[data-event-mark="failed"]')).not.toBeNull();
-    expect(row(managerDone.id).querySelector('[data-event-mark="manager-done"]')?.textContent).toBe("管理者处理了");
+    expect(row(managerDone.id).querySelector('[data-event-mark="manager-done"]')?.textContent).toBe("助手处理了");
     expect(row(conclusion.id).closest("[data-section]")?.getAttribute("data-section")).toBe("fyi");
     // In progress never folds: no toggle on its title, its rows always shown
     const working = host.querySelector('[data-section="working"]')!;

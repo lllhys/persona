@@ -339,26 +339,40 @@ func (r *Run) Find(items []proto.Item, holds func(proto.Item) bool) (int, bool) 
 	return 0, false
 }
 
-// Answer picks a turn's answer out of its items: the assistant's texts after its last tool call, or after the last
-// message it was given (a message taken mid-turn); without those, its last text.
+// Answer picks a turn's answer out of its items: every text the assistant wrote after the last message it was given
+// (a message taken mid-turn) or notice, in order, but the passing lines said right before a tool call
+// (transcript.AnswerParts, the rule the push body follows); without any after those, its last text. A report written
+// before a tool call is part of the answer, not only the words after the last call.
 func Answer(items []proto.Item) []proto.Item {
-	var tail []proto.Item
+	var texts []proto.Item
+	var parts []transcript.AnswerPart
 	var last *proto.Item
-	for i := range items {
-		it := items[i]
+	for i, it := range items {
 		switch {
 		case it.Role == "assistant" && it.Kind == proto.KindText && strings.TrimSpace(it.Text) != "":
-			tail = append(tail, it)
 			last = &items[i]
-		case it.Kind == proto.KindToolUse || it.Kind == proto.KindToolResult || it.Kind == proto.KindNotice ||
-			it.Role == "user" && it.Kind == proto.KindText:
-			tail = nil
+			texts = append(texts, it)
+			parts = append(parts, transcript.AnswerPart{Text: it.Text})
+		case it.Kind == proto.KindToolUse:
+			if n := len(parts); n > 0 {
+				parts[n-1].BeforeTool = true
+			}
+		case it.Kind == proto.KindNotice || it.Role == "user" && it.Kind == proto.KindText:
+			texts, parts = nil, nil
 		}
 	}
-	if len(tail) == 0 && last != nil {
-		return []proto.Item{*last}
+	if len(texts) == 0 {
+		if last != nil {
+			return []proto.Item{*last}
+		}
+		return nil
 	}
-	return tail
+	keep := transcript.AnswerParts(parts)
+	out := make([]proto.Item, 0, len(keep))
+	for _, i := range keep {
+		out = append(out, texts[i])
+	}
+	return out
 }
 
 // StoppedMost bounds the reason Stopped gives.

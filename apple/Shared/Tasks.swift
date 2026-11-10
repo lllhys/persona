@@ -556,9 +556,12 @@ nonisolated struct DockAgent: Hashable, Identifiable, Sendable {
 
 /// Where a task is, from its todo and its agents' states (docs/assistant/todos.md「State calculation rules」, the hub's taskState).
 nonisolated enum TaskState: String, Sendable, CaseIterable {
-    case needsYou, working, unread, followup, notStarted, done, failed
+    /// `waiting`: its agents ended their turn, yet something brings one back, its background work or the hub's wake-up
+    /// (`Session.waitsToBeWoken`, #3274); only a task nothing brings back is `followup`.
+    case needsYou, working, unread, waiting, followup, notStarted, done, failed
 
-    init(todo: TodoItem, agents: [AgentState]) {
+    /// `agents`: the states of the agents that do not wait to be woken; `waiting`: whether one does.
+    init(todo: TodoItem, agents: [AgentState], waiting: Bool = false) {
         if todo.failedToStart { self = .failed; return }
         if todo.doneAt != nil { self = .done; return }
         if todo.openAsk != nil { self = .needsYou; return }
@@ -566,15 +569,23 @@ nonisolated enum TaskState: String, Sendable, CaseIterable {
         if has.contains(.needsYou) { self = .needsYou }
         else if has.contains(.unread) { self = .unread }
         else if has.contains(.working) { self = .working }
+        else if waiting { self = .waiting }
         else if !agents.isEmpty { self = .followup }
         else { self = .notStarted }
+    }
+
+    /// From the task's agents as the app has them: one that waits to be woken makes it waiting, not stopped (#3274).
+    init(todo: TodoItem, sessions: [Session]) {
+        let waits = sessions.filter(\.waitsToBeWoken)
+        let others = sessions.filter { !$0.waitsToBeWoken }.map(\.state)
+        self.init(todo: todo, agents: others, waiting: !waits.isEmpty)
     }
 
     /// The agent state whose tone and mark the task borrows.
     var agentState: AgentState {
         switch self {
         case .needsYou: .needsYou
-        case .working, .notStarted: .working
+        case .working, .waiting, .notStarted: .working
         case .unread, .done: .unread
         case .followup, .failed: .idle
         }
@@ -584,7 +595,7 @@ nonisolated enum TaskState: String, Sendable, CaseIterable {
     var priority: Int {
         switch self {
         case .needsYou: 0
-        case .working, .notStarted: 1
+        case .working, .waiting, .notStarted: 1
         case .unread: 2
         case .followup: 3
         case .done, .failed: 4
@@ -596,7 +607,7 @@ nonisolated enum TaskState: String, Sendable, CaseIterable {
 
     /// Nothing of the task runs (it ended, stopped, or its agent never started; `notStarted` stays when the hub never
     /// said how the start went): the user may take it out of the conversation.
-    var isRemovable: Bool { self != .working && self != .needsYou }
+    var isRemovable: Bool { self != .working && self != .waiting && self != .needsYou }
 }
 
 /// What a task's card says its agent is on now (docs/assistant/unified-entry.md「Task cards」): its latest words, or — while it

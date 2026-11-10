@@ -11,7 +11,7 @@ import { removeStoredValue, storedValue, storeValue } from "./compatibility";
 import { uuid } from "./format";
 import { navigate } from "./router";
 import { getState, refreshAssistant, setOutbox } from "./store";
-import { chooseManager, chosenManager, noteConversation, otherManager, ownerHeaders } from "./manager-choice";
+import { chosenManager, noteConversation, otherManager, ownerHeaders } from "./manager-choice";
 import { apiOp, isTransient, OP_OFFLINE_MS, OP_RETRY_MS } from "./ops";
 import { echoed, isEcho, type Seen, type Sent } from "./echo";
 import { parseUserText, type ChatLine, type UserMessage } from "./turns";
@@ -390,20 +390,20 @@ export async function askPersona(text: string): Promise<void> {
 
 /**
  * askPersona for one manager's main conversation (an inbox item's `manager`, none: the default's), whatever the assistant
- * page shows (Android's mainConversationOf): its main conversation is read from that manager, the page moves to that
- * manager and the conversation, and the text goes there; with none yet, the text starts it. Throws when the manager
- * can't be read or the conversation can't start, before the page moves; `sent` then says whether the text got there
- * (a failed bubble says why).
+ * page shows (Android's mainConversationOf): its main conversation is read from that manager, the page opens that
+ * conversation (the current assistant stays as it is, docs/assistant/managers.md "Clients") and the text goes there;
+ * with none yet, the text starts it. Throws when the manager can't be read or the conversation can't start, before the
+ * page moves; `sent` then says whether the text got there (a failed bubble says why).
  */
 export async function askPersonaOf(owner: string | undefined, text: string): Promise<{ sent: Promise<boolean> }> {
   const headers = ownerHeaders(owner);
   const a = await api<AssistantInfo>("/assistant", { headers });
   if (a.machine_id && a.main) {
-    adoptConversation(owner, a.main);
+    adoptConversation(owner, a.main, a.machine_id);
     return { sent: sendToMain(a.machine_id, a.main, text) };
   }
   const r = await startConversation({ prompt: text, main: true }, headers);
-  adoptConversation(owner, r.session.session_id);
+  adoptConversation(owner, r.session.session_id, r.session.machine_id);
   noteSent(r.session.machine_id, r.session.session_id, { text });
   void refreshAssistant().catch(() => {});
   navigate({ name: "persona", sid: r.session.session_id });
@@ -417,8 +417,20 @@ function sendToMain(mid: string, sid: string, text: string): Promise<boolean> {
   return sendToSession(mid, sid, { text }, { launcher: pickedLauncher(key), model: pickedModel(key) });
 }
 
-/** owner's conversation sid: its requests go to owner, and the assistant page shows owner (none: the default). */
-export function adoptConversation(owner: string | undefined, sid: string) {
+// The conversations a page opened for an item's own assistant (a hand-off, an inbox item's Ask Persona, an inbox
+// chat's summary): the computer each runs on and whose it is. The page that shows one (PersonaAssistant) finds it there when it
+// is another assistant's than the current one, which stays current (docs/assistant/managers.md "Clients": an item's
+// things open as themselves and never change the pick).
+const homes = new Map<string, { machine: string; manager?: string }>();
+
+/** owner's conversation sid, on computer machine (owner none: the default's): its requests go to owner, and its page
+ *  shows it on that computer, whichever assistant is current. */
+export function adoptConversation(owner: string | undefined, sid: string, machine: string) {
   noteConversation(sid, otherManager(owner));
-  chooseManager(owner || null);
+  if (sid && machine) homes.set(sid, { machine, manager: owner });
+}
+
+/** Where a conversation adopted here runs and whose it is (undefined: none adopted). */
+export function adoptedConversation(sid: string): { machine: string; manager?: string } | undefined {
+  return homes.get(sid);
 }

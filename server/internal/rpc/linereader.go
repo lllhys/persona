@@ -7,8 +7,10 @@ import (
 	"sync"
 )
 
-// lineStart is the buffer a lineReader starts with and goes back to, the one Serve's bufio.Scanner started with.
-const lineStart = 64 << 10
+// lineStart is the buffer a lineReader starts with and goes back to, and all an idle connection keeps of it. Most
+// lines are far shorter (answers, events); a longer one grows through grownBufs. Serve's bufio.Scanner started with
+// 64 KiB, which every computer's connection kept.
+const lineStart = 16 << 10
 
 // lineReader reads Serve's lines exactly as a bufio.Scanner with ScanLines did: the same limit, the same lines (the
 // newline and one carriage return before it dropped, an unterminated last line given, empty lines kept) and the same
@@ -23,6 +25,7 @@ type lineReader struct {
 	first      []byte // the first buffer, kept
 	buf        []byte // first, or a grown one while a long line needs it
 	start, end int    // the unread part of buf
+	seen       int    // how much of the unread part has no newline: a line read in several reads is searched once
 	err        error
 	token      []byte
 }
@@ -53,7 +56,8 @@ func (s *lineReader) setErr(err error) {
 	}
 }
 
-// Scan finds the next line, step for step as bufio.Scanner.Scan with ScanLines does.
+// Scan finds the next line as bufio.Scanner.Scan with ScanLines does, step for step but for the sizes a long line
+// grows through.
 func (s *lineReader) Scan() bool {
 	// The last line goes now, as a Scanner's does when the next split finds none: kept while Scan waits for input, it
 	// would keep the buffer a long line grew (Bytes is valid only until the next Scan).
@@ -61,19 +65,21 @@ func (s *lineReader) Scan() bool {
 	for {
 		if s.end > s.start || s.err != nil {
 			data := s.buf[s.start:s.end]
-			if i := bytes.IndexByte(data, '\n'); i >= 0 {
-				s.token = dropCR(data[:i])
-				s.start += i + 1
+			if i := bytes.IndexByte(data[s.seen:], '\n'); i >= 0 {
+				s.token = dropCR(data[:s.seen+i])
+				s.start += s.seen + i + 1
+				s.seen = 0
 				return true
 			}
+			s.seen = len(data)
 			if s.err != nil && len(data) > 0 {
 				s.token = dropCR(data)
-				s.start = s.end
+				s.start, s.seen = s.end, 0
 				return true
 			}
 		}
 		if s.err != nil {
-			s.token, s.start, s.end = nil, 0, 0
+			s.token, s.start, s.end, s.seen = nil, 0, 0, 0
 			s.shrink()
 			return false
 		}
@@ -93,7 +99,14 @@ func (s *lineReader) Scan() bool {
 				s.setErr(bufio.ErrTooLong)
 				return false
 			}
-			grown := takeGrown(min(len(s.buf)*2, s.max))
+			// Out of the first buffer straight to four times it (64 KiB: a session list of a few dozen rows fits), then
+			// doubling as a Scanner does. Lines just past the first buffer come often: doubling from 16 KiB read a
+			// replay of node traffic 10% slower than the 64 KiB start did; this, with seen, reads it as fast.
+			size := len(s.buf) * 2
+			if len(s.buf) == len(s.first) && len(s.buf) <= maxInt/4 {
+				size *= 2
+			}
+			grown := takeGrown(min(size, s.max))
 			copy(grown, s.buf[s.start:s.end])
 			if len(s.buf) > len(s.first) {
 				giveGrown(s.buf)
@@ -142,14 +155,14 @@ func dropCR(b []byte) []byte {
 	return b
 }
 
-// grownBufs keeps the buffers long lines grew to, 128 KiB to 1 MiB (a pool per size), for the next long line on any
+// grownBufs keeps the buffers long lines grew to, 64 KiB to 1 MiB (a pool per size), for the next long line on any
 // connection: lines that long come often (a computer's session list), and only a few are being read at once. A larger
 // buffer is left to the GC, as a pool's are at every other GC.
-var grownBufs [4]sync.Pool
+var grownBufs [5]sync.Pool
 
 func grownPool(size int) *sync.Pool {
 	for i := range grownBufs {
-		if size == lineStart<<(i+1) {
+		if size == lineStart<<(i+2) {
 			return &grownBufs[i]
 		}
 	}

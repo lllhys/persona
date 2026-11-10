@@ -35,7 +35,7 @@ private fun recordTarget(lines: List<ChatLine>, matches: (WorkItem) -> Boolean):
 }
 
 private fun WorkItem.containsTaskRecord(id: String, sourceSeq: Int?): Boolean = when (this) {
-    is WorkItem.Tool -> call.use.id == id || call.result?.id == id
+    is WorkItem.Tool -> call.use.id == id || call.results.any { it.id == id }
     is WorkItem.Thought -> item.id == id
     is WorkItem.Narration -> item.id == id
     is WorkItem.Folded -> if (sourceSeq == null) item.item.fold?.tasks.orEmpty().any { it.sourceItemId == id }

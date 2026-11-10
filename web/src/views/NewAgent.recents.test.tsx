@@ -10,6 +10,11 @@ import type { Machine } from "../lib/types";
 import { loadRecentSetups, recentSetupsKey, type RecentSetup } from "../lib/recent-setups";
 
 const state = vi.hoisted(() => ({ loaded: true, features: [] as string[], machines: [] as Machine[] }));
+// one assistant: its computers are the store's (lib/current-assistant.ts reads the roster, which this store stand-in has none of)
+vi.mock("../lib/current-assistant", async () => {
+  const store = (await import("../lib/store")) as unknown as { useStore: <T>(select: (s: { machines: unknown[] }) => T) => T };
+  return { useScopedMachines: () => store.useStore((s) => s.machines) };
+});
 vi.mock("../lib/store", () => ({
   getState: () => state,
   useStore: (selector: (value: typeof state) => unknown) => selector(state),

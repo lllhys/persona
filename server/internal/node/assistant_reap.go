@@ -17,6 +17,11 @@ const assistantTaskMaxIdle = 12 * time.Hour
 // assistantInterrupt stops the current turn. claude -p has no interrupt over stdin, so the process is killed;
 // the next message resumes the conversation from its transcript. Codex has turn/interrupt: the process stays.
 func (n *Node) assistantInterrupt(id string) error {
+	// An explicit Stop wins over any queued same-model or fallback continuation: cancelled before the session lock, a
+	// recovery send that has not started gives up at once instead of holding Stop behind it (#3495).
+	n.cancelAssistantRecovery(id)
+	defer n.typing.lock(id)()
+	n.cancelAssistantRecovery(id)
 	if n.runtimeAssistant(id) {
 		return n.assistantInterruptRuntime(context.Background(), id)
 	}
@@ -30,12 +35,19 @@ func (n *Node) assistantInterrupt(id string) error {
 			return nil
 		}
 	}
-	n.stopAssistant(id)
+	n.stopAssistantProcess(id)
 	n.rememberTasks(id, nil) // stopped on purpose, background tasks included
 	return nil
 }
 
+// stopAssistant cancels recovery before replacing a process. Explicit user stops additionally hold the session send
+// lock (assistantInterrupt and session.close); internal callers may already hold settings locks and must not take it.
 func (n *Node) stopAssistant(id string) {
+	n.cancelAssistantRecovery(id)
+	n.stopAssistantProcess(id)
+}
+
+func (n *Node) stopAssistantProcess(id string) {
 	n.mu.Lock()
 	p := n.procs[id]
 	delete(n.procs, id)

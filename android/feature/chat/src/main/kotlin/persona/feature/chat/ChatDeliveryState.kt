@@ -80,6 +80,8 @@ internal fun refusalText(code: String?): UiText = when (code) {
     "dialog_open" -> UiText.Res(R.string.chat_delivery_dialog_open)
     "op_id_reused" -> UiText.Res(R.string.chat_delivery_op_id_reused)
     "invalid" -> UiText.Res(R.string.chat_delivery_invalid)
+    // The provider does not run on this computer (docs/integrations/launchers.md "Device scope and on-demand delivery").
+    "launcher_out_of_scope", "launcher_own_service" -> UiText.Res(R.string.chat_delivery_out_of_scope)
     else -> mapOperationFailure(code, "none", false).takeIf { it.reason != FailureReason.Failed }
         ?.let { operationFeedback(it).text } ?: UiText.Res(R.string.chat_delivery_refused)
 }

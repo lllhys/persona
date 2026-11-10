@@ -20,7 +20,10 @@ import (
 
 func agentHub(t *testing.T) *inboxHub {
 	h := newInboxHub(t)
-	h.inboxReady(context.Background())
+	if err := h.inboxReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitNeedsYouIdle(t, h.Service)
 	return h
 }
 
@@ -497,7 +500,10 @@ func TestInboxItemAboutATask(t *testing.T) {
 func TestInboxAgentPromptNamesTheKnowledgeDir(t *testing.T) {
 	ctx := context.Background()
 	h, e := newInboxHubKB(t)
-	h.inboxReady(ctx)
+	if err := h.inboxReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitNeedsYouIdle(t, h.Service)
 	goldenKB(t, e)
 	dir := h.kb.dir
 	if dir == "" || strings.Contains(dir, ".persona") {

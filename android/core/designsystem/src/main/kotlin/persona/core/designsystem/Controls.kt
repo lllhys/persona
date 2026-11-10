@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,7 +134,7 @@ fun JButton(
     }
     val busy = loading
     Row(
-        modifier.heightIn(min = size.height).scale(scale).then(frame)
+        modifier.heightIn(min = size.height).minimumInteractiveComponentSize().scale(scale).then(frame)
             .clickable(interaction, indication = androidx.compose.material3.ripple(), enabled = enabled && !busy, role = Role.Button, onClick = onClick)
             .stableAlpha(if (enabled || busy) 1f else 0.4f)
             .padding(horizontal = if (kind == JButtonKind.Quiet) 8.dp else size.padding),
@@ -290,7 +291,7 @@ fun JSearchField(query: String, onQueryChange: (String) -> Unit, placeholder: St
     JTextField(
         query, onQueryChange, modifier, placeholder = placeholder, singleLine = true, leading = PhIcons.MagnifyingGlass,
         trailing = if (query.isEmpty()) null else ({
-            Box(Modifier.size(24.dp).clip(CircleShape).clickable(role = Role.Button) { onQueryChange("") }.semantics { contentDescription = clear }, contentAlignment = Alignment.Center) {
+            Box(Modifier.size(24.dp).minimumInteractiveComponentSize().clip(CircleShape).clickable(role = Role.Button) { onQueryChange("") }.semantics { contentDescription = clear }, contentAlignment = Alignment.Center) {
                 JIcon(PhIcons.XCircle, null, size = 18.dp, tint = PersonaTheme.palette.ink3, selected = true)
             }
         }),
@@ -316,7 +317,7 @@ fun JSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: M
     }
     val offset by animateDpAsState(if (checked) width - thumb - 6.dp else 0.dp, label = "thumb")
     Box(
-        modifier.size(width, height).clip(RoundedCornerShape(corner)).background(track)
+        modifier.size(width, height).minimumInteractiveComponentSize().clip(RoundedCornerShape(corner)).background(track)
             .then(if (!checked) Modifier.border(1.dp, palette.line, RoundedCornerShape(corner)) else Modifier)
             .then(if (onCheckedChange != null) Modifier.clickable(enabled = enabled, role = Role.Switch) { onCheckedChange(!checked) } else Modifier)
             .semantics { toggleableState = ToggleableState(checked) }
@@ -474,7 +475,8 @@ object JChipTokens {
 /**
  * A filter or a fact. With [onClick] it toggles; without, it is a quiet label. [onLongClick] (with [onClick]) is a long
  * press for more (a menu of other ways to use it); the chip looks the same. [dot] is a plain colored mark in the place
- * of a [status] dot, for a category rather than a state.
+ * of a [status] dot, for a category rather than a state. Pass [Role.Button] as [role] for an action instead of a toggle.
+ * [trailingIcon] adds a compact affordance such as an expansion chevron.
  */
 @Composable
 fun JChip(
@@ -489,6 +491,8 @@ fun JChip(
     muted: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     dot: Color? = null,
+    role: Role = Role.Checkbox,
+    trailingIcon: PhIcon? = null,
 ) {
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
@@ -500,11 +504,15 @@ fun JChip(
     }
     val ink = if (muted && (!selected || style == AppStyle.Board)) palette.ink3 else plainInk
     Row(
-        modifier.heightIn(min = if (onClick != null) JChipTokens.height else JChipTokens.quietHeight).clip(shape).background(fill).border(JChipTokens.border, border, shape)
+        modifier.heightIn(min = if (onClick != null) JChipTokens.height else JChipTokens.quietHeight)
+            .then(if (onClick != null) Modifier.minimumInteractiveComponentSize() else Modifier)
+            .clip(shape).background(fill).border(JChipTokens.border, border, shape)
             .then(when {
                 onClick != null && onLongClick != null ->
-                    Modifier.combinedClickable(role = Role.Checkbox, onClick = onClick, onLongClick = onLongClick).semantics { this.selected = selected }
-                onClick != null -> Modifier.clickable(role = Role.Checkbox, onClick = onClick).semantics { this.selected = selected }
+                    Modifier.combinedClickable(role = role, onClick = onClick, onLongClick = onLongClick)
+                        .semantics { if (role == Role.Checkbox) this.selected = selected }
+                onClick != null -> Modifier.clickable(role = role, onClick = onClick)
+                    .semantics { if (role == Role.Checkbox) this.selected = selected }
                 else -> Modifier
             })
             .padding(horizontal = JChipTokens.horizontalPadding),
@@ -517,6 +525,10 @@ fun JChip(
         count?.let {
             Spacer(Modifier.width(JChipTokens.countGap))
             Text("$it", style = PersonaTheme.type.micro, color = if (selected && style != AppStyle.Board) ink else palette.ink3)
+        }
+        trailingIcon?.let {
+            Spacer(Modifier.width(JChipTokens.iconGap))
+            JIcon(it, null, size = JChipTokens.iconSize, tint = ink)
         }
     }
 }

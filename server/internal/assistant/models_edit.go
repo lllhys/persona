@@ -61,6 +61,40 @@ func patchModel(b ModelBinding, in modelPatch) (ModelBinding, error) {
 	return b, nil
 }
 
+// modelProviderCompatible is the shared purpose and machine scope used by model settings and launcher pickers.
+func (s *Service) modelProviderCompatible(p ModelPurpose, v ModelProvider, stored []storedLauncher) bool {
+	compatible := v.Kind == p.Kind
+	if p.Kind == "launcher" && v.Kind == "api" { // a direct Messages API provider starts Claude on its gateway (#2455)
+		compatible = messagesAPI(v.API)
+	}
+	if p.Kind == "api" && v.Kind == "launcher" {
+		for _, l := range stored {
+			if v.ID == "launcher."+l.Name {
+				compatible = messagesAPI(l.API)
+				break
+			}
+		}
+	}
+	if p.Kind == "plugin" {
+		compatible = v.ID == p.ID
+	}
+	if compatible && p.CategoryID == "assistant" && v.Kind == "launcher" {
+		compatible = slices.Contains([]string{"", "claude", "codex", "agy", "omp"}, v.Agent)
+	}
+	if compatible && p.Kind == "launcher" && len(v.Machines) > 0 && p.MachineID != "" {
+		compatible = slices.Contains(v.Machines, p.MachineID)
+	}
+	if compatible && p.Kind == "launcher" && p.MachineID != "" {
+		for _, l := range stored {
+			if v.ID == "launcher."+l.Name {
+				compatible = s.scopeReason(l, p.MachineID) == ""
+				break
+			}
+		}
+	}
+	return compatible
+}
+
 func (s *Service) validateModel(ctx context.Context, p ModelPurpose, b ModelBinding, providers []ModelProvider) error {
 	var provider *ModelProvider
 	for i := range providers {

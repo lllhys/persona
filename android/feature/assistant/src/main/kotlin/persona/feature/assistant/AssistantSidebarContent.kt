@@ -45,6 +45,7 @@ fun AssistantSidebarContent(
     onPage: (String) -> Unit,
     onTogglePin: suspend (SessionKey) -> Unit,
     onRetired: (SessionKey) -> Unit,
+    switcher: AssistantSwitcherSlot? = null,
 ) {
     val choice by AssistantManagerChoice.current.collectAsStateWithLifecycle()
     val received = snapshot.takeIf { it.managerId == choice.shown }
@@ -119,7 +120,7 @@ fun AssistantSidebarContent(
                 autoOpen = autoOpen, onAutoOpen = { autoOpen = it },
                 onTodos = onTodos, todoCount = todoCount, showTodos = showTodos,
                 settingsCount = settingsCount, settingsDot = settingsDot, settingsBadge = settingsBadge,
-                pages = pages, onPage = onPage)
+                pages = pages, onPage = onPage, switcher = switcher)
         }
     }
     ending?.let { (session, target) ->

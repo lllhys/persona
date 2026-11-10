@@ -10,6 +10,12 @@ import kotlinx.serialization.Serializable
 /** The hub's hello feature for built-in presets, a name it makes up and `assign` (docs/integrations/launchers.md "Built-in presets"). */
 const val BuiltinPresetsFeature = "builtin_presets"
 
+/**
+ * The hub's hello feature for a Persona-managed provider's device scope (docs/integrations/launchers.md "Device scope and on-demand
+ * delivery"): without it a new provider gets no "Computers" page and an older hub's providers show none.
+ */
+const val LauncherScopeFeature = "launcher_scope"
+
 /** The categories a provider added from the wizard takes over while they are still at their default (docs/assistant/onboarding.md 5.4). */
 val AssignPurposes = listOf("assistant", "agent.new")
 
@@ -33,6 +39,9 @@ interface ProviderSetup {
      */
     val builtinPresets: Flow<Boolean> get() = flowOf(false)
 
+    /** Whether the selected hub takes a provider's device scope ([LauncherScopeFeature]); false from older hubs. */
+    val launcherScope: Flow<Boolean> get() = flowOf(false)
+
     /** `POST /api/v1/launchers` with the hub's answer: the name it gave and, with `assign`, what now runs on it. */
     suspend fun create(provider: NewProvider): ProviderAdded {
         add(provider)
@@ -44,6 +53,12 @@ interface ProviderSetup {
 
     /** `POST /api/v1/launchers/discover`: the models the gateway lists; [ProviderDiscovery.error] when it could not be asked. */
     suspend fun discover(probe: ProviderProbe): ProviderDiscovery = throw UnsupportedOperationException()
+
+    /**
+     * `PUT /api/v1/launchers/{name}`: a Persona-managed one changed. The base fields always go (the hub replaces them); the
+     * others only when they changed, so what is left out keeps what is stored, the key, headers and environment included.
+     */
+    suspend fun update(name: String, changes: ProviderUpdate): Unit = throw UnsupportedOperationException()
 
     /** `GET /api/v1/launchers`: every provider, kept by Persona or found in a machine's ~/.zshrc (hidden ones too). */
     suspend fun launchers(): List<HubLauncher> = throw UnsupportedOperationException()
@@ -101,10 +116,48 @@ data class HubLauncher(
     @SerialName("origin") val origin: String? = null,
     /** The detail's: each machine's function body, keys masked. */
     @SerialName("definitions") val definitions: Map<String, String> = emptyMap(),
+    /** The harness a launcher runs in: claude (also empty) | codex | agy | omp. */
+    @SerialName("agent") val agent: String? = null,
+    @SerialName("custom_model_name") val customModelName: String? = null,
+    @SerialName("custom_model_description") val customModelDescription: String? = null,
+    // A managed one's model and gateway parameters (docs/integrations/launchers.md "Provider model and gateway parameters").
+    @SerialName("opus_model") val opusModel: String? = null,
+    @SerialName("sonnet_model") val sonnetModel: String? = null,
+    @SerialName("haiku_model") val haikuModel: String? = null,
+    @SerialName("fable_model") val fableModel: String? = null,
+    @SerialName("subagent_force") val subagentForce: Boolean = false,
+    @SerialName("proxy") val proxy: String? = null,
+    @SerialName("no_proxy") val noProxy: String? = null,
+    @SerialName("timeout_ms") val timeoutMs: Int = 0,
+    @SerialName("compact_window") val compactWindow: Int = 0,
+    @SerialName("max_context") val maxContext: Int = 0,
+    @SerialName("effort") val effort: String? = null,
+    // A managed one's device scope ("Device scope and on-demand delivery"); all absent from an older hub.
+    /** all | selected | none */
+    @SerialName("share") val share: String? = null,
+    /** With selected: the computers it runs on; with all: the work computers added to it. */
+    @SerialName("scope_machines") val scopeMachines: List<String> = emptyList(),
+    /** on_demand | push */
+    @SerialName("delivery") val delivery: String? = null,
+    /** skip | use */
+    @SerialName("own_service") val ownService: String? = null,
+    /** The computers with a key of their own (the keys never come back). */
+    @SerialName("key_machines") val keyMachines: List<String> = emptyList(),
+    /** Saved before scopes existed: every computer, work ones too, each with a copy, until a scope field is saved. */
+    @SerialName("legacy_scope") val legacyScope: Boolean = false,
 ) {
     val managed: Boolean get() = ProtocolCompatibility.managedProvider(source)
     val pathScript: Boolean get() = source == "path"
     val isApi: Boolean get() = kind == "api"
+
+    /** The harness it runs in, for grouping: a direct API its own ("api"), a launcher its agent ("claude" when none is said). */
+    val harness: String get() = if (isApi) "api" else agent?.takeIf { it.isNotBlank() } ?: "claude"
+
+    /** A managed one on a hub that knows device scopes. */
+    val hasScope: Boolean get() = managed && !share.isNullOrBlank()
+
+    /** What it is called in lists. */
+    val title: String get() = displayName?.takeIf { it.isNotBlank() } ?: name
 }
 
 /** What "Test availability" answered: [machine] it ran on (none for a direct API), and the result. */
@@ -194,8 +247,16 @@ data class ProviderPreset(
     }
 }
 
+/** One model of a gateway (proto.ProviderModel): what a preset lists, discovery finds, or a managed provider keeps. */
 @Serializable
-data class PresetModel(@SerialName("id") val id: String, @SerialName("name") val name: String? = null) {
+data class PresetModel(
+    @SerialName("id") val id: String,
+    @SerialName("name") val name: String? = null,
+    /** Tokens; null or 0: unknown (200K assumed). */
+    @SerialName("context_window") val contextWindow: Int? = null,
+    @SerialName("efforts") val efforts: List<String>? = null,
+    @SerialName("default_effort") val defaultEffort: String? = null,
+) {
     val label: String get() = name?.takeIf { it.isNotBlank() } ?: id
 }
 
@@ -223,6 +284,77 @@ data class NewProvider(
     @SerialName("auth") val auth: String? = null,
     /** The categories to put on it while they are still at their default ([AssignPurposes]); only for hubs with [BuiltinPresetsFeature]. */
     @SerialName("assign") val assign: List<String>? = null,
+    // The model and gateway parameters typed in (docs/integrations/launchers.md "Provider model and gateway parameters"): only what was set.
+    @SerialName("custom_model") val customModel: String? = null,
+    @SerialName("custom_model_name") val customModelName: String? = null,
+    @SerialName("custom_model_description") val customModelDescription: String? = null,
+    @SerialName("models") val models: List<PresetModel>? = null,
+    @SerialName("opus_model") val opusModel: String? = null,
+    @SerialName("sonnet_model") val sonnetModel: String? = null,
+    @SerialName("haiku_model") val haikuModel: String? = null,
+    @SerialName("fable_model") val fableModel: String? = null,
+    @SerialName("subagent_force") val subagentForce: Boolean? = null,
+    @SerialName("headers") val headers: String? = null,
+    @SerialName("env") val env: String? = null,
+    @SerialName("proxy") val proxy: String? = null,
+    @SerialName("no_proxy") val noProxy: String? = null,
+    @SerialName("timeout_ms") val timeoutMs: Int? = null,
+    @SerialName("compact_window") val compactWindow: Int? = null,
+    @SerialName("max_context") val maxContext: Int? = null,
+    @SerialName("effort") val effort: String? = null,
+    // The device scope ([LauncherScopeFeature]): only what differs from the hub's defaults (all, on demand, skip; use with assign or a direct API).
+    @SerialName("share") val share: String? = null,
+    @SerialName("scope_machines") val scopeMachines: List<String>? = null,
+    @SerialName("delivery") val delivery: String? = null,
+    @SerialName("own_service") val ownService: String? = null,
+    /** A key for single computers, by machine id. */
+    @SerialName("machine_keys") val machineKeys: Map<String, String>? = null,
+)
+
+/**
+ * `PUT /api/v1/launchers/{name}`'s body. The base fields have no default, so they always go: the hub replaces them. The
+ * rest are null unless changed (left out keeps what is stored): [apiKey] only when a new one was typed, [headers] /
+ * [env] "" to clear them, [machineKeys] "" to remove one computer's key.
+ */
+@Serializable
+data class ProviderUpdate(
+    @SerialName("name") val name: String,
+    /** launcher | api */
+    @SerialName("kind") val kind: String,
+    /** messages | responses | chat */
+    @SerialName("api") val api: String,
+    @SerialName("base_url") val baseUrl: String,
+    @SerialName("model") val model: String,
+    @SerialName("small_model") val smallModel: String,
+    @SerialName("subagent_model") val subagentModel: String,
+    @SerialName("custom_model") val customModel: String,
+    @SerialName("custom_model_name") val customModelName: String,
+    @SerialName("custom_model_description") val customModelDescription: String,
+    @SerialName("args") val args: List<String>,
+    /** api_key | bearer; left out keeps what is stored. */
+    @SerialName("auth") val auth: String? = null,
+    /** codex | agy | omp; left out keeps what is stored (Claude Code is the default). */
+    @SerialName("agent") val agent: String? = null,
+    @SerialName("api_key") val apiKey: String? = null,
+    @SerialName("models") val models: List<PresetModel>? = null,
+    @SerialName("opus_model") val opusModel: String? = null,
+    @SerialName("sonnet_model") val sonnetModel: String? = null,
+    @SerialName("haiku_model") val haikuModel: String? = null,
+    @SerialName("fable_model") val fableModel: String? = null,
+    @SerialName("subagent_force") val subagentForce: Boolean? = null,
+    @SerialName("headers") val headers: String? = null,
+    @SerialName("env") val env: String? = null,
+    @SerialName("proxy") val proxy: String? = null,
+    @SerialName("no_proxy") val noProxy: String? = null,
+    @SerialName("timeout_ms") val timeoutMs: Int? = null,
+    @SerialName("compact_window") val compactWindow: Int? = null,
+    @SerialName("max_context") val maxContext: Int? = null,
+    @SerialName("effort") val effort: String? = null,
+    @SerialName("share") val share: String? = null,
+    @SerialName("scope_machines") val scopeMachines: List<String>? = null,
+    @SerialName("delivery") val delivery: String? = null,
+    @SerialName("own_service") val ownService: String? = null,
+    @SerialName("machine_keys") val machineKeys: Map<String, String>? = null,
 )
 
 /** `POST /api/v1/launchers`' answer: [assigned] / [kept] only when `assign` was sent (an older hub leaves them out). */
@@ -252,6 +384,12 @@ data class ProviderProbe(
     /** api_key | bearer */
     @SerialName("auth") val auth: String? = null,
     @SerialName("model") val model: String? = null,
+    /** A stored provider's name: the hub uses its key, headers and proxy for what is not typed in. */
+    @SerialName("name") val name: String? = null,
+    /** Headers typed in over the stored ones ("" sends none for this request). */
+    @SerialName("headers") val headers: String? = null,
+    /** messages | responses | chat */
+    @SerialName("api") val api: String? = null,
 )
 
 @Serializable

@@ -150,7 +150,7 @@
     <string name="settings_storage_clear_all_title">清除全部 %1$s 缓存？</string>
     <string name="settings_storage_clear_text">设置和配对信息会保留。</string>
     <string name="settings_row_storage">存储空间</string>
-    <string name="settings_row_assistant">助手</string>
+    <string name="settings_row_assistant">助手资料</string>
     <string name="settings_row_assistant_subtitle">运行在哪、了解你的内容、时区和通知</string>
     <string name="settings_notify_system_off">通知没有打开</string>
     <string name="settings_notify_system_off_text">下面的设置要在系统设置里允许 Persona 发通知后才生效。</string>

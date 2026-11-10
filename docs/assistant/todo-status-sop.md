@@ -82,7 +82,7 @@ to-do is asked about again only when the hub's commit changes, or every 10 minut
 "Please verify": no turn said it was deployed.
 
 **Without GitHub**: a hub that cannot reach GitHub decides from a file the deploy writes, `deployed-commits.txt`, in
-the hub's state directory (`~/.persona`, or `~/.jarvis` kept from before) or next to the hub's binary:
+the hub's state directory (or its compatible predecessor) or next to the hub's binary:
 
 ```
 # persona deployed commits v1
@@ -163,8 +163,12 @@ Every client follows this document with its own copy of the rules, each with the
 | Web | `web/src/lib/todo-triage.ts` | `web/src/lib/todo-triage.test.ts` | `web/src/views/Todos.tsx` |
 | iOS / Mac | `apple/Shared/TodoTriage.swift` (`TodoTriageLogic`) | `apple/PersonaTests/TodoTriageTests.swift` | `apple/Persona/Views/Todos/TodosView.swift`, `apple/Mac/Todos/MacTodosPage.swift` |
 | Android | `android/core/domain/src/main/kotlin/persona/core/domain/tasks/TodoTriage.kt` | `android/core/domain/src/test/kotlin/persona/core/domain/tasks/TodoTriageTest.kt` | `android/feature/agents/src/main/kotlin/persona/feature/agents/TodosScreen.kt` |
+| Hub | `server/internal/assistant/todo_triage.go` | `server/internal/assistant/todo_triage_test.go` | none: it tells when a leader's task is stuck (#3483) |
 
-A change to the rules changes all three in the same PR. Native differences: iOS / Mac keep restores in the device's
+The shared cases in `spec/fixtures/triage` are read by the web app (`web/src/lib/todo-triage-fixture.test.ts`) and the
+hub; a rule change adds or changes a case there first.
+
+A change to the rules changes all of them in the same PR. Native differences: iOS / Mac keep restores in the device's
 `UserDefaults` (`todos.restored`) and Android in its local preferences, as the web keeps them per browser; the iOS list
 has no Status | Folder switch (it had no folder view), and the Mac shows a merged row's members as a disclosure under the
 lead. Moving the classification to the hub, so the clients only draw the section it sends, would remove the copies; it

@@ -136,6 +136,22 @@ describe("main conversation feed cache", () => {
     expect(read.hasMore).toBe(true);
   });
 
+  it.each(["tool_result", "notice"] as const)("retains an older launch and contiguous history referenced by a cached %s report", (kind) => {
+    const launch = item(2, "assistant", { kind: "tool_use", tool_name: "Agent", tool_use_id: "example-launch" });
+    const receipt = item(3, "user", { kind: "tool_result", tool_use_id: "example-launch", text: "Async agent launched successfully.\nagentId: example-agent" });
+    const task = { kind: "agent", status: "completed", task_id: "example-agent", detail: "Synthetic report" };
+    const report = item(22, kind === "notice" ? "system" : "user", { kind, wake: true, text: kind === "tool_result" ? "Synthetic report" : "Agent completed", task, ...(kind === "tool_result" ? { tool_use_id: "example-launch" } : {}) });
+    const items = [item(1, "user"), launch, receipt, item(4), item(10, "user"), item(11), item(20, "user"), item(21), report];
+    const scope = cache.feedCacheScope();
+    cache.writeFeedCache(scope, page({ items }));
+    expect(cache.readFeedCache()?.items.map((i) => i.id)).toEqual(items.map((i) => i.id));
+    cache.writeMemoryPage(scope, page({ items }));
+    expect(cache.readMemoryPage(scope, "machine-demo", "main-demo")?.items.map((i) => i.id)).toEqual(items.map((i) => i.id));
+    const ordinary = items.slice(0, -1);
+    cache.writeFeedCache(scope, page({ items: ordinary }));
+    expect(cache.readFeedCache()?.items.map((i) => i.id)).toEqual(ordinary.slice(4).map((i) => i.id));
+  });
+
   it("replaces the one cached main page instead of accumulating conversations", () => {
     const scope = cache.feedCacheScope();
     cache.writeFeedCache(scope, page());

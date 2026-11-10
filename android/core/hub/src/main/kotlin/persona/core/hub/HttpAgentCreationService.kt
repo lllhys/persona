@@ -62,6 +62,11 @@ class HttpAgentCreationService(
             outcome(read(request("api", "v1", "sessions").apply { ProtocolCompatibility.operationHeaders(operationId).forEach { (name, value) -> header(name, value) } }.post(body).build(), startHttp))
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (failure: HubFailure) {
+            // The manager refused the provider on this computer before anything started (docs/integrations/launchers.md
+            // "Device scope and on-demand delivery"): its words, in the request's language, are the answer.
+            if (failure.status == 409 && failure.code in ScopeRefusals && failure.message.isNotBlank())
+                AgentStartResult.Rejected(CoreText.plain(failure.message)) else AgentStartResult.Unknown
         } catch (_: Exception) {
             AgentStartResult.Unknown
         }
@@ -112,5 +117,9 @@ class HttpAgentCreationService(
             if (decoded.machineId.isNotBlank() && decoded.sessionId.isNotBlank()) return AgentStartResult.Created(decoded)
         }
         return if (body["state"]?.jsonPrimitive?.content == "pending") AgentStartResult.Pending else AgentStartResult.Unknown
+    }
+    private companion object {
+        /** A provider outside the computer's scope, or skipped there for its own service: nothing was started. */
+        val ScopeRefusals = setOf("launcher_out_of_scope", "launcher_own_service")
     }
 }

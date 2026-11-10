@@ -54,8 +54,16 @@ func BenchmarkRefreshCold(b *testing.B) {
 	}
 }
 
+// Bounds for TestToolUseResultNotCopied, both far below the 1 MB a copied toolUseResult would cost. The line measures
+// about 2.9 KB, the narrow outcome decode of toolUseResult (claudeToolResult, outcome.go) included; -race instruments
+// every allocation and measures about 7 to 10 KB.
+const (
+	toolUseResultAllocBound     = 4 << 10
+	toolUseResultRaceAllocBound = 32 << 10
+)
+
 // A tool's own copy of its output (toolUseResult) is skipped, not copied: a line carrying 1 MB there and a short
-// tool_result allocates about 2.6 KB measured, where copying the field took over 1 MB.
+// tool_result allocates a few KB, where copying the field took over 1 MB.
 func TestToolUseResultNotCopied(t *testing.T) {
 	line := []byte(`{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result",` +
 		`"tool_use_id":"toolu_1","content":"ok"}]},"toolUseResult":{"stdout":"` + strings.Repeat("x", 1<<20) + `"}}`)
@@ -70,10 +78,17 @@ func TestToolUseResultNotCopied(t *testing.T) {
 		parseLine(1, line, &Meta{})
 	}
 	runtime.ReadMemStats(&after)
-	if per := (after.TotalAlloc - before.TotalAlloc) / runs; per > 2718 {
-		t.Fatalf("parsing the line allocated %d bytes, want at most 2718", per)
+	bound := uint64(toolUseResultAllocBound)
+	if raceEnabled {
+		bound = toolUseResultRaceAllocBound
+	}
+	if per := (after.TotalAlloc - before.TotalAlloc) / runs; per > bound {
+		t.Fatalf("parsing the line allocated %d bytes, want at most %d", per, bound)
 	}
 }
+
+// raceEnabled: built with -race, whose instrumentation allocates on its own (race_test.go).
+var raceEnabled bool
 
 // The light copy a node keeps of a long result (File.items) holds its page and its outcome, not the output: an outcome's
 // tail and saved-output path are copied out, never slices that keep the whole output alive.

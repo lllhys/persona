@@ -119,13 +119,13 @@ fun AssistantScreen(
 ) = PersonaTheme {
     val receivedSnapshot by repository.assistant.collectAsStateWithLifecycle()
     val conversationsOf = repository as? persona.core.contracts.api.AssistantConversations
-    // Several managers (docs/assistant/managers.md step 4): the page shows one, the default to begin with.
+    // The page shows the current assistant (docs/assistant/managers.md "Clients"), picked in the sidebar's switcher.
     val reportedRoster = LocalManagerRoster.current
     val managerRoster = if (hubOnline) reportedRoster else reportedRoster?.copy(
         managers = reportedRoster.managers.map { it.copy(online = false) },
     )
     val managerChoice by persona.core.contracts.api.AssistantManagerChoice.current.collectAsStateWithLifecycle()
-    // A late repository emission is never shown under another assistant's selected chip.
+    // A late repository emission is never shown under another assistant.
     val snapshot = receivedSnapshot.takeIf { it.managerId == managerChoice.shown }
         ?: persona.core.contracts.api.AssistantSnapshot(manager = managerChoice.manager, managerId = managerChoice.shown)
     val pageManagement = remember(management, managerChoice.hubId, managerChoice.shown) {
@@ -296,11 +296,6 @@ fun AssistantScreen(
         newChat = null
         clearConversation()
         scope.launch { drawerOpen = false }
-    }
-    // Another manager: its own conversations, so none of this one's stays open.
-    fun chooseManager(id: String) {
-        if (id == managerChoice.shown) return
-        persona.core.contracts.api.AssistantManagerChoice.pick(id)
     }
     fun refusal(error: Exception): String =
         if (error is AssistantRefused) error.message.orEmpty() else persona.core.designsystem.operationFeedback(error).text.resolve(resources)
@@ -599,20 +594,17 @@ fun AssistantScreen(
                         if (wide) sidebarVisible = !sidebarVisible else drawerOpen = true
                     })
                 }) else null) {
-                    Column {
-                        JTopBar(
-                            title = LocalPersonaName.current, subtitle = connectionLabel,
-                            titleBusy = !connectionLabel.isNullOrBlank(), onTitleClick = { menu = true },
-                            actions = {
-                                JIconButton(PhIcons.NotePencil, stringResource(R.string.assistant_new_conversation), ::startNewConversation,
-                                    enabled = !sending && managers.offline == null)
-                                if (LocalHomeChrome.current == null) JIconButton(PhIcons.UserCircle, stringResource(R.string.assistant_profile), {
-                                    if (pageManagement != null) settingsOpen = true else info = AssistantInfo.Settings
-                                })
-                            },
-                        )
-                        if (!demo) JManagerSwitcher(managerRoster, managerChoice.shown, ::chooseManager)
-                    }
+                    JTopBar(
+                        title = LocalPersonaName.current, subtitle = connectionLabel,
+                        titleBusy = !connectionLabel.isNullOrBlank(), onTitleClick = { menu = true },
+                        actions = {
+                            JIconButton(PhIcons.NotePencil, stringResource(R.string.assistant_new_conversation), ::startNewConversation,
+                                enabled = !sending && managers.offline == null)
+                            if (LocalHomeChrome.current == null) JIconButton(PhIcons.UserCircle, stringResource(R.string.assistant_profile), {
+                                if (pageManagement != null) settingsOpen = true else info = AssistantInfo.Settings
+                            })
+                        },
+                    )
                 }
             },
             bottomBar = if (hasComposer || snackbar.currentSnackbarData != null) ({
@@ -940,17 +932,26 @@ internal fun AssistantDrawer(
     onInbox: (() -> Unit)? = null, inboxCount: Int = 0,
     settingsCount: Int = 0, settingsDot: Boolean = false, settingsBadge: String? = null,
     pages: List<NavItem> = emptyList(), onPage: (String) -> Unit = {},
+    /** The sidebar's head with the assistant switcher (docs/assistant/managers.md "Clients"); none: the head as it was. */
+    switcher: AssistantSwitcherSlot? = null,
 ) {
     // The origin "Automatic chats" lists when open (the first one there is, until another is picked).
     var autoPicked by rememberSaveable { mutableStateOf<String?>(null) }
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     val drawer = LocalHomeDrawer.current
     Column(Modifier.fillMaxHeight().padding(horizontal = if (drawer) Tokens.Space.s else 12.dp)) {
-        if (drawer) Row(Modifier.fillMaxWidth().padding(horizontal = Tokens.Space.l).padding(top = Tokens.Space.s),
-            verticalAlignment = Alignment.CenterVertically) {
-            Text(LocalPersonaName.current, style = PersonaTheme.type.largeTitle, color = PersonaTheme.palette.ink, modifier = Modifier.weight(1f))
+        val headPadding = Modifier.padding(horizontal = if (drawer) Tokens.Space.l else Tokens.Space.xs).padding(top = Tokens.Space.s)
+        val search: @Composable () -> Unit = {
             JIconButton(PhIcons.MagnifyingGlass, stringResource(R.string.assistant_search_chats), { searchVisible = !searchVisible }, raised = true)
         }
+        // The head as it was (the persona's name; only the compact drawer has one), where there is no switcher to show.
+        val plainHead: @Composable () -> Unit = {
+            if (drawer) Row(Modifier.fillMaxWidth().then(headPadding), verticalAlignment = Alignment.CenterVertically) {
+                Text(LocalPersonaName.current, style = PersonaTheme.type.largeTitle, color = PersonaTheme.palette.ink, modifier = Modifier.weight(1f))
+                search()
+            }
+        }
+        if (switcher != null) switcher(headPadding, search.takeIf { drawer }, plainHead) else plainHead()
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 12.dp)) {
             // The first row is the main conversation, as "Persona" with the app's mark, then a line (#2004, the same on
             // every platform): it is listed nowhere else, has no pin of its own, and is on show whatever the search.
@@ -983,6 +984,7 @@ internal fun AssistantDrawer(
             }
             pages.forEach { page -> more {
                 JRow(page.label, onClick = { onPage(page.key) }, leading = { JIcon(page.icon, null) },
+                    chevron = true,
                     trailing = {
                         if (page.badge > 0) JBadge(page.badge)
                         else if (page.dot) JStatusDot(Status.NeedsYou)

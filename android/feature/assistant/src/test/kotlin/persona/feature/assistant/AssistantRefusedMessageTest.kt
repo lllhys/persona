@@ -28,7 +28,7 @@ class AssistantRefusedMessageTest {
         data class Case(val state: DeliveryState, val code: String?, val reason: String?, val retry: Boolean)
         val cases = listOf(
             Case(DeliveryState.Refused, "node_unreachable", "Your computer is offline", true),
-            Case(DeliveryState.Refused, "assistant_offline", "The manager is offline or restarting. Try again shortly.", true),
+            Case(DeliveryState.Refused, "assistant_offline", "The assistant is offline or restarting. Try again shortly.", true),
             Case(DeliveryState.Refused, "no_machine", "none is connected yet", true),
             // No words of its own: the badge says it was not sent, never the raw code.
             Case(DeliveryState.Refused, "rpc_glitch", null, true),

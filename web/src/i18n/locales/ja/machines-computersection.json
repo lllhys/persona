@@ -15,5 +15,6 @@
   "allow_detail_lcu": "LCU経由で画面の確認、クリック、入力。確認はスマホとウェブで",
   "install_detail_lcu": "GitHubからLCUのリリースをダウンロードして検証します。Claude / Codexの承認UIは登録せず、ChatGPTもインストールしません。公式のChatGPTデスクトップアプリは自分で先に入れてください。",
   "install_title_lcu": "LCUをインストール",
-  "install_confirm_lcu": "このMacでGitHubからLCUのリリースをダウンロードし、検証してからインストールします。ClaudeやCodexは登録せず、確認はスマホとウェブのままです。公式のChatGPTデスクトップアプリが既に入っている必要があります。Personaはそれをダウンロードしたりログインしたりしません。初回は、そのMacでChatGPTのアクセシビリティと画面収録を許可してください。"
+  "install_confirm_lcu": "このMacでGitHubからLCUのリリースをダウンロードし、検証してからインストールします。ClaudeやCodexは登録せず、確認はスマホとウェブのままです。公式のChatGPTデスクトップアプリが既に入っている必要があります。Personaはそれをダウンロードしたりログインしたりしません。初回は、そのMacでChatGPTのアクセシビリティと画面収録を許可してください。",
+  "allow_from_here": "ここから「許可」をクリックするには、このページ上部の「画面を見る」を使ってください。"
 }

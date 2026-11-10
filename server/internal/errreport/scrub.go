@@ -6,6 +6,7 @@ package errreport
 import (
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -56,8 +57,17 @@ func NewScrubber(names ...string) *Scrubber {
 }
 
 var (
-	// secrets with their name: token=x, "password": "x", api_key: x
-	namedSecret = lazyre.New(`(?i)\b(authorization|proxy-authorization|cookie|set-cookie|token|access_token|refresh_token|id_token|api[_-]?key|apikey|secret|client_secret|password|passwd|pwd|dsn|session_?id|sid|auth|key|signature|sig)(["']?\s*[:=]\s*["']?)([^\s"'&,;]+)`)
+	// secrets with their name: token=x, "password": "x", api_key: x. The names that only name a secret also count
+	// after a prefix of words ending in _ or - (db_password, aws_secret_access_key, X-Auth-Token, GITHUB_TOKEN), and
+	// the password words after plain letters too (PGPASSWORD); the name has to end in the secret's name (max_tokens,
+	// password_file are not secrets). Short or common names (key, auth, sig, sid, cookie) count only on their own:
+	// sort_key and monkey are not secrets, and neither is OLDPWD, whose pwd takes only a prefix ending in _ or -.
+	namedSecret = lazyre.New(`(?i)\b(` +
+		`(?:[a-z0-9]+[_-])*(?:[a-z0-9]*(?:password|passwd|passphrase)|pwd|secret|client_secret|secret[_-]?key|` +
+		`secret[_-]?access[_-]?key|token|access_token|refresh_token|id_token|auth[_-]?token|api[_-]?key|apikey|` +
+		`private[_-]?key|access[_-]?key(?:[_-]?id)?|credentials?|dsn|session_?id)` +
+		`|authorization|proxy-authorization|cookie|set-cookie|sid|auth|key|signature|sig)` +
+		`(["']?\s*[:=]\s*["']?)([^\s"'&,;]+)`)
 	// an auth scheme and its credential: Bearer x, Basic x
 	schemeSecret = lazyre.New(`(?i)\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/\-]{8,}=*)`)
 	// tokens by their look: well-known prefixes, JWTs, long hex
@@ -74,8 +84,9 @@ var (
 	ipv6 = lazyre.New(`(?i)\[?\b([0-9a-f]{1,4}:){1,7}(:[0-9a-f]{1,4}){1,6}\b\]?|\[?\b([0-9a-f]{1,4}:){1,7}:\]?|\[?\b([0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b\]?|\[?::ffff:[0-9.]+\]?|\[::1\]`)
 	// the user's name in home directories: /Users/x/, /home/x/, /data00/home/x/, C:\Users\x\
 	homeDir = lazyre.New(`(?i)(/Users/|/home/|/data\d*/home/|/var/home/|/root\b|[A-Z]:\\Users\\|[A-Z]:/Users/)([^/\\\s"'<>]*)`)
-	// quoted spans: what errors carry of the user's content most often
-	quoted = lazyre.New("\"[^\"\\n]*\"|“[^”\\n]*”|「[^」\\n]*」|『[^』\\n]*』|`[^`\\n]*`|'[^'\\n]{2,}'")
+	// quoted spans: what errors carry of the user's content most often. A quoted body may span lines (a message the
+	// user wrote); only the single-quote form stays on one line, so apostrophes in prose do not pair across lines.
+	quoted = lazyre.New("\"[^\"]*\"|“[^”]*”|「[^」]*」|『[^』]*』|`[^`]*`|'[^'\\n]{2,}'")
 )
 
 // Text scrubs one string of a report.
@@ -114,29 +125,65 @@ func (s *Scrubber) Message(v string) string {
 	return s.Text(v)
 }
 
-// replaceFold replaces every case-insensitive match of old (lowercase) in s.
+// replaceFold replaces every case-insensitive match of old (lowercase, as strings.ToLower gives it) in s. The match
+// runs on the lowercase of s. A rune whose lowercase has another byte length (U+0130, the Kelvin sign) shifts the
+// lowercase against s, so outside ASCII every lowercase byte keeps where its rune starts in s.
 func replaceFold(s, old, repl string) string {
 	if old == "" {
 		return s
 	}
 	lower := strings.ToLower(s)
-	if !strings.Contains(lower, old) || len(lower) != len(s) {
-		if len(lower) != len(s) { // case mapping changed lengths: match exactly only
-			return strings.ReplaceAll(s, old, repl)
-		}
+	if !strings.Contains(lower, old) {
 		return s
 	}
+	var from []int // from[j] is where the rune of lower[j] starts in s; nil for ASCII, where both line up byte for byte
+	if !isASCII(s) {
+		lower, from = foldMap(s)
+	}
+	at := func(j int) int { // where lower[j:] starts in s
+		if from == nil {
+			return j
+		}
+		return from[j]
+	}
 	var b strings.Builder
+	done, next := 0, 0 // done: s is written up to here; next: lower is searched from here
 	for {
-		i := strings.Index(lower, old)
+		i := strings.Index(lower[next:], old)
 		if i < 0 {
-			b.WriteString(s)
+			b.WriteString(s[done:])
 			return b.String()
 		}
-		b.WriteString(s[:i])
+		i += next
+		b.WriteString(s[done:at(i)])
 		b.WriteString(repl)
-		s, lower = s[i+len(old):], lower[i+len(old):]
+		next = i + len(old)
+		done = at(next)
 	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// foldMap lowercases s rune by rune as strings.ToLower does, and keeps from[j], the offset in s of the rune that gave
+// lower[j] (from[len(lower)] is len(s)).
+func foldMap(s string) (lower string, from []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	from = make([]int, 0, len(s)+1)
+	for i, r := range s { // an invalid byte comes as utf8.RuneError and is written as U+FFFD, as strings.ToLower does
+		n, _ := b.WriteRune(unicode.ToLower(r))
+		for range n {
+			from = append(from, i)
+		}
+	}
+	return b.String(), append(from, len(s))
 }
 
 // Report scrubs and trims r in place: every string a person or a machine could be told by; ids, enums and numbers
@@ -174,8 +221,8 @@ func (s *Scrubber) Report(r *wire.ErrorReport) {
 		c := &r.Breadcrumbs[i]
 		c.Category = cut(s.Text(c.Category), 64)
 		c.Message = cut(s.Message(c.Message), CrumbMost)
-		c.Level = cut(c.Level, 16)
-		c.Time = cut(c.Time, 40)
+		c.Level = crumbLevel(c.Level)
+		c.Time = crumbTime(c.Time)
 	}
 	if len(r.Tags) > 0 {
 		tags := map[string]string{}
@@ -187,6 +234,25 @@ func (s *Scrubber) Report(r *wire.ErrorReport) {
 		}
 		r.Tags = tags
 	}
+}
+
+// crumbLevels are the levels a breadcrumb may have; any other value is dropped, so the field never carries free text.
+var crumbLevels = []string{"debug", "info", "warning", "error", "fatal"}
+
+func crumbLevel(v string) string {
+	if v = strings.ToLower(v); slices.Contains(crumbLevels, v) {
+		return v
+	}
+	return ""
+}
+
+// crumbTime keeps a breadcrumb's time only as an RFC 3339 time, in UTC; anything else is dropped.
+func crumbTime(v string) string {
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 var tagKey = lazyre.New(`^[a-z][a-z0-9_.]{0,31}$`)

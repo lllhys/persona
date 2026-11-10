@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -28,7 +29,8 @@ import (
 // KeyCommand runs in a session of its own: at its 20 s limit the whole group is killed, not just sh. A process it
 // leaves running that still holds its output (an agent it starts, cmd & echo token) is not waited for past
 // keyCommandWaitDelay once the command has exited; without it Output read the pipe until that process ended, and the
-// call start waited with it.
+// call start waited with it. Once the command has exited, what it left in its group is stopped too: the group is no
+// longer the extension's, so nothing else would ever stop it, and the command runs for every conversation and list.
 func (p *Provider) credential(ctx context.Context) (string, error) {
 	switch {
 	case p.Key != "":
@@ -49,6 +51,11 @@ func (p *Provider) credential(ctx context.Context) (string, error) {
 		cmd.Cancel = func() error { return osproc.StopGroup(cmd.Process.Pid, true) }
 		cmd.WaitDelay = keyCommandWaitDelay
 		out, err := cmd.Output()
+		if cmd.Process != nil && runtime.GOOS != "windows" {
+			// The group outlives sh while a member is left; already empty is ESRCH. Not on Windows: there the stop is
+			// taskkill /T by sh's pid, which is gone (and may be reused) once it has exited.
+			_ = osproc.StopGroup(cmd.Process.Pid, true)
+		}
 		// ErrWaitDelay: the command exited 0 and only a process it left held the pipe; what it printed counts.
 		if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 			return "", fmt.Errorf("%s: key_command: %v %s", p.ID, err, strings.TrimSpace(stderr.String()))

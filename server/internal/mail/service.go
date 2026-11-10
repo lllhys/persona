@@ -503,6 +503,10 @@ func buildAccount(req AddAccountRequest) (*MailAccount, error) {
 		preset = p
 		a.IMAPHost, a.IMAPPort, a.SMTPHost, a.SMTPPort, a.SMTPSecurity = "", 0, "", 0, ""
 	}
+	// A Microsoft sign-in decides the provider: the presets for outlook.com and friends are the IMAP ones.
+	if req.Auth == AuthOAuth2 && req.Provider == ProviderOutlook {
+		a.Provider = ProviderOutlook
+	}
 	if preset != nil {
 		if a.Provider == "" {
 			a.Provider = preset.Provider

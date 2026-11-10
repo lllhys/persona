@@ -1,5 +1,7 @@
 {
   "copy_code": "コードをコピー",
   "copy": "コピー",
-  "copy_table": "表をコピー"
+  "copy_table": "表をコピー",
+  "quote_more": "すべて表示",
+  "quote_less": "折りたたむ"
 }

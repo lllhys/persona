@@ -11,12 +11,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.serialization.json.JsonObject
@@ -24,6 +27,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import persona.core.contracts.FeedItem
 import persona.core.contracts.Todo
+import persona.core.contracts.parseTime
 import persona.core.designsystem.JIcon
 import persona.core.designsystem.JTag
 import persona.core.designsystem.PersonaTheme
@@ -107,6 +111,30 @@ fun ReviewChecklist(todo: Todo, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+/**
+ * What the task's agent last reported to Persona, as it wrote it (#3181): the Progress row shows the hub's paraphrase, this
+ * is the original, Markdown rendered. Nothing before its first report (or from an older hub).
+ */
+@Composable
+internal fun LatestReport(todo: Todo, modifier: Modifier = Modifier) {
+    val progress = todo.supervision?.progress ?: return
+    val text = progress.reportText.trim().takeIf(String::isNotEmpty) ?: return
+    val now by rememberNow(60_000)
+    val resources = LocalResources.current
+    val at = parseTime(progress.at)
+    Column(modifier.fillMaxWidth().clip(PersonaTheme.shapes.controlShape).background(PersonaTheme.palette.sunken)
+        .padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s).testTag("latest-report"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+            JIcon(PhIcons.ChatCircle, decorative = true, size = Tokens.Space.m, tint = PersonaTheme.palette.ink2)
+            Text(stringResource(R.string.chat_task_detail_report), Modifier.weight(1f).semantics { heading() },
+                style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            at?.let { Text(relativeTime(it, now, resources), style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3, maxLines = 1) }
+        }
+        ChatMarkdown(text, "report/${todo.id}", PersonaTheme.type.callout)
     }
 }
 

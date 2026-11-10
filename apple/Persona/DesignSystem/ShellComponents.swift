@@ -30,6 +30,8 @@ struct ShellSwitch<ChatMenu: View, WorkMenu: View>: View {
     /// it moves, so theirs sits on the page in front and does not read the strip at all (`PagerPill`).
     @Environment(\.shellPillFollowsStrip) private var follows
     @Environment(\.buiTheme) private var theme
+    /// A phone's tabs (iPhone Duo open, #2623): the switch stands in for the tab bar, Persona's badge with it.
+    @Environment(\.pageTabSwitch) private var pageTabSwitch
 
     var body: some View {
         #if DEBUG || PERF_SIGNPOST
@@ -68,14 +70,17 @@ struct ShellSwitch<ChatMenu: View, WorkMenu: View>: View {
 
     private var row: some View {
         stack {
-            if opensMenu(.assistant) {
-                Menu { chatMenu() } label: { segment(String(localized: "shell.assistant", defaultValue: "Assistant", comment: "The chat side of the top switch (72 pt wide)"), .assistant, selected: true) }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("shell-assistant")
-                    .accessibilityHint("Chat menu")
-            } else {
-                button(String(localized: "shell.assistant", defaultValue: "Assistant", comment: "The chat side of the top switch (72 pt wide)"), .assistant, id: "shell-assistant")
+            ZStack(alignment: .topTrailing) {
+                if opensMenu(.assistant) {
+                    Menu { chatMenu() } label: { segment(String(localized: "shell.assistant", defaultValue: "Assistant", comment: "The chat side of the top switch (72 pt wide)"), .assistant, selected: true) }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("shell-assistant")
+                        .accessibilityHint("Chat menu")
+                } else {
+                    button(String(localized: "shell.assistant", defaultValue: "Assistant", comment: "The chat side of the top switch (72 pt wide)"), .assistant, id: "shell-assistant")
+                }
+                if pageTabSwitch { AssistantWaitingBadge() }
             }
             ZStack(alignment: .topTrailing) {
                 if opensMenu(.chats) {
@@ -247,6 +252,22 @@ private struct WaitingBadge: View {
         } else if waiting > 0 {
             CountBadge(count: waiting, look: .tone(StatusPalette.needsYou))
                 .offset(offset)
+                .allowsHitTesting(false)
+                .accessibilityLabel(StateName.count(.needsYou, waiting))
+        }
+    }
+}
+
+/// Persona's own badge on the switch where it stands in for the tab bar (iPhone Duo open, #2623): what the Persona tab
+/// counted (`AppModel.badges`), read here as `WaitingBadge` reads the agents, so the switch is not built again for it.
+private struct AssistantWaitingBadge: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let waiting = model.badges.assistant
+        if waiting > 0 {
+            CountBadge(count: waiting, look: .tone(StatusPalette.needsYou))
+                .offset(x: Theme.Space.s, y: -Theme.Space.sm)
                 .allowsHitTesting(false)
                 .accessibilityLabel(StateName.count(.needsYou, waiting))
         }

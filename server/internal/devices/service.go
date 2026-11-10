@@ -267,7 +267,7 @@ func (m *Machine) dialService(ctx context.Context) (*nodePipe, error) {
 	dctx, cancel := context.WithTimeout(ctx, 2*connectorDialTimeout)
 	conn, resp, err := websocket.Dial(dctx, "wss://"+m.cfg.Address+connectorStreamPath, &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		HTTPHeader: header, CompressionMode: websocket.CompressionContextTakeover})
+		HTTPHeader: header, CompressionMode: link.StreamCompression})
 	cancel()
 	if err != nil {
 		tr.CloseIdleConnections()

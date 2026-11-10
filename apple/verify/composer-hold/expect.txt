@@ -1,0 +1,7 @@
+# cols: owner listening holding locked run down pending decided wantOn toasts
+r1_current_one_touch PASS
+r2_no_postcheck_one_touch FAIL
+r3_current_two_touches_toast FAIL
+r4_current_send_settled FAIL
+r5_current_three_touches_mic PASS
+r6_reclaim_two_touches_mic FAIL

@@ -174,16 +174,25 @@ func (b *inboxBook) touched(id string) uint64 {
 
 // threadIndex is the items (and the running round's) by thread, for a collection that looks up one thread per
 // thing: openFor on each scanned the whole inbox, a week of chats for each of Feishu's few hundred unread ones.
-// key is the item's thread among the ones looked up, false for an item of another source. Under b.mu.
+// key is the item's thread among the ones looked up, false for an item of another source; in, when set, says whether
+// key(it) is thread, ok, without making the key (openFor asks it of each item filed under a thread). Under b.mu.
 type threadIndex struct {
 	key func(*InboxItem) (string, bool)
+	in  func(it *InboxItem, thread string) bool
 	by  map[string][]*InboxItem
 }
 
 func (b *inboxBook) threads(key func(*InboxItem) (string, bool)) *threadIndex {
 	x := &threadIndex{key: key, by: map[string][]*InboxItem{}}
-	b.each(x.note)
+	b.each(x.file)
 	return x
+}
+
+// file files an item threads meets: each comes once, so it is not looked for first, as note does.
+func (x *threadIndex) file(it *InboxItem) {
+	if k, ok := x.key(it); ok {
+		x.by[k] = append(x.by[k], it)
+	}
 }
 
 // note files it under its thread: an item added, or one whose thread may have changed. An entry under a thread it
@@ -199,7 +208,7 @@ func (x *threadIndex) note(it *InboxItem) {
 // same one every collection, so the older one does not become a copy of it (#3796).
 func (x *threadIndex) openFor(thread string) (open, done *InboxItem) {
 	for _, it := range x.by[thread] {
-		if k, ok := x.key(it); !ok || k != thread {
+		if !x.under(it, thread) {
 			continue
 		}
 		if it.open() {
@@ -211,6 +220,15 @@ func (x *threadIndex) openFor(thread string) (open, done *InboxItem) {
 		}
 	}
 	return open, done
+}
+
+// under says whether it is still filed under thread: its thread may have changed since it was.
+func (x *threadIndex) under(it *InboxItem, thread string) bool {
+	if x.in != nil {
+		return x.in(it, thread)
+	}
+	k, ok := x.key(it)
+	return ok && k == thread
 }
 
 // newerItem: a holds a later move than b (by its time, then its id, so a tie picks the same one every time).

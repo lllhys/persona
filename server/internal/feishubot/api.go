@@ -41,6 +41,7 @@ type Client struct {
 
 	mu      sync.Mutex
 	token   string
+	console string // the developer console this client links out to, when not what the domain says (tests)
 	expires time.Time
 }
 

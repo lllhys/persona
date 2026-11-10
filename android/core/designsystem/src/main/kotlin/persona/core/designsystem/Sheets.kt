@@ -123,14 +123,25 @@ fun JActionSheet(actions: List<JAction>, onDismiss: () -> Unit, title: String? =
     }
 }
 
-/** A small anchored menu for a few choices next to the control that opened it. */
+/**
+ * A small anchored menu for a few choices next to the control that opened it. A tap outside closes it; what does not
+ * fit the window scrolls. [content] goes above the [actions], with a rule between them: choices that are more than a
+ * label (the sidebar's assistant switcher lists its assistants there, then New assistant and Manage assistants…).
+ */
 @Composable
-fun JMenu(expanded: Boolean, onDismiss: () -> Unit, actions: List<JAction>, modifier: Modifier = Modifier, offset: DpOffset = DpOffset(0.dp, 4.dp)) {
+fun JMenu(
+    expanded: Boolean, onDismiss: () -> Unit, actions: List<JAction>, modifier: Modifier = Modifier, offset: DpOffset = DpOffset(0.dp, 4.dp),
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
     val palette = PersonaTheme.palette
     DropdownMenu(
         expanded, onDismiss, modifier, offset = offset, shape = PersonaTheme.shapes.controlShape,
         containerColor = palette.surfaceOpaque, tonalElevation = 0.dp, shadowElevation = 12.dp,
     ) {
+        content?.let {
+            it()
+            if (actions.isNotEmpty()) HorizontalDivider(color = palette.line)
+        }
         actions.forEach { action ->
             if (action.separatorBefore) HorizontalDivider(color = palette.line)
             DropdownMenuItem(

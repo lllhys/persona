@@ -3,7 +3,7 @@
 # "Performance UI tests"): an optimized build, one mock hub per suite with that suite's heavy data, XCTHitchMetric and
 # the scroll / navigation signposts per page and transition, then a JSON + Markdown report from the result bundles.
 #
-#   scripts/app/perf-test.sh [suite…]        # suites: agents assistant inbox settings machines (default: all of them)
+#   scripts/app/perf-test.sh [suite…]        # suites: agents assistant composer inbox settings machines (default: all of them)
 #
 # Env:
 #   PERF_SIM         the assigned, existing simulator udid or name (required if "Persona Perf" is absent)
@@ -25,7 +25,7 @@ eval "$(python3 scripts/persona_config.py env)"
 python3 scripts/persona_config.py xcconfig >/dev/null
 
 SUITES=("$@")
-[ ${#SUITES[@]} -gt 0 ] || SUITES=(agents assistant inbox settings machines)
+[ ${#SUITES[@]} -gt 0 ] || SUITES=(agents assistant composer inbox settings machines)
 SIM_NAME="${PERF_SIM:-Persona Perf}"
 ITER="${PERF_ITERATIONS:-5}"
 OUT="${PERF_OUT:-/tmp/persona-perf-$(date +%Y%m%d-%H%M%S)}"
@@ -42,7 +42,7 @@ verdict() { echo "perf-test: $*"; }
 mock_env() {
   case "$1" in
     agents) echo "MOCK_AGENTS=1 MOCK_BIG=1 MOCK_CHAT_LINES=1 MOCK_SUBAGENT_CARDS=1 MOCK_FILES=1 MOCK_MACHINES=1 MOCK_TURN_IMAGES=many" ;;
-    assistant) echo "MOCK_LONG_ASSISTANT=1 MOCK_AGENTS=1 MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASKS_DOCK=many MOCK_ASSISTANT_SIDEBAR=1 MOCK_KB_MANY_LINKS=1" ;;
+    assistant|composer) echo "MOCK_LONG_ASSISTANT=1 MOCK_AGENTS=1 MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASKS_DOCK=many MOCK_ASSISTANT_SIDEBAR=1 MOCK_KB_MANY_LINKS=1" ;;
     inbox) echo "MOCK_LARK=1 MOCK_LARK_RICH=1 MOCK_LARK_TOPIC=1 MOCK_INBOX_EXTRA=150 MOCK_MAIL=1 MOCK_AGENTS=1" ;;
     settings) echo "MOCK_EXTENSIONS=1 MOCK_SCHEDULE=1 MOCK_AGENTS=1" ;;
     machines) echo "MOCK_PERF_MACHINES=24 MOCK_PERF_METRIC_STEP=50 MOCK_AGENTS=1" ;;
@@ -51,11 +51,11 @@ mock_env() {
 }
 suite_class() {
   case "$1" in
-    agents) echo PerfAgentsTests ;; assistant) echo PerfAssistantTests ;;
+    agents) echo PerfAgentsTests ;; assistant) echo PerfAssistantTests ;; composer) echo PerfComposerTests ;;
     inbox) echo PerfInboxTests ;; settings) echo PerfSettingsTests ;; machines) echo PerfMachinesTests ;;
   esac
 }
-for s in "${SUITES[@]}"; do mock_env "$s" >/dev/null || { verdict "failed unknown suite $s (agents assistant inbox settings machines)"; exit 2; }; done
+for s in "${SUITES[@]}"; do mock_env "$s" >/dev/null || { verdict "failed unknown suite $s (agents assistant composer inbox settings machines)"; exit 2; }; done
 
 # Never create or boot an extra simulator when an explicitly assigned device is missing.
 UDID=$(xcrun simctl list devices -j | python3 -c '

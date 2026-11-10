@@ -5,7 +5,10 @@
 //   - answers PTR queries for its service type and for the "_services._dns-sd._udp.local." enumeration, SRV / TXT
 //     queries for its instance and A / AAAA queries for its host, with the addresses of the interface the query came
 //     in on; answers go to the multicast group (the QU bit is ignored), legacy unicast queries (source port not
-//     5353, §6.7) get a unicast reply with the query id, the questions and TTLs of at most 10 s;
+//     5353, §6.7) get a unicast reply with the query id, the questions and TTLs of at most 10 s, but only when the
+//     sender is on the receiving interface's link (inside one of its prefixes, or IPv6 link-local; §5.5, §11) and
+//     at most once a second per sender address and answer set, so a spoofed query cannot turn the host into a
+//     reflector towards some other address;
 //   - the asked-for records are answers, the ones a querier needs next (SRV, TXT, addresses) are additional records;
 //   - announces twice on start, 1 s apart (§8.3), once more on an interface that appears later, and sends goodbyes
 //     (TTL 0, §10.1) when it stops;
@@ -123,10 +126,14 @@ type runner struct {
 	done chan struct{}
 	wg   sync.WaitGroup
 
+	// The legacy unicast reply path; tests replace both.
+	prefixes func(*net.Interface) []netip.Prefix             // ifacePrefixes
+	unicast  func(b []byte, v6 bool, dst *net.UDPAddr) error // writeUnicast
+
 	// Owned by the loop goroutine.
 	links    map[int]*link           // by interface index
 	logged   map[string]string       // last error logged per key, so a persistent one is logged once
-	recent   map[recentKey]time.Time // last multicast answer per interface / family / asked set
+	recent   map[recentKey]time.Time // last answer per interface / family / asked set, or per sender / asked set (legacy)
 	lastSend time.Time
 }
 
@@ -136,11 +143,13 @@ type link struct {
 	on4, on6 bool
 }
 
-// recentKey names a multicast answer for the once-a-second limit.
+// recentKey names an answer for the once-a-second limit: a multicast answer on one interface and family, or a legacy
+// unicast reply to one sender.
 type recentKey struct {
 	ifindex int
 	v6      bool
 	want    asked
+	src     netip.Addr // the sender of a legacy unicast query; zero for multicast
 }
 
 type packet struct {
@@ -164,6 +173,7 @@ func newRunner(o Options) (*runner, error) {
 	if r.logf == nil {
 		r.logf = func(string, ...any) {}
 	}
+	r.prefixes, r.unicast = ifacePrefixes, r.writeUnicast
 	if o.Advertise != nil {
 		s, err := newServed(*o.Advertise)
 		if err != nil {
@@ -398,7 +408,10 @@ func (r *runner) answer(l *link, p packet, m *message, now time.Time) {
 	if want == (asked{}) {
 		return
 	}
-	if p.src.Port == mdnsPort && r.answeredRecently(recentKey{l.ifi.Index, p.v6, want}, now) {
+	if p.src.Port == mdnsPort && r.answeredRecently(recentKey{ifindex: l.ifi.Index, v6: p.v6, want: want}, now) {
+		return
+	}
+	if p.src.Port != mdnsPort && !r.legacyReplyAllowed(l, p, want, now) {
 		return
 	}
 	var addrs []netip.Addr
@@ -427,12 +440,7 @@ func (r *runner) answer(l *link, p packet, m *message, now time.Time) {
 			r.note("pack reply", err)
 			return
 		}
-		if p.v6 {
-			_, err = r.p6.WriteTo(b, nil, p.src)
-		} else {
-			_, err = r.p4.WriteTo(b, nil, p.src)
-		}
-		r.note("unicast reply", err)
+		r.note("unicast reply", r.unicast(b, p.v6, p.src))
 		return
 	}
 	b, err := packMessage(&message{flags: flagResponse | flagAA, answers: ans, additionals: add})
@@ -443,8 +451,49 @@ func (r *runner) answer(l *link, p packet, m *message, now time.Time) {
 	r.send(l, p.v6, b)
 }
 
-// answeredRecently reports whether the multicast answer key went out less than a second ago, and otherwise counts it
-// as sent now (§6). It runs before the interface's addresses are read, so a burst of the same query costs one read.
+// legacyReplyAllowed reports whether a legacy unicast reply to the records in want may go to p.src. The reply goes to
+// whatever source address the query claims, so the sender must be on the link the query came in on (RFC 6762 §5.5,
+// using the §11 on-link test); otherwise anyone who can reach port 5353 could spoof a small query and have the much
+// larger reply sent to a third party. A sender on the link gets the same answer at most once a second.
+func (r *runner) legacyReplyAllowed(l *link, p packet, want asked, now time.Time) bool {
+	src, ok := netip.AddrFromSlice(p.src.IP)
+	if !ok {
+		return false
+	}
+	src = src.Unmap()
+	if !onLink(src, r.prefixes(&l.ifi)) {
+		return false
+	}
+	return !r.answeredRecently(recentKey{want: want, src: src}, now)
+}
+
+// onLink reports whether src is on the link whose prefixes are given (RFC 6762 §11): inside one of them, or an IPv6
+// link-local address, which is always on-link.
+func onLink(src netip.Addr, prefixes []netip.Prefix) bool {
+	if src.Is6() && src.IsLinkLocalUnicast() {
+		return true
+	}
+	for _, pfx := range prefixes {
+		if pfx.Contains(src) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeUnicast sends b to dst from the socket of its family.
+func (r *runner) writeUnicast(b []byte, v6 bool, dst *net.UDPAddr) error {
+	var err error
+	if v6 {
+		_, err = r.p6.WriteTo(b, nil, dst)
+	} else {
+		_, err = r.p4.WriteTo(b, nil, dst)
+	}
+	return err
+}
+
+// answeredRecently reports whether the answer key went out less than a second ago, and otherwise counts it as sent
+// now (§6). It runs before the interface's addresses are read, so a burst of the same query costs one read.
 func (r *runner) answeredRecently(key recentKey, now time.Time) bool {
 	if t, ok := r.recent[key]; ok && now.Sub(t) < time.Second {
 		return true
@@ -669,6 +718,33 @@ func ifaceAddrs(ifi *net.Interface) []netip.Addr {
 			continue
 		}
 		out = append(out, addr)
+	}
+	return out
+}
+
+// ifacePrefixes lists the interface's address prefixes (address and mask), loopback ones included; the legacy
+// unicast reply path checks senders against them.
+func ifacePrefixes(ifi *net.Interface) []netip.Prefix {
+	as, err := ifi.Addrs()
+	if err != nil {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, a := range as {
+		n, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		addr, ok := netip.AddrFromSlice(n.IP)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		ones, bits := n.Mask.Size()
+		if bits != addr.BitLen() { // a non-canonical mask, or one of the other family
+			continue
+		}
+		out = append(out, netip.PrefixFrom(addr, ones))
 	}
 	return out
 }

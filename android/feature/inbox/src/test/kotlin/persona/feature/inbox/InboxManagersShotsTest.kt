@@ -24,38 +24,36 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import persona.core.contracts.CoreText
+import persona.core.contracts.api.AssistantManagerChoice
 import persona.core.contracts.api.ConnectionState
+import persona.core.contracts.api.CurrentAssistant
 import persona.core.contracts.api.HubManager
 import persona.core.contracts.api.InboxEntry
 import persona.core.contracts.api.ManagerRoster
 import persona.core.designsystem.AppStyle
 import persona.core.designsystem.LocalManagerRoster
 import persona.core.designsystem.PersonaTheme
-import persona.core.domain.inbox.InboxGroup
 import persona.core.domain.inbox.InboxItem
-import persona.core.domain.inbox.InboxRow
-import persona.core.domain.inbox.InboxRowType
 import persona.core.navigation.AppTab
 import persona.core.navigation.Navigator
 import java.io.File
 import java.time.Instant
 
 /**
- * The inbox with several managers (docs/assistant/managers.md step 4): each manager's items under its name with its own
- * sections, the default's first (unstamped items are its), the offline one greyed with 最后同步于, in every style,
- * light and dark. Written to `build/managers-shots/inbox-*.png`.
+ * The inbox with several managers (docs/assistant/managers.md "Clients"): the page lists the current assistant's items only
+ * (unstamped ones are the default's), with no heading per manager and its own sections; Rules and Muted read that
+ * assistant's lists, an offline one says so; in every style, light and dark. Written to `build/managers-shots/inbox-*.png`.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-// Tall enough for the last manager's rows under the grouping switch (#2576): a lazy list builds only what is on screen.
 @Config(sdk = [35], qualifiers = "zh-w400dp-h1400dp-xhdpi")
 class InboxManagersShotsTest {
     @get:Rule val rule = createComposeRule()
@@ -99,9 +97,12 @@ class InboxManagersShotsTest {
         override fun selectTab(tab: AppTab) = Unit
     }
 
-    private fun top(text: String) = rule.onAllNodesWithText(text)[0].fetchSemanticsNode().boundsInRoot.top
+    @After fun resetChoice() = AssistantManagerChoice.reset()
 
-    @Test fun inboxGroupsByManager() {
+    private fun gone(vararg texts: String) = texts.forEach { assertTrue(it, rule.onAllNodesWithText(it).fetchSemanticsNodes().isEmpty()) }
+    private fun see(vararg texts: String) = texts.forEach { assertTrue(it, rule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty()) }
+
+    @Test fun theInboxShowsOnlyTheCurrentAssistantsItems() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         var shown by mutableStateOf<ManagerRoster?>(roster)
@@ -114,22 +115,36 @@ class InboxManagersShotsTest {
                 }
             }
         }
-        rule.waitForIdle()
-        assertTrue(top("助手") < top("周报") && top("周报") < top("工作"))
-        assertTrue(top("工作") < top("发布检查") && top("发布检查") < top("项目群") && top("项目群") < top("家里"))
-        assertTrue(top("家里") < top("物业通知"))
-        assertTrue(rule.onAllNodesWithText("最后同步于 3 小时前").fetchSemanticsNodes().isNotEmpty())
-        assertEquals(0, rule.onAllNodesWithText("测试").fetchSemanticsNodes().size)
         val dir = File(System.getProperty("persona.shots") ?: "build/managers-shots").also { it.mkdirs() }
-        for (s in AppStyle.entries) for (d in listOf(false, true)) {
-            style = s; dark = d
-            rule.waitForIdle()
-            val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
-            File(dir, "inbox-grouped-${s.key}-${if (d) "dark" else "light"}.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        fun shoot(name: String) {
+            for (s in AppStyle.entries) for (d in listOf(false, true)) {
+                style = s; dark = d
+                rule.waitForIdle()
+                val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+                File(dir, "inbox-$name-${s.key}-${if (d) "dark" else "light"}.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
         }
+        rule.waitForIdle()
+        // The default assistant: its own (unstamped) item, no manager heading, none of the others' items.
+        see("周报")
+        gone("项目群", "发布检查", "物业通知", "助手", "工作", "家里", "测试")
+        shoot("default")
+        AssistantManagerChoice.pick("m-3fa21c")
+        rule.waitForIdle()
+        see("项目群", "发布检查")
+        gone("周报", "物业通知", "助手", "工作")
+        shoot("work")
+        AssistantManagerChoice.pick("m-8b04d2")
+        rule.waitForIdle()
+        see("物业通知")
+        gone("周报", "项目群", "发布检查", "家里")
+        shoot("home")
+        // One manager: every item is the default's, as before.
+        AssistantManagerChoice.reset()
         shown = ManagerRoster(listOf(roster.managers.first()), "assistant")
         rule.waitForIdle()
-        assertEquals(0, rule.onAllNodesWithText("助手").fetchSemanticsNodes().size)
+        see("周报", "项目群", "发布检查", "物业通知")
+        gone("助手")
     }
 
     /** Each manager's own rules and mutes: 工作's and the default's, 家里 offline. */
@@ -147,7 +162,7 @@ class InboxManagersShotsTest {
         }
     }
 
-    @Test fun rulesAndMutedGroupByManager() {
+    @Test fun rulesAndMutedAreTheCurrentAssistantsOwn() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         var rules by mutableStateOf(true)
@@ -162,37 +177,54 @@ class InboxManagersShotsTest {
         }
         val dir = File(System.getProperty("persona.shots") ?: "build/managers-shots").also { it.mkdirs() }
         for (r in listOf(true, false)) {
+            AssistantManagerChoice.reset()
             rules = r
             rule.waitForIdle()
             val (mine, theirs, away) = if (r) Triple("example-org/docs", "王经理", "离线中：它回来后这里会显示它的规则。")
                 else Triple("news@example.com", "example-org/example-repo", "离线中：它回来后这里会显示它的静音。")
-            assertTrue(top("助手") < top(mine) && top(mine) < top("工作") && top("工作") < top(theirs))
-            assertTrue(top(theirs) < top("家里") && top("家里") < top(away))
-            for (s in AppStyle.entries) for (d in listOf(false, true)) {
-                style = s; dark = d
-                rule.waitForIdle()
-                val bitmap = rule.onAllNodes(isDialog()).onLast().captureToImage().asAndroidBitmap()
-                File(dir, "inbox-${if (r) "rules" else "muted"}-${s.key}-${if (d) "dark" else "light"}.png").outputStream()
-                    .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            // The default's own, with no heading and none of the others'.
+            see(mine)
+            gone(theirs, away, "助手", "工作", "家里")
+            fun shoot(name: String) {
+                for (s in AppStyle.entries) for (d in listOf(false, true)) {
+                    style = s; dark = d
+                    rule.waitForIdle()
+                    val bitmap = rule.onAllNodes(isDialog()).onLast().captureToImage().asAndroidBitmap()
+                    File(dir, "inbox-${if (r) "rules" else "muted"}-$name-${s.key}-${if (d) "dark" else "light"}.png").outputStream()
+                        .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                }
             }
+            shoot("default")
+            AssistantManagerChoice.pick("m-3fa21c")
+            rule.waitForIdle()
+            see(theirs)
+            gone(mine, away)
+            shoot("work")
+            // Offline: its list can't be read until it is back, and the sheet says so.
+            AssistantManagerChoice.pick("m-8b04d2")
+            rule.waitForIdle()
+            see(away)
+            gone(mine, theirs)
+            shoot("offline")
         }
     }
 
-    @Test fun sectionsSplitByManagerInRosterOrder() {
-        fun row(id: String) = InboxRow(InboxRowType.Item, id)
-        val groups = listOf(
-            InboxGroup("action", CoreText.plain("需要你"), listOf(row("a"), row("b"), row("c")), listOf(row("a"), row("b")), false),
-            InboxGroup("fyi", CoreText.plain("知悉"), listOf(row("d")), listOf(row("d")), false),
-        )
-        val owners = mapOf("a" to "m-8b04d2", "b" to null, "c" to "m-8b04d2", "d" to "m-8b04d2")
-        val split = requireNotNull(inboxByManager(roster, groups) { owners[it.id] })
-        assertEquals(listOf("assistant", "m-8b04d2"), split.map { it.first.id })
-        assertEquals(listOf("action"), split[0].second.map { it.id })
-        assertEquals(listOf(row("b")), split[0].second[0].rows)
-        assertEquals(listOf(listOf(row("a"), row("c")), listOf(row("d"))), split[1].second.map { it.rows })
-        // The fold stays: c was folded away, it still is.
-        assertEquals(listOf(row("a")), split[1].second[0].visibleRows)
-        assertNull(inboxByManager(ManagerRoster(listOf(roster.managers.first()), "assistant"), groups) { owners[it.id] })
-        assertNull(inboxByManager(null, groups) { owners[it.id] })
+    @Test fun theSnapshotIsTheCurrentAssistantsShare() {
+        fun assistant(manager: String?) = CurrentAssistant(roster, AssistantManagerChoice.Choice("hub", manager, "assistant"))
+        val snapshot = InboxSnapshot(records = records)
+        // An item with no stamp is the default's.
+        assertEquals(listOf("mail:a1:t:7"), snapshot.ofAssistant(assistant(null)).records.map { it.item.id })
+        assertEquals(listOf("mail:a1:t:7"), snapshot.ofAssistant(assistant("assistant")).records.map { it.item.id })
+        assertEquals(listOf("lark:f2:120", "mail:a2:t:9"), snapshot.ofAssistant(assistant("m-3fa21c")).records.map { it.item.id })
+        assertEquals(listOf("mail:a3:t:2"), snapshot.ofAssistant(assistant("m-8b04d2")).records.map { it.item.id })
+        // One the roster does not list (deleted, still installing) is the default's, so no item is left on no page.
+        val strays = InboxSnapshot(records = records + InboxRecord(InboxItem("mail:a4:t:1", kind = "mail", title = "旧的"), source = "mail", manager = "m-gone")
+            + InboxRecord(InboxItem("mail:a5:t:1", kind = "mail", title = "装着"), source = "mail", manager = "m-c1e9f0"))
+        assertEquals(listOf("mail:a1:t:7", "mail:a4:t:1", "mail:a5:t:1"), strays.ofAssistant(assistant(null)).records.map { it.item.id })
+        // Without a roster the choice's own default decides; nothing to cut with the default shown and nothing stamped.
+        val bare = CurrentAssistant(null, AssistantManagerChoice.Choice("hub", null, "assistant"))
+        assertEquals(listOf("mail:a1:t:7"), snapshot.ofAssistant(bare).records.map { it.item.id })
+        val plain = InboxSnapshot(records = records.take(1))
+        assertSame(plain, plain.ofAssistant(bare))
     }
 }

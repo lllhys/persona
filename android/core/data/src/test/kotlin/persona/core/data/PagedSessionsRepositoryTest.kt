@@ -357,6 +357,24 @@ class PagedSessionsRepositoryTest {
         assertEquals(0, failure.legacyCalls)
     }
 
+    @Test fun firstPageFailureExposesARetryableStatus() = runTest {
+        var available = false
+        val transport = Transport().apply { fetch = { _, _, _ ->
+            if (!available) throw java.io.IOException("HTTP 500")
+            page(emptyList(), total = 0)
+        } }
+        val repository = HubSessionsRepository(transport, Connection(), backgroundScope)
+        assertTrue(runCatching { repository.refresh() }.isFailure)
+        assertFalse(repository.listStatus.value.loaded)
+        assertFalse(repository.listStatus.value.loading)
+        assertTrue(repository.listStatus.value.failed)
+
+        available = true
+        repository.refresh()
+        assertTrue(repository.listStatus.value.loaded)
+        assertFalse(repository.listStatus.value.failed)
+    }
+
     @Test fun helloCapabilityChangesReprobeUpgradeAndDowngradeWithoutStickyLegacyMode() = runTest {
         val connection = Connection()
         var supported = false

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistantView, cardNumber, cardView } from "./assistant-view";
+import { assistantView, cardNumber, cardText, cardView } from "./assistant-view";
 
 // The cases every app is held to (schema/extension/examples/persona-card/*.json, from sdk/go/wire/personacard.go): a card
 // and the view it becomes, or null when it stays a code block.
@@ -48,5 +48,17 @@ describe("persona-view", () => {
 
   it("draws persona-card blocks as cards too", () => {
     expect(assistantView("persona-card", JSON.stringify({ type: "stat", value: 3 }))?.sections[0].items[0]).toEqual({ type: "metric", label: "数值", value: "3" });
+  });
+
+  it("a card no app draws reads as words, never JSON", () => {
+    const text = cardText('{"type":"pie","title":"今天的热量","total":{"value":2000,"unit":"kcal"},"segments":[{"label":"早餐","value":480,"note":"燕麦"},{"label":"午餐","value":720}],"note":"还能吃 800 kcal"}');
+    expect(text).toBe("今天的热量\n合计: 2,000 kcal\n早餐: 480 kcal (燕麦)\n午餐: 720 kcal\n还能吃 800 kcal");
+    expect(text).not.toContain("{");
+    expect(cardText('{"type":"stat","value":')).toBeNull(); // still being written: stays code
+    expect(cardText("[1,2]")).toBeNull();
+  });
+
+  it("draws the ring it declares (persona_card_ring)", () => {
+    expect(cardView({ type: "ring", total: { value: 2000 }, segments: [{ label: "a", value: 500 }] })).not.toBeNull();
   });
 });

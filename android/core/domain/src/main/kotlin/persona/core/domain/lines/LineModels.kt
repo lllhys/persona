@@ -10,7 +10,9 @@ import java.time.Instant
 
 /** Domain-only additions keep the existing wire Item compatible with its current callers. */
 data class LineItem(
-    val item: Item, val fold: Fold? = null, val task: TaskNote? = null,
+    val item: Item, val fold: Fold? = null, val task: TaskNote? = item.task?.let {
+        TaskNote(it.kind, it.title, it.status, it.toolUseId, it.taskId, it.detail, it.exitCode, it.outputFile)
+    },
     /** Set by [foldCompactions] on the notice that stands for a compaction; the chat draws it as one divider. */
     val compaction: Compaction? = null,
     /** A hub fold's original exchange anchor, retained when its first actual step replaces it. Not a wire ID. */
@@ -46,6 +48,7 @@ data class TaskNote(
     val outputFile: String? = null,
 ) {
     val failed get() = status == "failed" || (exitCode != null && exitCode != 0)
+    val terminal get() = status in setOf("completed", "failed", "killed", "stopped", "ended")
 }
 
 internal fun blockPart(id: String): Int = id.substringAfterLast('#', "").toIntOrNull() ?: 0
@@ -53,11 +56,17 @@ internal fun positionCompare(seq: Int, part: Int, otherSeq: Int, otherPart: Int)
     if (seq == otherSeq) part.compareTo(otherPart) else seq.compareTo(otherSeq)
 internal val itemOrder = compareBy<LineItem> { it.seq }.thenBy { it.part }
 
-data class ToolCall(val use: LineItem, val result: LineItem?, val images: List<LineItem>) {
+data class ToolCall(
+    val use: LineItem, val result: LineItem?, val images: List<LineItem>,
+    /** Launch receipts and every handback retain their own item identity and full-output endpoint. */
+    val results: List<LineItem> = listOfNotNull(result),
+) {
     val id get() = use.id
     val name get() = use.item.toolName ?: "tool"
-    val running get() = result == null
-    val failed get() = result?.item?.isError == true
+    private val agentState get() = results.lastOrNull { it.task?.kind == "agent" }?.task
+    val running get() = agentState?.let { !it.terminal } ?: (result == null ||
+        (name in setOf("Agent", "Task") && result.text?.let(TaskIndex::isLaunchReceipt) == true))
+    val failed get() = agentState?.failed == true || result?.item?.isError == true
 }
 
 sealed interface WorkItem {

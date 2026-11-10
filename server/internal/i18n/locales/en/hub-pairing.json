@@ -1,4 +1,6 @@
 {
+  "assistant_away": "This computer is with an assistant that’s offline right now, so it can’t be moved. Try again when that assistant is back",
+  "assistant_installing": "This assistant isn’t installed yet. Add the computer once it is",
   "computer_code": "{device} made a pairing code for the computer “{name}”",
   "computer_joining": "A new computer, “{name}”, wants to join. Open the app to confirm it’s yours",
   "confirmed_computer": "This computer is already confirmed. To pair it again, make the code on the hub’s admin page or on the hub’s machine",
@@ -6,6 +8,7 @@
   "mesh_member": "This hub is a member of a hub group. Add the computer on the center hub",
   "name_required": "Give this computer a name",
   "new_device": "New device paired: {name}",
+  "no_assistant": "There’s no such assistant",
   "no_computer": "There’s no such computer",
   "some_device": "A device",
   "tls_required": "The hub hasn’t turned on secure connections yet, so computers can’t connect",

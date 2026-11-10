@@ -1,13 +1,12 @@
 // "Browser (ego lite)" on a Mac's page while the hub's extension ego is on (docs/plans/plan-ego-browser.md, iOS BrowserSection;
 // G107): the switch that lets the assistant drive its ego lite, and how far that is: "Install ego lite" when it is not there;
-// its first-run setup as steps (open it on the Mac or over VNC, import a browser's data, finish, check again); "Ready" with
+// its first-run setup as steps (open it on the Mac or over the page's View screen, import a browser's data, finish, check again); "Ready" with
 // what is left (its usage statistics) ticked or not. Once its setup is done, its sign-ins (BrowserLogins) follow. The
 // hub is asked again when the page opens, and every 2 s while a job runs or the setup is under way and the tab is shown.
 // Only the latest answer for the Mac shown now lands: one for a Mac opened before, or an older one, is dropped.
 import { useEffect, useRef, useState } from "react";
 import { api, enc, errorText, pastHub } from "../../lib/api";
 import { browserView, browserWatching, type BrowserAction, type BrowserStep, type MachineBrowser } from "../../lib/browser";
-import { screenPath } from "../../lib/computer";
 import { documentPage, latestRequest, visiblePoll } from "../../lib/visible-poll";
 import { Button, cx, EASE, Spinner, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
@@ -113,11 +112,6 @@ export function BrowserSection({ mid, browser, online }: { mid: string; browser:
       {t("machines-browsersection.recheck")}
     </Button>
   );
-  const look = (
-    <Button tone="primary" icon="monitor" onClick={() => window.open(screenPath(mid), "_blank", "noopener")}>
-      VNC
-    </Button>
-  );
 
   return (
     <>
@@ -165,8 +159,7 @@ export function BrowserSection({ mid, browser, online }: { mid: string; browser:
                   )}
                   <Steps steps={v.steps} />
                   <div className="flex flex-wrap gap-2">
-                    {action(t("machines-browsersection.open"), "open", !v.screen)}
-                    {v.screen && look}
+                    {action(t("machines-browsersection.open"), "open", true)}
                     {recheckButton}
                   </div>
                 </>

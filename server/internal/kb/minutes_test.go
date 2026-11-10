@@ -38,7 +38,7 @@ func meetingUpload(rev int64, start time.Time, texts ...string) RecordingUpload 
 
 func putRecording(t *testing.T, e *Engine, id string, u RecordingUpload, now time.Time) {
 	t.Helper()
-	if st, err := e.PutRecording(id, u, now); err != nil || st != RecordingStored {
+	if st, err := e.PutRecording(id, u, now); err != nil || st.Status != RecordingStored {
 		t.Fatalf("put %s: %v %v", id, st, err)
 	}
 }

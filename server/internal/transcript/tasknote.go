@@ -80,11 +80,15 @@ func taskNote(xml string) (*proto.TaskNote, string) {
 		}
 	}
 	n.Title = oneLine(full, noteTitleLen)
+	detailLimit := pageOutputLen
+	if n.Kind == "agent" {
+		detailLimit = maxTextLen
+	}
 	switch {
 	case firstTag(xml, "event") != "":
 		n.Detail = clipTo(html.UnescapeString(firstTag(xml, "event")), pageOutputLen)
 	case firstTag(xml, "result") != "":
-		n.Detail = clipTo(html.UnescapeString(firstTag(xml, "result")), pageOutputLen)
+		n.Detail = clipTo(html.UnescapeString(firstTag(xml, "result")), detailLimit)
 	case n.Title != strings.TrimSpace(full):
 		n.Detail = clipTo(full, pageOutputLen) // a long or multi-line command: the title is its first line
 	}

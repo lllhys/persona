@@ -26,6 +26,7 @@ import Testing
         #expect(!NodeMenu.offersPaneActions(session("a", pane: nil)), "no pane: nothing to split")
         #expect(!NodeMenu.offersPaneActions(session("a", pane: "orca:x")), "Orca does not split or close")
         #expect(!NodeMenu.offersPaneActions(session("a", pane: "botmux:x")))
+        #expect(!NodeMenu.offersPaneActions(session("a", pane: "tern:5", kind: "tern")), "Tern is not asked to split, run git or close")
         #expect(!NodeMenu.offersPaneActions(session("a", state: "offline")))
         #expect(!NodeMenu.offersPaneActions(session("a", extra: #","source_kind":"runtime""#)), "a runtime's session has no terminal")
     }
@@ -34,6 +35,8 @@ import Testing
         #expect(NodeMenu.offersSpaceActions(group([session("a")])))
         #expect(!NodeMenu.offersSpaceActions(group([session("a", workspace: nil, space: "-")], space: "-")))
         #expect(!NodeMenu.offersSpaceActions(group([session("a", pane: "orca:x")])))
+        #expect(!NodeMenu.offersSpaceActions(group([session("a", pane: "tern:5", kind: "tern")])))
+        #expect(NodeMenu.kind(group([session("a", pane: "tern:5", kind: "tern")])) == "tern")
         #expect(NodeMenu.workspaceID(group([session("a", workspace: nil)])) == "w1", "falls back to the space id")
     }
 
@@ -110,6 +113,18 @@ import Testing
         #expect(NodeMenu.launchableHere(Launcher(name: "claude")))
         #expect(NodeMenu.launchableHere(Launcher(name: "c2", agent: "claude")))
         #expect(!NodeMenu.launchableHere(Launcher(name: "codex", agent: "codex")))
+    }
+
+    /// Run Agent Here opens the agent it started (#3287): the session `panes/agent` names, on the space's computer and
+    /// hub group; an answer that names none leaves the list in front.
+    @Test func runHereOpensTheSessionTheAnswerNames() {
+        let started = NodeMenu.startedChat(Data(#"{"session_id":"s9"}"#.utf8), on: MachineRef(group: "", id: "m"))
+        #expect(started == SessionKey(machineID: "m", sessionID: "s9"))
+        let elsewhere = NodeMenu.startedChat(Data(#"{"session_id":" s9 "}"#.utf8), on: MachineRef(group: "work", id: "m"))
+        #expect(elsewhere == SessionKey(group: "work", machineID: "m", sessionID: "s9"), "another group's computer keeps its group")
+        #expect(NodeMenu.startedChat(Data("{}".utf8), on: MachineRef(group: "", id: "m")) == nil)
+        #expect(NodeMenu.startedChat(Data(#"{"session_id":""}"#.utf8), on: MachineRef(group: "", id: "m")) == nil)
+        #expect(NodeMenu.startedChat(Data(), on: MachineRef(group: "", id: "m")) == nil, "an empty answer")
     }
 
     @Test func rowMenuIsNotEqualWhenItsPaneItemsChange() {

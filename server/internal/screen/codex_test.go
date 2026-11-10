@@ -158,3 +158,22 @@ func TestReadCodexComposerWithAdjacentFooter(t *testing.T) {
 		})
 	}
 }
+
+// 0.166 can place the status and warning on one row, without a shortcuts row.
+func TestReadCodexComposerWithSingleRowFooter(t *testing.T) {
+	footer := "  GPT-6-Astra high Fast · ~/project · Review project                 ⚠ 1 warning · f2 to view\n"
+	for _, tc := range []struct{ name, composer, want string }{
+		{"empty", "› Ask Codex to do anything\n", ""},
+		{"blank", "›\n", ""},
+		{"typed", "› check the build\n", "check the build"},
+		{"multiline", "› check the build\n  keep this line\n", "check the build\nkeep this line"},
+		{"footer-like draft", "› keep this text\n" + footer + "  and this line\n", "keep this text\n" + strings.TrimSpace(footer) + "\nand this line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ReadCodex("• Done.\n\n" + tc.composer + footer)
+			if s.View != CodexComposer || s.Draft != tc.want {
+				t.Fatalf("view %q draft %q, want composer draft %q", s.View, s.Draft, tc.want)
+			}
+		})
+	}
+}

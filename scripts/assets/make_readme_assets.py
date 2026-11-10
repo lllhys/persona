@@ -116,15 +116,24 @@ def banner(theme, lang="en"):
 # (file name, kind, product); the README puts each kind on its own line.
 BADGES = [
     ("iphone", "client", "iPhone"),
-    ("apple-watch", "client", "Apple Watch"),
-    ("mac", "client", "Mac"),
-    ("vision-pro", "client", "Vision Pro"),
-    ("android", "client", "Android"),
+    ("ipad", "client", "iPad"),
     ("web", "client", "Web"),
+    ("android", "client", "Android"),
+    ("apple-watch", "client", "Apple Watch"),
+    ("vision-pro", "client", "Vision Pro"),
+    ("mac", "client", "Mac"),
+    ("carplay", "client", "CarPlay voice"),
     ("claude-code", "agent", "Claude Code"),
     ("codex", "agent", "Codex"),
+    ("opencode", "agent", "opencode"),
+    ("pi", "agent", "pi"),
+    ("dsh", "agent", "DSH"),
+    ("antigravity", "agent", "Antigravity CLI"),
     ("herdr", "engine", "herdr"),
     ("orca", "engine", "Orca"),
+    ("herdr-app", "engine", "Herdr App"),
+    ("paseo", "engine", "Paseo"),
+    ("cindy", "engine", "Cindy"),
 ]
 
 VERDANA = {  # advance widths at 11px, shields.io's metric for Verdana

@@ -1,5 +1,6 @@
 // The pure half of the menu in atoms.tsx (#2329): what a key does in an open menu, whether a row needs a second
 // activation, where the context-menu key opens it. No React, so every rule is tested without a DOM.
+import type { ReactNode } from "react";
 import type { AgentState } from "../lib/types";
 import type { IconName } from "./icons";
 
@@ -25,6 +26,16 @@ export interface MenuItem {
    *  label off the row, and screen readers read it as the row's description. */
   detail?: string;
   icon?: IconName;
+  /** Something drawn before the label in the icon's place, as a mark that the label names: an assistant's avatar. */
+  lead?: ReactNode;
+  /** A word beside the label that says what the row is among the others ("Default"), drawn as a small tag. */
+  tag?: string;
+  /** How many things wait behind the row (an assistant's agents and inbox items), as a count at its end; 0: none. */
+  badge?: number;
+  /** What a screen reader says for `badge` ("3 things waiting for you"); the number alone without it. */
+  badgeLabel?: string;
+  /** The whole row is drawn faded (an offline assistant) yet chosen like any other, unlike `disabled`. */
+  dim?: boolean;
   state?: AgentState;
   checked?: boolean;
   /** The row is one choice of a set and `checked` marks the chosen one (permission mode, effort, model): it is a

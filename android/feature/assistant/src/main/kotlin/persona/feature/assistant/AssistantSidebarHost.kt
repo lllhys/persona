@@ -18,3 +18,14 @@ class AssistantSidebarHost {
 }
 
 val LocalAssistantSidebarHost = staticCompositionLocalOf<AssistantSidebarHost?> { null }
+
+/**
+ * The sidebar's head with the assistant switcher, drawn by the shell (docs/assistant/managers.md "Clients"): the head's own
+ * padding, the head's other button (the compact sidebar's search), and the head as it was for where no switcher shows
+ * (demo mode, a hub without a roster).
+ */
+typealias AssistantSwitcherSlot = @androidx.compose.runtime.Composable (
+    head: androidx.compose.ui.Modifier,
+    trailing: (@androidx.compose.runtime.Composable () -> Unit)?,
+    fallback: @androidx.compose.runtime.Composable () -> Unit,
+) -> Unit

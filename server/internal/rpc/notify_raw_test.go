@@ -67,25 +67,50 @@ func BenchmarkNotifyRaw(b *testing.B) {
 	}
 }
 
+const notifyRawAllocationLimit = 371566
+
 // Sending a 260 KiB session list allocates its line once; it was the list twice more (encoded again, and copied to
 // add the newline).
 func TestNotifyRawAllocates(t *testing.T) {
-	const runs = 50
 	p, raw := New("t", io.Discard), sessionList(260<<10)
+	per := notifyAllocatedBytes(t, func() error { return p.Notify("sessions", raw) })
+	// The line is 360,744 bytes (its HTML characters escaped); it was 721,168.
+	if per > notifyRawAllocationLimit && !raceEnabled {
+		t.Errorf("a Notify of %d encoded bytes allocated %d bytes, want at most %d", len(raw), per, notifyRawAllocationLimit)
+	}
+}
+
+// The same measurement and limit must still reject the historical double-encoding implementation.
+func TestNotifyRawAllocationLimitRejectsDoubleEncoding(t *testing.T) {
+	raw := sessionList(260 << 10)
+	per := notifyAllocatedBytes(t, func() error {
+		_, err := oldNotify("sessions", raw)
+		return err
+	})
+	if per <= notifyRawAllocationLimit {
+		t.Errorf("double encoding allocated %d bytes, want more than %d", per, notifyRawAllocationLimit)
+	}
+}
+
+// notifyAllocatedBytes measures the warmed steady state, like testing.AllocsPerRun: a single processor keeps
+// json's warmed encoder in the same sync.Pool shard. Disabling GC alone does not prevent a switch to a cold shard.
+func notifyAllocatedBytes(t *testing.T, send func() error) uint64 {
+	t.Helper()
+	const runs = 50
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 	defer debug.SetGCPercent(debug.SetGCPercent(-1)) // no GC empties json's pool of encoder buffers
-	_ = p.Notify("sessions", raw)                    // which this one fills
+	if err := send(); err != nil {                   // warm the encoder before measuring
+		t.Fatal(err)
+	}
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	for range runs {
-		if err := p.Notify("sessions", raw); err != nil {
+		if err := send(); err != nil {
 			t.Fatal(err)
 		}
 	}
 	runtime.ReadMemStats(&after)
-	// The line is 360,744 bytes (its HTML characters escaped); it was 721,168.
-	if per := (after.TotalAlloc - before.TotalAlloc) / runs; per > 371566 && !raceEnabled {
-		t.Errorf("a Notify of %d encoded bytes allocated %d bytes, want at most 371566", len(raw), per)
-	}
+	return (after.TotalAlloc - before.TotalAlloc) / runs
 }
 
 // raceEnabled: built with -race, whose sync.Pool drops buffers at random (race_test.go).

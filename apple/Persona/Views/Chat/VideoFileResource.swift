@@ -28,10 +28,10 @@ nonisolated struct VideoFileSource: Sendable {
         let session = URLSession(configuration: configuration)
         let url = api.url("/api/v1/machines/\(ref.machineID)/file/download",
                           query: ["path": file.path, "cwd": ref.cwd ?? ""])
-        let token = api.config.token
+        let config = api.config
         self.init(read: { range, revision in
             var request = URLRequest(url: url, timeoutInterval: 60)
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            config.authorize(&request)
             request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
             request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             // If-Range would turn a changed file into a complete 200 response instead of rejecting it.

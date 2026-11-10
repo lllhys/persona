@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -257,6 +258,23 @@ func listed(t *testing.T, n *Node) map[string]proto.Session {
 		out[s.SessionID] = s
 	}
 	return out
+}
+
+func TestRuntimeCloseCapabilityIsIndependentOfTerminal(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
+			n, _ := runtimeNode(t)
+			hello := dshHello()
+			hello["caps"].(map[string]any)["close"] = allowed
+			host := dialRuntime(t, n, hello)
+			_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "close-capability", "status": "working"}}})
+			waitFor(t, "runtime session listed", func() bool { _, ok := listed(t, n)["close-capability"]; return ok })
+			caps := listed(t, n)["close-capability"].Capabilities
+			if caps == nil || caps.Close == nil || *caps.Close != allowed || caps.Terminal {
+				t.Fatalf("close %v listed as %+v", allowed, caps)
+			}
+		})
+	}
 }
 
 func TestRuntimeSessionsAreListedAndPushed(t *testing.T) {

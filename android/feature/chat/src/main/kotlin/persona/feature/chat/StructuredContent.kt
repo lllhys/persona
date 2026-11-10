@@ -44,7 +44,10 @@ internal fun MessageContent(item: Item, user: Boolean, update: ChatTextUpdate? =
     Column(Modifier.fillMaxWidth().messageMenu(MessageTarget(item.id, model.plain, user, model.editText()))) {
         MessageContextGroup(model.contexts, "${item.id}/contexts", uri::openUri, alignEnd = user)
         AttachedFileCards(model.attached, alignEnd = user)
-        MessageParts(model.parts, user, item.id, boxed = boxed, streaming = update?.streaming == true)
+        // a reply still being written: its quotes do not fold yet (#2984)
+        CompositionLocalProvider(LocalReplyStreaming provides (update?.streaming == true)) {
+            MessageParts(model.parts, user, item.id, boxed = boxed, streaming = update?.streaming == true)
+        }
         if (cut) FullTextButton(item) { whole = it } else ReaderEntry(text)
         if (update?.streaming == true) StreamingCursor()
         // An answer's documents as cards with their first page (iOS #1543), the rest as chips.

@@ -2,6 +2,8 @@ package persona.core.hub
 
 
 import persona.core.contracts.JsonCodec
+import persona.core.contracts.api.SUBSCRIPTIONS_UI
+import persona.core.contracts.api.SubscriptionSummaryLine
 import persona.core.contracts.api.HubExtension
 import persona.core.contracts.api.ExtensionCatalog
 import persona.core.contracts.api.ExtensionConfigRejected
@@ -192,7 +194,8 @@ class HttpExtensionManagement internal constructor(
      * and answer: [ExtensionUiForbidden].
      */
     private suspend fun uiCall(extension: String, ui: String, body: JsonObject): String = try {
-        call(path(extension, "-", "ui", id(ui)), "POST", body)
+        // the source subscription pages (#2041) are the manager's own, drawn and pressed as an extension's page
+        call(if (extension == SUBSCRIPTIONS_UI) "/api/v1/subscriptions/-/ui" else path(extension, "-", "ui", id(ui)), "POST", body)
     } catch (failure: HubFailure) {
         if (failure.status == 404 && failure.code == "unsupported") throw ExtensionUiUnsupported()
         if (failure.status == 404 && failure.code == "not_found") throw ExtensionUiNotFound(failure.message)
@@ -335,6 +338,12 @@ class HttpExtensionManagement internal constructor(
     catch (error: IllegalArgumentException) { throw HubFailure(HubError.Protocol, cause = error) }
 
     // The pairing's connection throws a HubFailure for a status that is not 2xx; a bare request returns it.
+    override suspend fun subscriptionSummary(): List<SubscriptionSummaryLine> {
+        val body = JsonCodec.parseToJsonElement(call("/api/v1/subscriptions/summary", "GET")) as? JsonObject ?: return emptyList()
+        val lines = body["connectors"] as? JsonArray ?: return emptyList()
+        return lines.mapNotNull { runCatching { JsonCodec.decodeFromJsonElement(SubscriptionSummaryLine.serializer(), it) }.getOrNull() }
+    }
+
     private suspend fun call(path: String, method: String, body: JsonObject? = null): String = try {
         request(path, method, body?.toString()?.toRequestBody(json)).use { response ->
             if (!response.isSuccessful) throw HubFailure.from(response)

@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="chat_tray_pending">待处理</string>
-    <string name="chat_tray_progress">进度</string>
-    <string name="chat_tray_agents">Agents</string>
+    <string name="chat_tray_entry_needs_you">要你处理</string>
+    <string name="chat_tray_entry_running">进行中</string>
     <string name="chat_tray_items">%1$d 件</string>
     <string name="chat_tray_approve_all">都批</string>
     <string name="chat_tray_approve">批</string>
@@ -19,8 +18,12 @@
     <string name="chat_tray_no_progress">没有进行中的任务</string>
     <string name="chat_tray_agent_detail">%1$s · %2$s</string>
     <string name="chat_tray_working">工作中</string>
-    <string name="chat_tray_needs_you">等你</string>
-    <string name="chat_tray_unread">做完没看</string>
+    <string name="chat_tray_waiting">等待中</string>
+    <string name="chat_tray_background_tasks_running">后台任务 %1$d 个在跑</string>
+    <string name="chat_tray_subagents_running">子 Agent %1$d 个在跑</string>
+    <string name="chat_tray_background_running">后台工作在跑</string>
+    <string name="chat_tray_background_workflow">后台 workflow</string>
+    <string name="chat_tray_workflow_more">还有 %1$d 个</string>
     <string name="chat_tray_expanded">已展开</string>
     <string name="chat_tray_collapsed">已收起</string>
     <string name="chat_tray_blocked">卡住了</string>
@@ -35,6 +38,9 @@
     <string name="chat_tray_recommended">建议：%1$s</string>
     <string name="chat_tray_accept_changed">验收请求已更新，请查看最新一轮。</string>
     <string name="chat_tray_cancelled">已取消</string>
+    <string name="chat_tray_stopped_state">已停下</string>
+    <string name="chat_tray_stopped">停下了，还没完成</string>
+    <string name="chat_tray_stopped_reason">停下了，还没完成 · %1$s</string>
     <string name="chat_tray_pr_number">PR #%1$s</string>
     <string name="chat_tray_done">已完成</string>
     <string name="chat_tray_accepted">已验收</string>

@@ -24,6 +24,7 @@ class ContinuityReducer {
     )
 
     private val byId = LinkedHashMap<String, Item>()
+    private var ordered: List<Item>? = null
     var history: String? = null
         private set
     var covered: Int = 0
@@ -35,11 +36,12 @@ class ContinuityReducer {
         private set
     val firstSeq: Int? get() = byId.values.minOfOrNull { it.seq }
     val items: List<Item>
-        get() = byId.values.sortedWith(compareBy<Item> { it.seq }.thenBy { part(it.id) })
+        get() = ordered ?: byId.values.sortedWith(compareBy<Item> { it.seq }.thenBy { part(it.id) }).also { ordered = it }
 
     /** Restores cached state without treating the cache as a received backlog. */
     fun restore(items: List<Item>, history: String?, covered: Int, hasMore: Boolean? = null, loadedOnce: Boolean = false) {
         byId.clear()
+        ordered = null
         items.forEach { byId.putIfAbsent(it.id, it) }
         this.history = history
         this.covered = covered.coerceAtLeast(0)
@@ -112,6 +114,7 @@ class ContinuityReducer {
         val keep = if (history == null || history == this.history)
             byId.values.filter { toSeq != null && it.seq > toSeq } else emptyList()
         byId.clear()
+        ordered = null
         this.hasMore = hasMore
         if (history != null) this.history = history
         merge(items)
@@ -128,17 +131,18 @@ class ContinuityReducer {
     /** Publish accumulated range pages together, discarding fold placeholders in the response. */
     fun unfold(fold: Item, work: List<Item>) {
         if (byId.remove(fold.id) == null) return
+        ordered = null
         merge(work.filter { it.kind != "fold" })
     }
 
     private fun merge(new: List<Item>, backlog: Boolean = false, hasMore: Boolean? = null) {
         val folds = new.filter { it.kind == "fold" && byId[it.id]?.let { old -> old.fold == it.fold } != true }
         if (folds.isNotEmpty()) {
-            byId.values.removeAll { it.isWork() && folds.any { fold -> fold.folds(it) } }
+            if (byId.values.removeAll { it.isWork() && folds.any { fold -> fold.folds(it) } }) ordered = null
         }
         // iOS checks the first existing item before sorting the newly appended older items.
         val existingFirst = firstSeq
-        new.forEach { byId.putIfAbsent(it.id, it) }
+        new.forEach { if (byId.putIfAbsent(it.id, it) == null) ordered = null }
         val reachesStart = new.minOfOrNull { it.seq }?.let { it <= (existingFirst ?: new.first().seq) } ?: false
         if (hasMore != null && backlog && (!loadedOnce || byId.size <= new.size) && (hasMore || reachesStart)) {
             this.hasMore = hasMore

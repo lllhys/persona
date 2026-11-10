@@ -8,5 +8,8 @@
   - 跑 UI 测试（todo_3）：在做；督办：卡住 35 分钟，没写验收标准
   - 迁移数据库（todo_4）：在做；督办：正常，验收标准 1 条；它最近向你汇报（4 分钟前）：进度，第 3/5 步：在跑迁移脚本
   - 整理文档（todo_5）：停着；督办：正常，没写验收标准；它最近向你汇报（刚刚）：要你拍板：放 docs 还是 wiki？
+  - 升级依赖（todo_6）：被打断了，没有 Agent 在做了（Agent 被模型服务报错打断后关掉了，不会自己重试）；督办：没人在做，没写验收标准，box session_id=c3d4e5f6：API Error: 400 prompt is too long
+  - 清理旧分支（todo_7）：停着，没有 Agent 在做了（Agent 的标签已关闭，没有排定的唤醒）
+  - 跑回归（todo_8）：停着，没有 Agent 在做了（Agent 所在的电脑离线）
 - iPhone：App 不在前台，phone_* 工具会先尝试在后台唤醒 App，失败就请用户打开 App；要手机确认的写操作可以带 queue_if_offline 先排队（phone_write_queue_list 查看）
 - 已安排的跟进：没有

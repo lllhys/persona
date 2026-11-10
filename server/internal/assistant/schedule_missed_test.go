@@ -43,7 +43,7 @@ func TestMissedRunsAcrossTodayBriefAndSnapshot(t *testing.T) {
 			if len(failed) != tc.want || total != tc.want {
 				t.Fatalf("Today: %v, total %d, want %d", failed, total, tc.want)
 			}
-			_, _, _, misses, total := e.s.snapshotSchedule(ctx, loc, now)
+			_, _, _, _, misses, total := e.s.snapshotSchedule(ctx, loc, now)
 			if len(misses) != tc.want || total != tc.want {
 				t.Fatalf("snapshot: %v, total %d, want %d", misses, total, tc.want)
 			}

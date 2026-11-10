@@ -228,6 +228,7 @@ func parseCodexLine(seq int, line []byte, meta *Meta) []proto.Item {
 		meta.codexTurnID, meta.codexUserID = p.TurnID, ""
 		meta.clearTurnError()
 		meta.turnWorked = false
+		meta.turnParts = nil
 		return nil
 	case "task_complete":
 		meta.TurnOpen, meta.TurnClosed = false, true
@@ -341,6 +342,7 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 			kind = proto.KindThinking
 		} else if t := withoutBotmuxSentinel(text); t != "" {
 			meta.LastText = t
+			meta.turnSaid(t)
 		}
 		a := mk(0, it.ID, "assistant", kind)
 		a.Text = clip(text)

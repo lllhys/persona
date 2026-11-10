@@ -25,6 +25,7 @@
   "filter_empty": "No agents in \"{filter}\"",
   "show_all": "Show all",
   "pinned_section": "Pinned",
+  "leader": "Leader",
   "launching": "Starting",
   "launch_untitled": "New agent",
   "launch_failed": "Couldn't start",
@@ -130,8 +131,8 @@
   "folded_states": "Folded agents: {list}",
   "unread_messages_count_one": "{count} unread message",
   "unread_messages_count_other": "{count} unread messages",
-  "inbox_badge_title_one": "Inbox: counts messages only, {count} needs you; agents waiting on you are under Overview",
-  "inbox_badge_title_other": "Inbox: counts messages only, {count} need you; agents waiting on you are under Overview",
+  "inbox_badge_title_one": "Inbox: {count} unread item; agents waiting on you are under Overview",
+  "inbox_badge_title_other": "Inbox: {count} unread items; agents waiting on you are under Overview",
   "auto_chats": "Automatic",
   "auto_chats_label": "{count} automatic chats",
   "auto_working": "{count} running",
@@ -145,5 +146,13 @@
   "arrange_pages": "Arrange sidebar…",
   "draft": "Draft",
   "resize_label": "Drag to resize the sidebar",
-  "resize_title": "Drag to resize, double-click to reset"
+  "resize_title": "Drag to resize, double-click to reset",
+  "assistants": "Assistants",
+  "new_assistant": "New assistant",
+  "manage_assistants": "Manage assistants…",
+  "switched_to": "Switched to {name}",
+  "switcher_label": "{name}, switch assistant",
+  "switcher_label_waiting": "{name}, switch assistant. Another assistant has something waiting for you",
+  "switcher_count_one": "{count} thing waiting for you",
+  "switcher_count_other": "{count} things waiting for you"
 }

@@ -65,6 +65,17 @@ struct SiriIntentsTests {
         #expect(PersonalAgentEntity(id: "plain", title: "甲").session.sessionKey == "plain")
     }
 
+    /// The personal Agent intents and New To-Do go to the group the app shows (#1924): the key Make Current Hub writes.
+    @MainActor @Test func intentsReadTheGroupTheAppSelected() throws {
+        let name = "SiriIntentsTests." + UUID().uuidString
+        let d = try #require(UserDefaults(suiteName: name))
+        defer { d.removePersistentDomain(forName: name) }
+        #expect(IntentText.hubGroupKey == AppModel.hubGroupKey)
+        #expect(IntentSupport.selectedGroup(d) == "")
+        d.set("work", forKey: AppModel.hubGroupKey)
+        #expect(IntentSupport.selectedGroup(d) == "work")
+    }
+
     @Test func sentWording() {
         #expect(PersonalAgentIntentText.sent(status: "sent", to: "甲", error: nil) == "已交给「甲」")
         #expect(PersonalAgentIntentText.sent(status: "failed", to: "甲", error: "boom") == "发给「甲」失败：boom")

@@ -1,15 +1,54 @@
-// Which manager the assistant page shows (docs/assistant/managers.md "Clients"): with several managers, each a whole assistant,
-// the page's switcher picks one; it starts on the default and is not kept across loads. The assistant's requests name
-// the chosen one (`X-Persona-Manager`, docs/protocol/protocol.md "Per-manager routing"); with the default chosen none is sent,
+// The current assistant (docs/assistant/managers.md "Clients"): with several managers, each a whole assistant, the sidebar's
+// switcher picks the one the whole app shows. The pick is kept in this browser (per hub: the page's origin and proxy
+// prefix) across reloads; a manager that left the roster goes back to the default. The assistant's requests name the
+// chosen one (`X-Persona-Manager`, docs/protocol/protocol.md "Per-manager routing"); with the default chosen none is sent,
 // so a hub with one manager gets the same requests as before. Live updates of another manager's assistant (they carry
 // `manager`; none means the hub's own, `assistant`) are left out. No imports from api.ts: it reads this.
 import { createContext, useContext, useSyncExternalStore } from "react";
+import { BASE } from "./base";
 
 export const MANAGER_HEADER = "X-Persona-Manager";
 /** The id of the assistant the hub runs itself: what a message without `manager` comes from. */
 export const BUILTIN_MANAGER = "assistant";
 
-let chosen: string | null = null;
+/** Where this browser keeps the pick: one hub per origin, and per proxy prefix where several share an origin. */
+export const CHOICE_KEY = `persona.currentManager${BASE ? `:${BASE}` : ""}`;
+
+function storedChoice(): string | null {
+  try {
+    return localStorage.getItem(CHOICE_KEY) || null;
+  } catch {
+    return null; // no storage (a private window, a test without a DOM): the pick lasts the page
+  }
+}
+
+function storeChoice(id: string | null) {
+  try {
+    if (id) localStorage.setItem(CHOICE_KEY, id);
+    else localStorage.removeItem(CHOICE_KEY);
+    // a name is the pick's: a new pick (or none) has none until the roster gives it
+    localStorage.removeItem(PICKED_NAME_KEY);
+  } catch {
+    // as above
+  }
+}
+
+/** Where this browser keeps the pick's name as the roster last gave it: the sidebar's head shows it before the roster
+ *  is read again (a reload), rather than the hub's own name for a moment. */
+export const PICKED_NAME_KEY = `persona.pickedAssistantName${BASE ? `:${BASE}` : ""}`;
+
+function storedName(): string | null {
+  try {
+    return localStorage.getItem(PICKED_NAME_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Only another manager than the default is kept: following the default is the absence of a pick, so a hub with one
+// manager stores and sends nothing. Before the roster is read the kept pick already names its manager on requests.
+let chosen: string | null = storedChoice();
+let chosenName: string | null = chosen ? storedName() : null;
 let rosterDefault = BUILTIN_MANAGER;
 // Whether rosterDefault is the roster's (read once, or the hub has none to read): until then it is a placeholder, and
 // what goes by the default (the pages without a switcher, an item's requests) waits for it or is evaluated again.
@@ -19,9 +58,26 @@ const defaultListeners = new Set<(was: { id: string; settled: boolean }) => void
 
 const emit = () => listeners.forEach((l) => l());
 
-/** The manager picked on the assistant page; null: the default one. */
+/** The manager picked in the switcher; null: the default one. */
 export function chosenManager(): string | null {
   return chosen;
+}
+
+/** The picked manager's name as the roster last gave it (null: no pick, or not known yet). */
+export function pickedName(): string | null {
+  return chosen ? chosenName : null;
+}
+
+/** The roster names the picked manager name (lib/managers.ts): kept with the pick for the next reload. */
+export function notePickedName(name: string | null) {
+  if (!chosen || name === chosenName) return;
+  chosenName = name;
+  try {
+    if (name) localStorage.setItem(PICKED_NAME_KEY, name);
+    else localStorage.removeItem(PICKED_NAME_KEY);
+  } catch {
+    // as storeChoice
+  }
 }
 
 /** The roster's default manager: whose an item without `manager` is. */
@@ -29,16 +85,18 @@ export function defaultManager(): string {
   return rosterDefault;
 }
 
-/** The manager the assistant page shows: the chosen one, else the roster's default. */
+/** The current assistant, whose things the app shows: the chosen one, else the roster's default. */
 export function shownManager(): string {
   return chosen ?? rosterDefault;
 }
 
-/** Pick the manager the assistant page shows; the default (or null) goes back to sending no header. */
+/** Pick the current assistant; the default (or null) goes back to sending no header. Kept across reloads. */
 export function chooseManager(id: string | null) {
   const next = id === null || id === rosterDefault ? null : id;
   if (next === chosen) return;
   chosen = next;
+  chosenName = null;
+  storeChoice(chosen);
   emit();
 }
 
@@ -52,7 +110,11 @@ export function setRosterDefault(id: string) {
   }
   const shown = shownManager();
   rosterDefault = id;
-  chosen = shown === id ? null : chosen;
+  if (shown === id && chosen) {
+    chosen = null;
+    chosenName = null;
+    storeChoice(null);
+  }
   emit();
   defaultListeners.forEach((l) => l(was));
 }
@@ -189,16 +251,19 @@ function itemManager(path: string): string | undefined {
 }
 
 const CONVERSATION = /^\/assistant\/conversations\/[^/?]+/;
+// The routes that are the current assistant's as a whole: its page, conversations, scheduled tasks and memory
+// (`/assistant…`), and its knowledge base with the recordings it keeps there.
+const CURRENT = /^\/(?:assistant|kb|kb-search|recordings)(?=$|[/?])/;
 
 /** The header value for a request to path (under /api/v1), or undefined.
  *  - One conversation's routes name its manager when a page listed it, else none: the hub then sends them to the
  *    conversation's manager itself (ownership.go byConversation), and naming the page's pick would override that.
- *  - The assistant's other routes name the manager the assistant page shows, but not the health space's (`?space=`,
- *    docs/assistant/health.md: that page has no switcher and stays the default manager's).
+ *  - The assistant's other routes and its knowledge base name the current assistant, but not the health space's
+ *    (`?space=`, docs/assistant/health.md: that page stays the default manager's).
  *  - Anything else: a pin or a thing a merged list showed as another manager's names that one. */
 export function managerHeaderFor(path: string): string | undefined {
   if (CONVERSATION.test(path)) return itemManager(path);
-  if (chosen && /^\/assistant(?=$|[/?])/.test(path) && !/[?&]space=/.test(path)) return chosen;
+  if (chosen && CURRENT.test(path) && !/[?&]space=/.test(path)) return chosen;
   return itemManager(path);
 }
 
@@ -223,6 +288,12 @@ export function fromShownManager(msg: Record<string, unknown>): boolean {
 export function ownerHeaders(owner: string | undefined): Record<string, string> | undefined {
   if ((!owner || owner === rosterDefault) && !chosen) return undefined;
   return { [MANAGER_HEADER]: owner || rosterDefault };
+}
+
+/** The header naming the current assistant on a request that makes a thing of its own (a new to-do): none while the
+ *  default is the current one, so a hub with one manager gets the same request as before. */
+export function currentHeaders(): Record<string, string> | undefined {
+  return chosen ? { [MANAGER_HEADER]: chosen } : undefined;
 }
 
 /** owner when it is another manager than the default, else undefined: what a page notes for a conversation it started
@@ -259,9 +330,16 @@ export function useShownManager(): string {
   return useSyncExternalStore(onManagerChoice, shownManager, shownManager);
 }
 
+/** The picked manager (null: the default), re-rendering when it changes: what the assistant's requests name. */
+export function useChosenManager(): string | null {
+  return useSyncExternalStore(onManagerChoice, chosenManager, chosenManager);
+}
+
 /** Tests: back to the default, the hub's own assistant, not known yet. */
 export function resetManagerChoice() {
   chosen = null;
+  chosenName = null;
+  storeChoice(null);
   itemManagers.clear();
   pins.clear();
   rosterDefault = BUILTIN_MANAGER;

@@ -8,6 +8,9 @@ const (
 	EngineHerdrCore = "herdr-core" // the runtime of the Herdr desktop app
 	EngineHerdrBoth = "herdr-both" // classic herdr and herdr-core together
 	EngineOrca      = "orca"       // the Orca desktop app's runtime
+	// EngineTern is Tern, Stencil's multiplexing terminal, through its `tern` command line (node/hosttern.go,
+	// docs/integrations/engines.md "Tern").
+	EngineTern = "tern"
 	// EnginePaseo is not a terminal: the Paseo daemon's agents, through its runtime (node/runtimecontrol.go,
 	// docs/integrations/paseo.md). New sessions and sessions to continue go to Paseo.
 	EnginePaseo = "paseo"
@@ -21,6 +24,7 @@ var EngineNames = map[string]string{
 	EngineHerdrCore: "Herdr App",
 	EngineHerdrBoth: "herdr + Herdr App",
 	EngineOrca:      "Orca",
+	EngineTern:      "Tern",
 	EnginePaseo:     "Paseo",
 	EngineCindy:     "Cindy",
 }

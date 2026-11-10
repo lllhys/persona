@@ -11,8 +11,8 @@ describe("ReceiptSummary (#1508)", () => {
     expect(html).toContain("prose-compact");
     expect(html).toContain("<h2>根因</h2>");
     expect(html).toContain("<strong>网页的改动</strong>");
-    expect(html).toMatch(/<li><strong>底部的「收起」<\/strong>：改成 <code>Collapse<\/code><\/li>/);
-    expect(html).toContain("<code>POST /api/v1/sessions/{mid}/{sid}/interrupt</code>");
+    expect(html).toMatch(/<li><strong>底部的「收起」<\/strong>：改成 <code[^>]*>Collapse<\/code><\/li>/); // inline code a click copies (#2984)
+    expect(html).toMatch(/<code[^>]*>POST \/api\/v1\/sessions\/\{mid\}\/\{sid\}\/interrupt<\/code>/);
     expect(html).not.toContain("**");
     expect(html).not.toContain("## ");
     expect(html).not.toContain("`");

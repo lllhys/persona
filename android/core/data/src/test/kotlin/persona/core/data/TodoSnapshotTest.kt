@@ -14,6 +14,13 @@ import persona.core.contracts.TodoSpace
 class TodoSnapshotTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun oversizedSnapshotIsSkippedWithoutChangingItsOriginal() = runTest {
+        val store = ListSnapshotStore(temporary.newFolder())
+        store.write("large", "123456789")
+        assertNull(store.read("large", maxBytes = 8))
+        assertEquals("123456789", store.read("large", maxBytes = 9))
+    }
+
     @Test fun toDosWrittenToTheSnapshotsReadBackTheSame() = runTest {
         val directory = temporary.newFolder()
         assertNull(ListSnapshotStore(directory).todoCache().read())

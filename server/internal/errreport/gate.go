@@ -138,6 +138,9 @@ func (g *Gate) Admit(r *wire.ErrorReport, sender string) bool {
 		rate = HubRate
 	}
 	if g.total >= TotalRate || g.counts[sender] >= rate {
+		if f := g.folds[r.Fingerprint]; f != nil {
+			f.folded++ // the next one let on counts it (a problem not seen yet gets no fold: no room for a flood)
+		}
 		return false
 	}
 	g.total++
@@ -159,7 +162,26 @@ func (g *Gate) Admit(r *wire.ErrorReport, sender string) bool {
 	return true
 }
 
+// Unsent gives back a report Admit let on that was not delivered after all (no room for it): the next one of its
+// problem is not folded into it and carries its count. Its id stays: a retry would count it twice.
+func (g *Gate) Unsent(r *wire.ErrorReport) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	f := g.folds[r.Fingerprint]
+	if f == nil {
+		f = &fold{}
+		g.folds[r.Fingerprint] = f
+	}
+	f.sent = time.Time{}
+	f.folded += max(r.Count, 1)
+}
+
 func (g *Gate) remember(id string, now time.Time) {
+	if _, ok := g.ids[id]; ok { // again after its window but not forgotten yet: once in the order, at its new time
+		if i := slices.Index(g.order, id); i >= 0 {
+			g.order = slices.Delete(g.order, i, i+1)
+		}
+	}
 	g.ids[id] = now
 	g.order = append(g.order, id)
 	for len(g.order) > idsMost || len(g.order) > 0 && now.Sub(g.ids[g.order[0]]) >= IDWindow {

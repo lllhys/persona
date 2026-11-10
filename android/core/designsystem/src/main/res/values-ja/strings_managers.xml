@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="designsystem_manager_switcher">マネージャー</string>
+    <string name="designsystem_manager_switcher">アシスタントを切り替え</string>
     <string name="designsystem_manager_offline">オフライン</string>
     <string name="designsystem_manager_last_synced">最終同期 %1$s</string>
     <string name="designsystem_manager_just_now">たった今</string>
@@ -12,4 +12,10 @@
     </plurals>
     <string name="designsystem_manager_chip_offline">%1$s、オフライン</string>
     <string name="designsystem_manager_offline_note">%1$s · %2$s</string>
+    <string name="designsystem_manager_current">現在</string>
+    <string name="designsystem_manager_others_waiting">ほかのアシスタントに対応待ちがあります</string>
+    <plurals name="designsystem_manager_waiting">
+        <item quantity="other">%1$d件の対応待ち</item>
+    </plurals>
+    <string name="designsystem_manager_spoken">%1$s、%2$s</string>
 </resources>

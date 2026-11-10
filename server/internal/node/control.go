@@ -86,6 +86,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 			if mode == "plan" && a.Agent == "codex" {
 				return nil, readonlyStartUnsupported() // A live thread without a local rollout cannot acquire CLI flags either.
 			}
+			n.starts.recovered(resume)
 			return n.sessionFor(resume, a), nil // already running
 		}
 		// A claude still alive on the session (Claude's desktop app, another terminal, suspended there) refuses: two
@@ -199,6 +200,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		return nil, n.startTabFailed(ctx, launch, created, ws, id, err)
 	}
 	n.bindPane(pane, id)
+	n.starts.recovered(id)
 	_ = launch.NameAgent(ctx, created.Pane, "j-"+id[:6])
 	n.holdResume(ctx, launch, pane, id, spec) // herdr's restore resumes it through the launcher (herdrresume.go)
 	// Before the first prompt; never a failed start: Claude is up, and ultracode_note says why it is not on.

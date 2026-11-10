@@ -3,7 +3,7 @@
   "cases": [
     {
       "name": "catch_up_over_cap_asks_rest",
-      "description": "A reconnect replay that stops at the hub's cap says more_after; the device asks for the rest and ends with every line.",
+      "description": "A reconnect replay that stops at the hub's cap says more_after; the device asks for the rest from the cap, or has already read the whole gap when the socket came back, and ends with every line.",
       "source": {
         "rule": "A subscription replay carries more_after: true when capped; the client keeps filling",
         "docs": "docs/protocol/protocol.md WebSocket (subscribe)",
@@ -240,8 +240,16 @@
             "a": {
               "requests": [
                 {
-                  "get": "/items",
-                  "after_seq": 12
+                  "one_of": [
+                    {
+                      "get": "/items",
+                      "after_seq": 12
+                    },
+                    {
+                      "get": "/items",
+                      "after_seq": 3
+                    }
+                  ]
                 }
               ],
               "messages": [

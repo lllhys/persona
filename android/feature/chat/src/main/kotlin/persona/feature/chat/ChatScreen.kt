@@ -197,14 +197,14 @@ private fun ChatPage(
     val inboxDrafts by trayDraftSource.collectAsStateWithLifecycle(emptyList())
     var traySchedules by remember(chrome.assistantManagement) { mutableStateOf(emptyList<persona.core.contracts.api.ScheduledTask>()) }
     LaunchedEffect(chrome.assistantManagement, connection, assistantTrays.expanded) {
-        if (renderStyle == ChatRenderStyle.Assistant && assistantTrays.expanded == AssistantTray.Progress) {
+        if (renderStyle == ChatRenderStyle.Assistant && assistantTrays.expanded == AssistantTray.Running) {
             try { traySchedules = chrome.assistantManagement?.tasks().orEmpty() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { /* A failed read retains the last confirmed schedule list. */ }
         }
     }
     LaunchedEffect(chrome.inboxTrays, chrome.inboxScope, assistantTrays.expanded) {
-        if (renderStyle == ChatRenderStyle.Assistant && assistantTrays.expanded == AssistantTray.Pending) {
+        if (renderStyle == ChatRenderStyle.Assistant && assistantTrays.expanded == AssistantTray.NeedsYou) {
             try { chrome.inboxScope?.let { chrome.inboxTrays?.refresh(it) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { /* Live or cached drafts remain visible. */ }
@@ -626,7 +626,6 @@ private fun ChatPage(
             say = { text -> scope.launch { runCatching { sender.send(key, text, UUID.randomUUID().toString()) } } },
             sheet = taskSheet, machines = machines.filter { GroupKeys.namespaceOf(it.id) == namespace }.map { it.copy(id = GroupKeys.raw(it.id)) },
             pending = taskCards.filter { GroupKeys.namespaceOf(it.machineId) == namespace }.map { it.copy(machineId = GroupKeys.raw(it.machineId)) },
-            onOpenProgress = { assistantTrays.expanded = AssistantTray.Progress },
             backgroundRecords = assistantPresentation.background, onOpenBackground = { backgroundOpen = true })
     }
     fun approveTray(captured: List<Pair<Interaction, Resolution>>) {

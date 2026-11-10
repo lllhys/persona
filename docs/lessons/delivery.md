@@ -21,6 +21,12 @@ What made it into the product is in `docs/assistant/todos.md` ("Delivery") (#330
 - **Count infrastructure work separately**: tasks that fix the Agents' own runtime environment get a cap. After half a day, stop and change course (another machine, another model, handle it manually) so it does not crowd out real requirements.
 - **Prepare a real environment first**: before dispatching work that must ship, confirm there is an environment to deploy to and test in (test hub, simulator, real device); if not, make "set up the environment" the first task instead of letting every task write "untested".
 
+## Stage evidence is not runtime state (#3380)
+
+The final handoff alone misses progress while an agent still works or waits on background jobs. Observe complete assistant replies from session lists and followed items too, but never use user text, tool output or partial deltas as delivery evidence. Skip list snippets ending in an ellipsis and items marked with `FullSize`; never fetch full transcripts in the session-list event queue. Final handoffs and complete followed items supply the missing evidence. Keep list-row deduplication to avoid repeated deploy checks.
+
+A pending plan-approval card is reliable; `working` and a reply mentioning a plan are not. Show plan as a temporary view of a pending `IxPlan`, and recompute it when agent ownership changes, including the old task. Stored progress is forward-only, including delivery writes; only an explicit review can withdraw verification. Run the deploy gate before applying stored delivery to an unconfirmed keyword guess, and never cap a confirmed deploy with old delivery. Record explicit verification only after acceptance is saved, not when a supervisor submits `accepted` while the owner still needs to verify. Default to code unless read-only or the acceptance criteria explicitly describe non-code work without code wording.
+
 ## Not done yet
 
 - The iOS / Mac to-do cards do not yet show where delivery is stuck (web and Android already do).

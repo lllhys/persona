@@ -134,11 +134,14 @@ func TestSupervisedCannotBeDoneIsOneConclusionCard(t *testing.T) {
 	_ = notes
 }
 
-// judgeConcluded closes supervised todo as the done judge does (judgeClose) with a cannot conclusion, which still waits
-// for the owner's "OK": only the supervisor's own acceptance is passed for them.
+// judgeConcluded closes supervised todo, a big feature (high priority, #3205), as the done judge does (judgeClose) with
+// a cannot conclusion, which still waits for the owner's "OK": a big feature is the owner's to look at (#3356).
 func judgeConcluded(t *testing.T, s *Service, todo string) {
 	t.Helper()
 	ctx := context.Background()
+	s.todos.mu.Lock()
+	s.todos.todos[todo].Priority = "high"
+	s.todos.mu.Unlock()
 	if _, _, err := s.updateSupervision(ctx, todo, func(v *Supervision) bool {
 		v.State = reviewAccepted
 		v.Reviews = append(v.Reviews, TaskReview{At: time.Now().UTC(), Verdict: reviewAccepted, By: reviewerJudge})
@@ -149,7 +152,9 @@ func judgeConcluded(t *testing.T, s *Service, todo string) {
 	if ok, err := s.reviewDoneTodo(ctx, todo, "判官核对通过", true); err != nil || !ok {
 		t.Fatalf("close: %v %v", ok, err)
 	}
-	s.askConclusion(ctx, todoNow(s, todo), conclusionInput{Outcome: outcomeCannot, Reason: "对方接口不对外开放", Link: "https://docs.example.com/api"})
+	cur := todoNow(s, todo)
+	s.askConclusion(ctx, cur, conclusionInput{Outcome: outcomeCannot, Reason: "对方接口不对外开放", Link: "https://docs.example.com/api",
+		Verified: supervisorVerified(cur)})
 }
 
 // A conclusion with no link given takes the task's own: a web address in the review's evidence before the agent's chat.

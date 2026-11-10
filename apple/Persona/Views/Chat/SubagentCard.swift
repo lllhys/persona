@@ -10,13 +10,20 @@ extension EnvironmentValues {
     @Entry var subagentParent: SessionKey? = nil
 }
 
-/// How a subagent is doing, as its card says it (#5602, the web's `AgentStatus`): by its call's result, a background
-/// one by its notice.
+/// A subagent's authoritative task status, with legacy call-result and background-notice fallbacks.
 nonisolated enum SubagentCardStatus: Equatable, Sendable {
     case running, done, failed, stopped
 
     /// From its Agent call, the chat's background tasks and the hub's word on it.
     static func of(_ call: ToolCall, tasks: TaskIndex, agent: Subagent?) -> SubagentCardStatus {
+        if let id = call.use.toolUseID, let status = tasks.agentStatuses[id] {
+            switch status {
+            case "completed": return .done
+            case "failed", "error": return .failed
+            case "killed", "stopped": return .stopped
+            default: return .running
+            }
+        }
         if let id = call.use.toolUseID, tasks.started.contains(id) {
             // Sent to the background: its receipt is the result; how it went is its notice.
             guard let last = tasks.notes[id]?.last(where: { $0.status != "event" }) else {
@@ -34,7 +41,28 @@ nonisolated enum SubagentCardStatus: Equatable, Sendable {
 
     /// What a background subagent reported: its last notice's detail (nil before it is over).
     static func report(_ call: String, tasks: TaskIndex) -> String? {
-        tasks.notes[call]?.last(where: { $0.status != "event" })?.detail.flatMap { $0.isEmpty ? nil : $0 }
+        tasks.reports[call]?.last?.text ?? tasks.notes[call]?.last(where: { $0.status != "event" })?.detail.flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+nonisolated enum SubagentResult {
+    static func call(_ call: ToolCall, tasks: TaskIndex, agent: Subagent?) -> ToolCall? {
+        guard SubagentCardStatus.of(call, tasks: tasks, agent: agent) != .running else { return nil }
+        let reports = reports(call, tasks: tasks)
+        if !reports.isEmpty {
+            var finished = call
+            finished.result = reports.last
+            finished.results = reports
+            finished.agentStatus = call.use.toolUseID.flatMap { tasks.agentStatuses[$0] }
+            return finished
+        }
+        if let id = call.use.toolUseID, tasks.started.contains(id), tasks.agentStatuses[id] == nil { return nil }
+        return call.result == nil ? nil : call
+    }
+
+    static func reports(_ call: ToolCall, tasks: TaskIndex) -> [Item] {
+        if let id = call.use.toolUseID, let reports = tasks.reports[id] { return reports }
+        return call.results.filter { !SubagentDelivery.isReceipt($0) && !($0.text ?? "").isEmpty }
     }
 }
 
@@ -44,9 +72,13 @@ nonisolated enum SubagentRecent {
     static let count = 3
 
     static func calls(_ items: [Item], last n: Int = count) -> [ToolCall] {
-        var results: [String: Item] = [:]
-        for it in items where it.kind == .toolResult { if let id = it.toolUseID { results[id] = it } }
-        return items.filter { $0.kind == .toolUse }.suffix(n).map { ToolCall(use: $0, result: $0.toolUseID.flatMap { results[$0] }) }
+        var results: [String: [Item]] = [:]
+        for it in items where it.kind == .toolResult { if let id = it.toolUseID { results[id, default: []].append(it) } }
+        return items.filter { $0.kind == .toolUse }.suffix(n).map { use in
+            let deliveries = use.toolUseID.flatMap { results[$0] } ?? []
+            return ToolCall(use: use, result: deliveries.last, results: use.toolName == "Agent" || use.toolName == "Task" ? deliveries : [],
+                            agentStatus: deliveries.last(where: { $0.task?.kind == "agent" }).map { $0.task?.status ?? "" })
+        }
     }
 
     /// The most calls a fold may hold for the card to open it (`foldToOpen`).
@@ -167,6 +199,14 @@ struct SubagentCard: View {
     }
 
     var body: some View {
+        if let finished = SubagentResult.call(call, tasks: tasks, agent: agent) {
+            ToolCallRow(call: finished, autoExpand: false, grouped: true, headerID: "chat.subagent-result")
+        } else {
+            progressCard
+        }
+    }
+
+    private var progressCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptics.tap()
@@ -221,15 +261,14 @@ struct SubagentCard: View {
             if let prompt = call.input["prompt"]?.string, !prompt.isEmpty {
                 Text(prompt).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(6)
             }
-            if let id = call.use.toolUseID, tasks.started.contains(id) {
-                // Sent to the background: its result is the receipt; its report is its notice's (#5886).
-                if let report = SubagentCardStatus.report(id, tasks: tasks) {
-                    FoldedReport(id: key, text: report, isError: status == .failed) {
-                        ResultBlock(text: report, isError: status == .failed, cut: nil)
+            let reports = SubagentResult.reports(call, tasks: tasks)
+            if !reports.isEmpty {
+                ForEach(reports) { report in
+                    FoldedReport(id: key + "/" + report.id, text: report.cutText, isError: report.isError ?? false) {
+                        ResultBlock(text: report.cutText, isError: report.isError ?? false, cut: report.fullSize.map { (report.id, $0) })
                     }
                 }
-            } else if let result = call.result {
-                // What it reported, one line until opened (its card's id keeps it open).
+            } else if let result = call.result, !SubagentDelivery.isReceipt(result) {
                 FoldedReport(id: key, text: result.cutText, isError: result.isError ?? false) {
                     ResultBlock(text: result.cutText, isError: result.isError ?? false, cut: result.fullSize.map { (result.id, $0) })
                 }

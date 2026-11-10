@@ -408,6 +408,8 @@ func TestHookPane(t *testing.T) {
 	}{
 		{env("HERDR_PANE_ID", "w1:p2", "HC_TERMINAL_ID", "t7"), "w1:p2"},
 		{env("HC_TERMINAL_ID", "t7"), "herdr-core:t7"},
+		{env("TERN_PANE", "42"), "tern:42"},
+		{env("HERDR_PANE_ID", "w1:p2", "TERN_PANE", "42"), "w1:p2"}, // herdr's client in a Tern tab: the agent is herdr's
 		{env(), ""},
 	} {
 		if got := nodeclient.HookPane(c.env); got != c.want {

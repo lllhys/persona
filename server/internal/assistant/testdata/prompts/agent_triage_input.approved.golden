@@ -4,4 +4,4 @@ Agent：修登录（示例电脑）
 它停下时最后的回复：
 CI 还在跑
 
-用户已经同意：等「CI 通过」好了以后去「push 到 beta」。它如果还在等同一件事、之后要做的还是这一步（同一个分支 / 环境 / 对象，没多做别的），就写 on=external、wait.approved=true，wait.then 照写这一步，不用再问用户；等的事或要做的事变了，照安全规则问用户，不写 approved。
+用户已经同意：等「CI 通过」好了以后去「push 到 beta」。它如果还在等同一件事、之后要做的还是这一步（同一个分支 / 环境 / 对象，没多做别的），就写 on=external、wait.approved=true，wait.then 照写这一步，不用再问用户；等的事或要做的事变了，不写 approved，也不自动推进。

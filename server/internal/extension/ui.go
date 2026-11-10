@@ -234,15 +234,19 @@ var (
 		"agent.finished":  true,
 		"todo.changed":    true,
 		"todo.decision":   true,
+		"leader.changed":  true,
+		"leader.report":   true,
 	}
 
 	// EventScopes are the hub scopes an event needs besides the subscription: only an extension granted the scope
 	// (or the legacy full-hub grant) is told. A topic not listed needs none.
 	EventScopes = map[string]string{
-		"kb.changed":    ScopeKBRead,
-		"kb.forgotten":  ScopeKBRead,
-		"todo.changed":  ScopeTodosRead,
-		"todo.decision": ScopeTodosRead,
+		"kb.changed":     ScopeKBRead,
+		"kb.forgotten":   ScopeKBRead,
+		"todo.changed":   ScopeTodosRead,
+		"todo.decision":  ScopeTodosRead,
+		"leader.changed": ScopeLeadersRead,
+		"leader.report":  ScopeLeadersRead,
 	}
 )
 

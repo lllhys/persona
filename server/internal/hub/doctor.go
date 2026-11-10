@@ -160,6 +160,14 @@ func (d *doctorReport) config(dir string) *Config {
 	} else {
 		d.ok("security.allow_public_plaintext", "已关闭")
 	}
+	switch {
+	case cfg.Security.PlaintextLoopbackOnly && cfg.Public.TLSListen == "":
+		d.problem("security.plaintext_loopback_only", "已开启但没有 public.tls_listen，hub 启动不了；请配置 TLS 监听或关闭此项")
+	case cfg.Security.PlaintextLoopbackOnly:
+		d.ok("security.plaintext_loopback_only", "已开启：明文端口只服务本机，局域网页面跳转到 TLS 端口，其余请求 403 tls_required")
+	default:
+		d.ok("security.plaintext_loopback_only", "未开启：局域网和 VPN 来源仍可用明文端口带令牌访问")
+	}
 	if pp := cfg.Security.ProxyProtocol; pp != nil {
 		switch p, err := pp.policy(); {
 		case err != nil:

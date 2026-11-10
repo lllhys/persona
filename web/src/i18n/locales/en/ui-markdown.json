@@ -1,5 +1,7 @@
 {
   "copy_code": "Copy code",
   "copy": "Copy",
-  "copy_table": "Copy table"
+  "copy_table": "Copy table",
+  "quote_more": "Show all",
+  "quote_less": "Show less"
 }

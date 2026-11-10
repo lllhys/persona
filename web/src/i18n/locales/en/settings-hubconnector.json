@@ -10,7 +10,7 @@
   "no_status": "Status unavailable",
   "signed_in_via": "Signed in via",
   "last_sync": "Last sync",
-  "hub_side_note": "Sign-in is set up in the manager's configuration (manager.json). This page only shows the status.",
+  "hub_side_note": "Sign-in is set up in the assistant's configuration (manager.json). This page only shows the status.",
   "fix_title": "How to fix it",
   "to_knowledge": "Add to knowledge base",
   "to_inbox": "Add to Inbox",

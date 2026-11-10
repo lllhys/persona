@@ -206,47 +206,19 @@ type (
 // Markdown of the ExtraDirs and (when messages is set) the message archive; newest message days first. At most limit
 // hits.
 func (e *Engine) Search(query string, messages bool, limit int) []Hit {
-	match := matcher(query)
-	if match == nil || limit <= 0 {
+	s := e.newSearcher(query, limit, true)
+	if s == nil {
 		return nil
-	}
-	ws := words(query)
-	// Files come through Find's cache (findCache.text): a file unchanged since an earlier search is one stat, not a
-	// read and a fold, and one without every word is skipped whole. Search stops at limit, so it leaves the pruning
-	// of files no longer there to Find, which sees them all; the cache is bounded either way (findCacheBytes).
-	recording := e.Store.recordingSearchView()
-	gen := e.find.begin()
-	var hits []Hit
-	scan := func(p string) {
-		if len(hits) >= limit {
-			return
-		}
-		t, _, ok := e.searchText(p, gen, recording)
-		if !ok || !hasAll(t.lower, ws) {
-			return
-		}
-		rel, err := filepath.Rel(e.Store.Dir, p)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			rel = p
-		}
-		for _, l := range strings.Split(t.raw, "\n") {
-			if len(hits) >= limit {
-				return
-			}
-			if match(l) {
-				hits = append(hits, Hit{Path: rel, Line: clip(strings.TrimSpace(l), 300)})
-			}
-		}
 	}
 	// The data dir's files come from Find's walk (searchFiles), kept while no directory changed: profile files, the
 	// ExtraDirs, the message days newest first, then the Moments archive (moments.go), thousands of posts read after
 	// everything else so they never crowd it out.
 	o := e.searchFiles()
 	for _, d := range o.files {
-		scan(d.path)
+		s.scan(d.path)
 	}
 	for _, dir := range e.ExtraDirs {
-		if len(hits) >= limit {
+		if s.full() {
 			break
 		}
 		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
@@ -257,26 +229,149 @@ func (e *Engine) Search(query string, messages bool, limit int) []Hit {
 				return filepath.SkipDir // .git and the like
 			}
 			if !d.IsDir() && strings.HasSuffix(p, ".md") {
-				scan(p)
+				s.scan(p)
 			}
 			return nil
 		})
 	}
 	if messages {
 		for _, d := range o.days {
-			if len(hits) >= limit {
+			if s.full() {
 				break
 			}
-			scan(d.path)
+			s.scan(d.path)
 		}
 	}
 	for _, d := range o.moments {
-		if len(hits) >= limit {
+		if s.full() {
 			break
 		}
-		scan(d.path)
+		s.scan(d.path)
 	}
-	return hits
+	return s.hits
+}
+
+// SearchKind is Search within one kind of entry (projects, chats, people, docs, meetings, events, recordings): the
+// files under that kind's directory, by entry, those whose name has every word of the query first, then as List ranks
+// them (the walk alone goes by id, and a recording's id is random, so "last week's" one could come after older ones);
+// with messages, the chats' message days after them, newest first. Never the ExtraDirs or the Moments posts. Nil for
+// any other kind.
+func (e *Engine) SearchKind(query, kind string, messages bool, limit int) []Hit {
+	switch kind {
+	case KindProject, KindChat, KindPerson, KindDoc, KindMeeting, KindEvent, KindRecording:
+	default:
+		return nil
+	}
+	s := e.newSearcher(query, limit, kind == KindRecording)
+	if s == nil {
+		return nil
+	}
+	list := e.List(kind, "")
+	if kind == KindRecording { // kb_list's order for recordings, newest first (List ranks them by the model's importance)
+		start := map[string]time.Time{}
+		for _, r := range e.Store.Recordings() {
+			start[SafeID(r.ID)] = r.StartedAt
+		}
+		sort.SliceStable(list, func(i, j int) bool { return start[SafeID(list[i].ID)].After(start[SafeID(list[j].ID)]) })
+	}
+	rank := make(map[string]int, len(list))
+	for i, en := range list {
+		r := i
+		if !s.match(en.Name) {
+			r += len(list)
+		}
+		rank[SafeID(en.ID)] = r
+	}
+	o := e.searchFiles()
+	type ranked struct {
+		d    *dirEnt
+		rank int
+	}
+	var files []ranked
+	for _, d := range o.files {
+		if !strings.HasPrefix(d.rel, kind+"/") {
+			continue
+		}
+		r := 2 * len(list) // a file of no listed entry (a doc without a title yet): last
+		if _, id, ok := entryOf(d.rel); ok {
+			if i, ok := rank[id]; ok {
+				r = i
+			}
+		}
+		files = append(files, ranked{d, r})
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].rank < files[j].rank })
+	for _, f := range files {
+		if s.full() {
+			break
+		}
+		s.scan(f.d.path)
+	}
+	if messages && kind == KindChat {
+		for _, d := range o.days {
+			if s.full() {
+				break
+			}
+			if strings.HasPrefix(d.rel, kind+"/") {
+				s.scan(d.path)
+			}
+		}
+	}
+	return s.hits
+}
+
+// searcher gathers the hits of Search and SearchKind: the lines with every word of the query, at most limit.
+type searcher struct {
+	e         *Engine
+	match     func(string) bool
+	ws        []string
+	gen       uint64
+	recording map[string]map[string][]byte
+	limit     int
+	hits      []Hit
+}
+
+// newSearcher starts a search; nil when there is nothing to find. Files come through Find's cache (findCache.text): a
+// file unchanged since an earlier search is one stat, not a read and a fold, and one without every word is skipped
+// whole. A search stops at limit, so it leaves the pruning of files no longer there to Find, which sees them all; the
+// cache is bounded either way (findCacheBytes). recordings: the search may read recordings' files, whose accepted
+// text is read once for it (recordingSearchView).
+func (e *Engine) newSearcher(query string, limit int, recordings bool) *searcher {
+	match := matcher(query)
+	if match == nil || limit <= 0 {
+		return nil
+	}
+	s := &searcher{e: e, match: match, ws: words(query), limit: limit}
+	if recordings {
+		s.recording = e.Store.recordingSearchView()
+	}
+	s.gen = e.find.begin()
+	return s
+}
+
+func (s *searcher) full() bool { return len(s.hits) >= s.limit }
+
+// scan adds the lines of file p that match, until the limit.
+func (s *searcher) scan(p string) {
+	if s.full() {
+		return
+	}
+	t, _, ok := s.e.searchText(p, s.gen, s.recording)
+	if !ok || !hasAll(t.lower, s.ws) {
+		return
+	}
+	rel, err := filepath.Rel(s.e.Store.Dir, p)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		rel = p
+	}
+	for _, l := range strings.Split(t.raw, "\n") {
+		if s.full() {
+			return
+		}
+		if s.match(l) {
+			s.hits = append(s.hits, Hit{Path: rel, Line: clip(strings.TrimSpace(l), 300)})
+		}
+	}
 }
 
 // clip cuts s to its first n runes plus an ellipsis (textfmt.Clip).

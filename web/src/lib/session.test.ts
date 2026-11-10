@@ -50,6 +50,17 @@ describe("session capability contract", () => {
     expect(resumeCommand(live)).toBe("cd /tmp/project && codex resume real-thread");
   });
 
+  it("offers runtime close independently of terminal access and respects an explicit refusal", () => {
+    const runtime: Session = { ...legacy, source_kind: "runtime", capabilities: { read: true, interrupt: true, close: true } };
+    expect(sessionCan(runtime, "terminal")).toBe(false);
+    expect(sessionCan(runtime, "close")).toBe(true);
+    expect(sessionMenuActions(runtime)).toEqual(["stop", "close"]);
+    expect(sessionMenuActions({ ...runtime, status: "offline" })).toEqual([]);
+    expect(sessionMenuActions({ ...legacy, capabilities: { terminal: true, close: false } })).toEqual(["stop", "resume"]);
+    expect(sessionCan({ ...runtime, capabilities: { terminal: true } }, "close")).toBe(true);
+    expect(sessionCan(undefined, "close")).toBe(false);
+  });
+
   it("quotes the folder in the resume command, and gives only the command without one", () => {
     expect(resumeCommand({ ...legacy, cwd: "/Users/me/My Project" })).toBe("cd '/Users/me/My Project' && claude --resume raw-thread");
     expect(resumeCommand({ ...legacy, cwd: "/tmp/it's; $(rm -rf ~) & x" })).toBe(`cd '/tmp/it'\\''s; $(rm -rf ~) & x' && claude --resume raw-thread`);

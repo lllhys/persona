@@ -1,0 +1,21 @@
+{
+  "bad_default_role": "meeting_attendance_default 只能是 off、listener 或 participant。",
+  "forbidden": "这台设备不能这样做，请用有完整权限的设备。",
+  "too_large": "请求太大了：最多 {size}。",
+  "no_recording": "这条录音还没有上传。请先上传，再发一次。",
+  "deleted": "这条录音已删除。",
+  "bad_json": "请求不是有效的 JSON：{error}",
+  "bad_from": "from 必须是 0 或更大的整数。",
+  "too_many_segments": "每次最多 {max} 句。",
+  "bad_time": "每句的 start 和 end 都必须是数字。",
+  "not_attending": "Persona 没有参加这条录音的会议。",
+  "live_gap": "前面还缺句子，请从 {next} 开始重发。",
+  "live_full": "这条录音能保留的实时句子已满，不要再发送。",
+  "bad_ask_id": "id 必须是 UUID。",
+  "bad_ask_field": "{field} 的类型不对。",
+  "question_too_long": "问题超过了 {max} 个字。",
+  "no_question": "请发送问题，或者点按的时间（at）。",
+  "op_id_reused": "这个 id 已经用于另一个问题。",
+  "asks_full": "这场会已经有 {max} 个问题了。",
+  "ask_busy": "正在回答两个问题，等其中一个答完再问。"
+}

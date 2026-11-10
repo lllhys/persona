@@ -8,6 +8,7 @@ import type { TermPane, TermSpace, TermTab } from "./terminals";
 import type { Launcher, Machine, Session } from "./types";
 import { copyText, toast } from "../ui/atoms";
 import { openNewAgent } from "./new-agent";
+import { navigate } from "./router";
 import { openNewWorktree } from "./worktree";
 import type { MenuItem } from "../ui/menu-model";
 import { launcherBlock, usableFirst } from "./launcher-health";
@@ -56,6 +57,8 @@ export interface NodeActionDeps {
   newAgent: (mid: string, cwd: string) => void;
   /** "New worktree…" for this workspace (the dialog, #2431); a deps without it leaves the item out. */
   newWorktree?: (node: MenuNode) => void;
+  /** Opens a session's chat: the agent "Run agent here" started, as "New agent" opens the one it starts (#3287). */
+  openSession: (mid: string, sid: string) => void;
   copy: (text: string) => void;
   notify: (text: string, tone: "ok" | "error" | "info") => void;
   /** The tree changed on the computer: read it again. */
@@ -73,6 +76,7 @@ export function defaultNodeDeps(changed: () => void = () => {}): NodeActionDeps 
     launchers: (mid) => api<{ launchers: Launcher[] }>(`/machines/${enc(mid)}/launchers`).then((r) => r.launchers ?? []),
     newAgent: (mid, cwd) => openNewAgent({ machineId: mid, cwd }),
     newWorktree: (node) => openNewWorktree(node, changed),
+    openSession: (mid, sid) => navigate({ name: "session", mid, sid }),
     copy: (text) => void copyText(text),
     notify: (text, tone) => toast(text, tone),
     changed,
@@ -84,8 +88,12 @@ export interface NodeActionOptions {
   omit?: readonly string[];
 }
 
-/** Closing, splitting, renaming and git are herdr's: another host (Orca, herdr-core, botmux) is not asked to do them. */
+/** Closing, splitting, git and running an agent in a shell are herdr's: another host (Orca, herdr-core, Tern, botmux) is
+ *  not asked to do them. */
 export const canChangeHost = (host: string | undefined) => !host || host === "herdr";
+
+/** Renaming a workspace or a tab is herdr's and Tern's (the capability table in docs/integrations/engines.md). */
+export const canRenameIn = (host: string | undefined) => canChangeHost(host) || host === "tern";
 
 /** Only the agents a launcher starts the way "New agent" does without a first message: Claude Code. */
 export const launchableHere = (l: Launcher) => (l.agent_type || l.agent || "claude") === "claude";
@@ -103,6 +111,11 @@ export interface PaneGitResult {
   message?: string;
 }
 
+/** What `panes/agent` answers: the session it started in the pane (`docs/protocol/protocol.md`). */
+export interface PaneAgentResult {
+  session_id?: string;
+}
+
 const GIT_OUTCOMES = new Set(["fetched", "up_to_date", "pulled", "nothing_to_push", "pushed"]);
 
 /** What a node menu's Git ▸ Pull / Push / Fetch did, in the app's language; an outcome this app doesn't know (an older
@@ -117,6 +130,7 @@ export function nodeActions(node: MenuNode, deps: NodeActionDeps, opts: NodeActi
   const { mid } = node;
   const online = node.online !== false;
   const writes = online && canChangeHost(node.host);
+  const renames = online && canRenameIn(node.host);
   const kind = node.host ? { kind: node.host } : {};
   const fail = (key: string, e: unknown) => new Error(t(key, { error: errorText(e) }));
 
@@ -144,7 +158,7 @@ export function nodeActions(node: MenuNode, deps: NodeActionDeps, opts: NodeActi
   // ── rename ──
   const renameValue = node.label ?? "";
   group(
-    node.kind === "workspace" && writes && Boolean(node.workspaceId) && {
+    node.kind === "workspace" && renames && Boolean(node.workspaceId) && {
       key: "node-rename",
       label: t("lib-node-actions.rename"),
       icon: "pencil",
@@ -160,7 +174,7 @@ export function nodeActions(node: MenuNode, deps: NodeActionDeps, opts: NodeActi
         },
       },
     },
-    node.kind === "tab" && writes && Boolean(node.tabId) && {
+    node.kind === "tab" && renames && Boolean(node.tabId) && {
       key: "node-rename",
       label: t("lib-node-actions.rename"),
       icon: "pencil",
@@ -218,9 +232,12 @@ export function nodeActions(node: MenuNode, deps: NodeActionDeps, opts: NodeActi
       ...(block ? { detail: block.reason, divider: i > 0 && !launcherBlock(all[i - 1]) } : {}),
       inline: true,
       onSelect: async () => {
-        await deps.post(mid, "panes/agent", { pane: node.paneId, launcher: l.name }).catch((e) => Promise.reject(fail("lib-node-actions.start_failed", e)));
+        const res = (await deps.post(mid, "panes/agent", { pane: node.paneId, launcher: l.name }).catch((e) => Promise.reject(fail("lib-node-actions.start_failed", e)))) as PaneAgentResult | undefined;
         deps.notify(t("lib-node-actions.started_in_pane", { name: l.name }), "ok");
         deps.changed();
+        // into the new agent's chat, as "New agent" opens the one it starts (#3287); an answer naming none stays here
+        const sid = res?.session_id?.trim();
+        if (sid) deps.openSession(mid, sid);
       },
     };
   };

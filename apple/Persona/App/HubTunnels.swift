@@ -13,6 +13,8 @@ struct HubTunnel: Hashable {
 
     let hub: PairedHub
     let kind: Kind
+    /// The in-app route whose core dials the SSH server, for an SSH tunnel set to go through it.
+    var carrier: InAppTunnelRoute?
 
     /// Through it every time, not only when the hub's own addresses do not answer.
     var always: Bool {
@@ -37,7 +39,7 @@ struct HubTunnel: Hashable {
         switch kind {
         case .ssh:
             guard let route = hub.ssh else { return false }
-            return (try? await SSHTunnels.shared.open(hub.id, route: route, hub: hub.config.url)) != nil
+            return (try? await SSHTunnels.shared.open(hub.id, route: route, hub: hub.config.url, carrier: carrier)) != nil
         case .localProxy:
             guard let route = hub.localProxy else { return false }
             return (try? await LocalProxies.shared.open(hub.id, route: route, hub: hub.config.url)) != nil
@@ -80,11 +82,27 @@ extension AppModel {
     func hubTunnels(_ group: String) -> [HubTunnel] {
         registry.members(group).flatMap { h -> [HubTunnel] in
             var out: [HubTunnel] = []
-            if h.ssh?.isUsable == true { out.append(HubTunnel(hub: h, kind: .ssh)) }
+            if let ssh = h.ssh, ssh.isUsable {
+                // Through the in-app tunnel: only with a core and a hub's in-app route to carry it.
+                let carrier = ssh.viaInAppTunnel ? inAppCarrier(for: h) : nil
+                if !ssh.viaInAppTunnel || carrier != nil { out.append(HubTunnel(hub: h, kind: .ssh, carrier: carrier)) }
+            }
             if h.localProxy?.isUsable == true { out.append(HubTunnel(hub: h, kind: .localProxy)) }
             if InAppTunnel.available, h.inAppTunnel?.isUsable == true { out.append(HubTunnel(hub: h, kind: .inApp)) }
             return out
         }
+    }
+
+    /// The in-app route an SSH tunnel set to go through the in-app tunnel uses (its sign-in, its probe): the hub's own,
+    /// else another paired hub's (the core and its sign-in are one per device). Nil in a build without the core.
+    func inAppCarrier(for hub: PairedHub) -> InAppTunnelRoute? {
+        #if DEBUG
+        // `-showSSHViaTunnel YES`: a stand-in route so the SSH page shows its switch in builds without the core (screenshots).
+        if UserDefaults.standard.bool(forKey: "showSSHViaTunnel") { return InAppTunnelRoute(targetHost: "hub.internal.example") }
+        #endif
+        guard InAppTunnel.available else { return nil }
+        if let own = registry.hubs.first(where: { $0.id == hub.id })?.inAppTunnel, own.isUsable { return own }
+        return registry.hubs.lazy.compactMap(\.inAppTunnel).first(where: \.isUsable)
     }
 
     /// Where a group's socket goes next when it has a tunnel, step by step as `HubWay.next` says: straight to the hub

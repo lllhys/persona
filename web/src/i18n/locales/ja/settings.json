@@ -147,6 +147,8 @@
   "stale": "{machines} は未更新",
   "stale_mark": "未更新",
   "launchers_failed": "プロバイダーの一覧を取得できませんでした：{error}",
+  "devices": "コンピューター",
+  "machine_keys": "個別のキー",
   "search_settings": "設定を検索",
   "search_in_page": "このページ内",
   "search_no_results": "一致する設定がありません",

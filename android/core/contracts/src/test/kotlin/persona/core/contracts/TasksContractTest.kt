@@ -62,6 +62,11 @@ class TasksContractTest {
         val todos = JsonCodec.decodeFromString<TodosResponse>("""{"todos":[{"id":"t","title":"x","origin":"c","plan_id":"p",
             "agents":[{"machine_id":"box","session_id":"s1"},{"machine_id":"box","session_id":"s0","released_at":"2026-11-03T09:00:00Z"}]}]}""")
         assertEquals(listOf("s1"), (todos.todos.single().activeAgents.map { it.sessionId }).zhAny())
+        // the completion check (#3180): kept as sent; a todo from an older hub has none
+        val checked = JsonCodec.decodeFromString<Todo>("""{"id":"t","check":{"verdict":"waiting","reason":"Waiting for CI","at":"2026-11-10T08:00:00Z",
+            "work_since":"2026-11-10T07:00:00Z","later":1}}""")
+        assertEquals(TodoCheck("waiting", "Waiting for CI", "2026-11-10T08:00:00Z", "2026-11-10T07:00:00Z"), checked.check)
+        assertEquals(null, JsonCodec.decodeFromString<Todo>("""{"id":"t"}""").check)
         val failed = JsonCodec.decodeFromString<Todo>("""{"id":"t","done_at":"2026-11-04T07:52:25Z","start_error":"claude did not become ready within 1m0s"}""")
         assertEquals("claude did not become ready within 1m0s", (failed.startError).zhAny())
         val ix = JsonCodec.decodeFromString<Interaction>("""{"id":"ix","machine_id":"box","session_id":"s1","kind":"permission","task_title":"修登录崩溃"}""")

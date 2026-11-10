@@ -117,7 +117,11 @@ func (s *Service) briefCard(f *briefFacts, label, answer string) (card *feishubo
 	if f.ProgressTotal > 0 {
 		var working []briefBlock
 		for i, p := range f.Progress {
-			md := fmt.Sprintf("**%d** %s\n%s", i+1, feishubot.EscapeMarkdown(clip(oneLine(p.Title), 60)), stageBar(l, p.Stage)+briefLink(l, todoLink(f.web, p.ID)))
+			stage := ""
+			if p.StageKind != "general" {
+				stage = stageBar(l, p.Stage)
+			}
+			md := fmt.Sprintf("**%d** %s\n%s", i+1, feishubot.EscapeMarkdown(clip(oneLine(p.Title), 60)), stage+briefLink(l, todoLink(f.web, p.ID)))
 			working = append(working, briefBlock{md: md, plain: fmt.Sprintf("%d. %s", i+1, clip(oneLine(p.Title), 60))})
 		}
 		room.section(c, &plain, l, i18n.T(l, "assistant-briefing.head_progress", i18n.Args{"n": f.ProgressTotal}), working, f.ProgressTotal)

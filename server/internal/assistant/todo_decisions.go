@@ -42,7 +42,9 @@ func (s *Service) todoDecisionRoutes() {
 	})
 
 	// POST /api/v1/todos/{id}/decisions: write one {question, choice, reason?, supersedes_id?, source?, ref?}. A device
-	// writes one by hand (source manual, the default) or an outcome; an extension (todos.write) writes only outcomes,
+	// writes one by hand (source manual, the default), an outcome, or on a concern the report of its outcome to the owner
+	// (source reported: choice is what they were told; question defaults to the concern's title; it closes the concern,
+	// concerns.go); an extension (todos.write) writes only outcomes,
 	// such as a scheduler's acceptance evidence, never the user's decisions and never superseding one. ref (an
 	// extension's, at most decisionRefMax runes, no '#') makes the write idempotent: the same ref and question is
 	// written once, and a replay answers inserted false.
@@ -65,6 +67,10 @@ func (s *Service) todoDecisionRoutes() {
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(in.Source) == db.DecisionReported {
+			s.reportConcernRoute(w, r, id, in.Choice)
 			return
 		}
 		row := db.TodoDecisionRow{ID: "dec_" + randomHex(8), TodoID: id, Question: decisionText(in.Question),
@@ -119,6 +125,28 @@ func (s *Service) todoDecisionRoutes() {
 		s.decisionsChanged(r.Context(), id, at)
 		apierr.WriteJSON(w, map[string]any{"decision": row})
 	})
+}
+
+// reportConcernRoute is POST …/decisions {source: "reported", choice}: a device writes the report of concern id's
+// outcome, which closes it. Only a device (an extension never reports to the owner for the main conversation).
+func (s *Service) reportConcernRoute(w http.ResponseWriter, r *http.Request, id, choice string) {
+	if r.Header.Get(RoleHeader) == roleExtension {
+		apierr.Write(w, http.StatusBadRequest, errors.New("an extension writes outcomes only"))
+		return
+	}
+	t, closed, err := s.reportConcern(r.Context(), id, choice, "", "")
+	switch {
+	case errors.Is(err, db.ErrTodoNotFound):
+		apierr.Write(w, http.StatusNotFound, err)
+	case errors.Is(err, db.ErrNotConcern):
+		apierr.Write(w, http.StatusBadRequest, errors.New("source reported is for a concern only"))
+	case errors.Is(err, errEmptyReport):
+		apierr.Write(w, http.StatusBadRequest, err)
+	case err != nil:
+		apierr.Write(w, http.StatusInternalServerError, err)
+	default:
+		apierr.WriteJSON(w, map[string]any{"todo": t, "closed": closed})
+	}
 }
 
 // decisionTodo is the store and the request's todo id once the todos are loaded and it is one of them; otherwise it

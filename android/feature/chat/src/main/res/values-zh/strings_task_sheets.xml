@@ -13,6 +13,7 @@
     <string name="chat_task_detail_own_agent">Agent · 不是从对话开的</string>
     <string name="chat_task_detail_agent_gone">没有这个 Agent 了</string>
     <string name="chat_task_detail_agent_gone_body">它可能已经关掉了。</string>
+    <string name="chat_task_detail_report">最新汇报</string>
     <string name="chat_task_detail_open_chat">打开对话</string>
     <string name="chat_task_board_title">任务</string>
     <string name="chat_task_board_empty">还没有任务</string>

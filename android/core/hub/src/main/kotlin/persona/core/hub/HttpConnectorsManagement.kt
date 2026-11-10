@@ -216,7 +216,7 @@ class HttpConnectorsManagement internal constructor(
     private companion object {
         val json = "application/json; charset=utf-8".toMediaType()
 
-        fun encode(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+        fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
         fun connectorPath(id: String) = "/api/v1/connectors/${encode(id)}"
 

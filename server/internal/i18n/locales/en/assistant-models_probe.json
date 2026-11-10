@@ -15,6 +15,7 @@
   "status_other": "The gateway returned {status}",
   "said": "{head}: {said}",
   "models_unreadable": "Couldn’t read the gateway’s model list",
+  "models_not_found": "Model-list endpoint not found (404). This does not mean the connection test failed. Keep existing models or enter model IDs manually",
   "models_pagination": "Couldn’t finish reading the model list: invalid or excessive pagination",
   "response_unfinished": "The Responses request did not complete successfully"
 }

@@ -107,9 +107,10 @@ class AssistantSettingsEntriesTest {
             for (s in AppStyle.entries) for (night in listOf(false, true)) {
                 rule.runOnIdle { style = s; dark = night }
                 rule.waitForIdle()
-                // One navigation title and one switcher chip. The deleted owner row added two more matches.
+                // One navigation title ("助手资料", no longer the bare "助手") and, with several assistants, one switcher chip each (this page keeps its own). The deleted owner row added two more matches.
                 val switching = response !in listOf("no-roster", "single")
-                rule.onAllNodesWithText("助手", useUnmergedTree = true).assertCountEquals(if (switching) 2 else 1)
+                rule.onAllNodesWithText("助手资料", useUnmergedTree = true).assertCountEquals(1)
+                rule.onAllNodesWithText("助手", useUnmergedTree = true).assertCountEquals(if (switching) 1 else 0)
                 rule.onAllNodesWithText("工作", useUnmergedTree = true).assertCountEquals(if (switching) 1 else 0)
                 val permission = rule.onAllNodesWithText("新会话默认权限").onLast()
                 if (response in listOf("claude", "codex")) permission.assertIsEnabled() else permission.assertIsNotEnabled()

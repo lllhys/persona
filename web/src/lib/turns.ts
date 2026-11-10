@@ -8,6 +8,7 @@ import { errorSignature, isRetryText, parseAPIError, type APIErrorInfo } from ".
 import { foldCompactions, isCompaction } from "./compaction";
 import { injectedOf } from "./injected";
 import { sourceKey, sourceOf, userSourceSentinel } from "./message-source";
+import { attachedAgentNotices } from "./task-association";
 import type { Injected, Item, MessageSource } from "./types";
 
 export type Step =
@@ -203,6 +204,7 @@ function isUserMessage(i: Item) {
 }
 
 export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Segment[] {
+  const attached = attachedAgentNotices(items);
   const out: Segment[] = [];
   let cur: Segment | null = null;
   let lastUserEntry = "";
@@ -215,6 +217,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
   };
 
   for (const it of items) {
+    if (attached.has(it.id)) continue;
     const entry = it.id.split("#")[0];
     if (isUserMessage(it)) {
       if (cur?.user?.injected && entry === lastUserEntry && !cur.steps.length && !cur.answer && !cur.user.rawInput!.some((i) => i.id === it.id)) {
@@ -264,7 +267,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
       }
       case "tool_result": {
         const st = it.tool_use_id ? tools.get(it.tool_use_id) : undefined;
-        if (st) st.result = it;
+        if (st && !results?.has(it.tool_use_id!)) st.result = it;
         break; // a result without its call (the call is on an earlier page) has nothing to show
       }
       case "image": {
@@ -721,8 +724,10 @@ function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>):
 
 /** The chat as lines (iOS ChatLines.lines): exchanges, their wakes and notices, recaps, API errors as cards. */
 export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[] {
-  const blocks = buildBlocks(foldCompactions(items));
-  const source = items.at(-1);
+  const attached = attachedAgentNotices(items);
+  const feed = items.filter((i) => !attached.has(i.id));
+  const blocks = buildBlocks(foldCompactions(feed));
+  const source = feed.at(-1);
   // A wake can reopen a turn before a recap. Select the owner of the latest source item, not the last drawn block.
   const active = opts.live && source ? blocks.find((b) => b.kind === "turn" && (b.turn.ordered.some((i) => i.id === source.id) || b.turn.trailing.some((i) => i.id === source.id))) : undefined;
   const liveId = active && active.kind === "turn" ? active.turn.id : undefined;

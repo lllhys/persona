@@ -65,6 +65,34 @@ class ReadmeLanguageTests(unittest.TestCase):
                 for line in lines[:-1]:
                     self.assertTrue(line.endswith("<br>"), "end each row but the last with <br>")
 
+    def test_badges_link_to_maintained_docs_with_matching_labels(self):
+        expected = [(name, f"{kind}: {product}") for name, kind, product in ASSETS.BADGES]
+        for lang in READMES:
+            badges = re.findall(
+                r"\[!\[([^\]]+)\]\(docs/assets/readme/badge-([a-z-]+)\.svg\)\]\(([^)]+)\)",
+                read(lang),
+            )
+            with self.subTest(lang=lang):
+                self.assertEqual(expected, [(name, label) for label, name, _ in badges])
+                for _, name, target in badges:
+                    path = target.split("#", 1)[0]
+                    self.assertTrue(path.startswith("docs/"), name)
+                    self.assertNotRegex(path, r"^docs/(plans|archive)/", name)
+                    self.assertTrue((ROOT / path).is_file(), target)
+
+    def test_badges_keep_the_existing_pill_style(self):
+        for name, kind, product in ASSETS.BADGES:
+            with self.subTest(badge=name):
+                root = ET.fromstring(ASSETS.badge(kind, product))
+                self.assertEqual("24", root.attrib["height"])
+                self.assertEqual(f"{kind}: {product}", root.attrib["aria-label"])
+                pill = root.find(SVG + "rect")
+                self.assertEqual("6", pill.attrib["rx"])
+                self.assertEqual("#26211e", pill.attrib["fill"])
+                self.assertEqual("#4a413a", pill.attrib["stroke"])
+                labels = root.findall(f"{SVG}g/{SVG}text")
+                self.assertEqual(["#b3a79b", "#ffffff"], [node.attrib["fill"] for node in labels])
+
     def test_superagent_is_spelled_superagent(self):
         for lang in READMES:
             with self.subTest(lang=lang):

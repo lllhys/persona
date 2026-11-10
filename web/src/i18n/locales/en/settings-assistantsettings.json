@@ -37,10 +37,10 @@
   "about_save_failed": "Couldn't save About me: {error}",
   "about_saved": "About me saved. Applies to new chats",
   "about_me": "About me",
-  "from_hub": "From the manager's config",
+  "from_hub": "From the assistant's config",
   "about_placeholder": "For example: where your code lives, skills you use, machines or folders to leave alone, how you like updates",
   "about_note": "This is added to the end of Persona's instructions. Changes apply to new chats.",
-  "about_note_hub": "It's using the manager's config for now; once you save here, this takes over.",
+  "about_note_hub": "It's using the assistant's config for now; once you save here, this takes over.",
   "revert": "Revert",
   "memory_saved": "Memory saved",
   "deleted": "Deleted \"{title}\"",
@@ -61,5 +61,12 @@
   "default_permissions_unset": "Not set (existing behavior)",
   "task_models": "Task models",
   "main_chat_model": "Main chat model",
-  "default_permissions_unconfirmed": "The assistant did not confirm this permission setting. Reload before trying again."
+  "default_permissions_unconfirmed": "The assistant did not confirm this permission setting. Reload before trying again.",
+  "meetings_title": "Meetings",
+  "meeting_attendance": "Persona in meetings",
+  "meeting_attendance_off": "Off",
+  "meeting_attendance_listener": "Listener",
+  "meeting_attendance_participant": "Participant",
+  "meeting_attendance_footer": "Pre-selects Persona's role when a meeting recording starts on the phone; you can change it each time. As a listener it answers on the phone's screen; as a participant it also says the answers aloud. Answers use meeting material only: earlier minutes, project status and who owns which to-do.",
+  "meeting_attendance_unconfirmed": "The assistant did not confirm this meeting setting. Reload before trying again."
 }

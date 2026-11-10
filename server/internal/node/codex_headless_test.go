@@ -45,6 +45,7 @@ func TestCodexExecRunsAreNotListed(t *testing.T) {
 		{"0e000000-0000-4000-8000-0000000000e3", `{"originator":"codex_exec","source":{"subagent":{"thread_spawn":{"parent_thread_id":"0e000000-0000-4000-8000-0000000000e1"}}}}`, false},
 		{"0e000000-0000-4000-8000-0000000000e4", `{"originator":"codex_exec","source":{"subagent":"review"}}`, false},
 		{"0e000000-0000-4000-8000-0000000000e5", `{"originator":"Codex Desktop","source":"exec"}`, false},
+		{"0e000000-0000-4000-8000-0000000000e6", `{"originator":"codex_work_desktop","source":"exec"}`, false},
 		{"0e000000-0000-4000-8000-0000000000c1", `{"originator":"codex-tui","source":"cli","cwd":"/work/mine"}`, true},
 		{"0e000000-0000-4000-8000-0000000000c2", `{"originator":"Codex Desktop","source":"vscode","cwd":"/work/app"}`, true},
 	}

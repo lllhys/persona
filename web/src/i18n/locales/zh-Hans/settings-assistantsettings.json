@@ -35,10 +35,10 @@
   "about_save_failed": "关于我没有保存：{error}",
   "about_saved": "关于我已保存，新对话生效",
   "about_me": "关于我",
-  "from_hub": "来自管理者的配置",
+  "from_hub": "来自助手的配置",
   "about_placeholder": "比如：代码放在哪、常用哪些 skills、哪些机器或目录别碰、你习惯的汇报方式",
   "about_note": "这些内容会附在 Persona 的说明最后；改了以后新对话生效。",
-  "about_note_hub": "现在用的是管理者配置里的内容，在这里保存后以这里为准。",
+  "about_note_hub": "现在用的是助手配置里的内容，在这里保存后以这里为准。",
   "revert": "还原",
   "memory_saved": "记忆已保存",
   "deleted": "已删除「{title}」",
@@ -59,5 +59,12 @@
   "default_permissions_unset": "未设置（保留原行为）",
   "task_models": "派任务模型",
   "main_chat_model": "主对话模型",
-  "default_permissions_unconfirmed": "助手未确认此权限设置，请重新加载后再试。"
+  "default_permissions_unconfirmed": "助手未确认此权限设置，请重新加载后再试。",
+  "meetings_title": "会议",
+  "meeting_attendance": "Persona 参会方式",
+  "meeting_attendance_off": "关闭",
+  "meeting_attendance_listener": "旁听",
+  "meeting_attendance_participant": "参与",
+  "meeting_attendance_footer": "在手机上开始会议录音时预先选中的角色，每次都可以改。旁听时回答只显示在手机屏幕上；参与时还会把回答读出来。回答只用会议资料：之前的纪要、项目进展和各项待办由谁负责。",
+  "meeting_attendance_unconfirmed": "助手未确认这项会议设置，请重新加载后再试。"
 }

@@ -82,11 +82,15 @@ type targetNode struct {
 	begins  []map[string]any
 	noDest  bool              // a node from before dest=inbox that says so: "unknown upload destination"
 	noEcho  bool              // a node from before destinations: opens it in its temp directory and says nothing
+	onBegin func()            // before an upload begins (outside mu)
 	onChunk func(n int) error // the n-th chunk (from 0), before it is written (outside mu)
 	chunks  int
 }
 
 func (f *targetNode) handle(_ context.Context, method string, params json.RawMessage) (any, error) {
+	if method == "file.upload.begin" && f.onBegin != nil {
+		f.onBegin()
+	}
 	if method == "file.upload.chunk" && f.onChunk != nil {
 		f.mu.Lock()
 		n := f.chunks
@@ -309,13 +313,10 @@ func TestTransferCancel(t *testing.T) {
 	dst := &targetNode{}
 	d, _, _, _, mux := transferDevices(t, src, dst)
 	tr := started(t, postTransfer(t, mux, transferBody))
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if got, _ := d.getTransfer(tr.ID); got.Bytes > 0 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	eventually(t, 5*time.Second, "the first transfer chunk", func() bool {
+		got, _ := d.getTransfer(tr.ID)
+		return got.Bytes > 0
+	})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/files/transfer/"+tr.ID, nil))
 	close(release)
@@ -554,5 +555,88 @@ func TestTransferLimitAndForgetting(t *testing.T) {
 	d.pruneTransfers(time.Now().Add(transferKeep + time.Minute))
 	if _, ok := d.getTransfer(ids[0]); ok {
 		t.Fatal("not forgotten")
+	}
+}
+
+// Starts reserve capacity before the target's begin RPC: a burst cannot all pass runningTransfers while none is
+// listed yet (#3599). Once those transfers end, their slots can be used again.
+func TestTransferConcurrentStartsReserveSlots(t *testing.T) {
+	src := &sourceNode{data: []byte("hello")}
+	dst := &targetNode{}
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	dst.onBegin = func() {
+		select {
+		case arrived <- struct{}{}:
+		case <-release:
+		}
+		<-release
+	}
+	d := newTestDevices(t)
+	_, _ = fakeMachine(t, d, "a", "Laptop", src.handle)
+	switchOn(t, d, "a")
+	const starts = maxRunningTransfers + 4
+	bodies := make([]string, starts)
+	for i := range starts {
+		id := fmt.Sprintf("b%d", i)
+		_, _ = fakeMachine(t, d, id, id, dst.handle)
+		switchOn(t, d, id)
+		bodies[i] = fmt.Sprintf(`{"from":{"machine":"a","path":"Movies/movie.mov","cwd":"/home/me"},"to":{"machine":%q,"dest":"inbox"}}`, id)
+	}
+	mux := d.Handler(http.NotFoundHandler())
+	results := make(chan *httptest.ResponseRecorder, starts)
+	var wg sync.WaitGroup
+	var unblock sync.Once
+	defer func() {
+		unblock.Do(func() { close(release) })
+		wg.Wait()
+	}()
+	for _, body := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- postTransfer(t, mux, body)
+		}()
+	}
+	var early []*httptest.ResponseRecorder
+	begins := 0
+	for {
+		if (begins == maxRunningTransfers && len(early) == starts-maxRunningTransfers) || begins == starts {
+			break
+		}
+		select {
+		case <-arrived:
+			begins++
+		case rec := <-results:
+			early = append(early, rec)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the starts did not reach the target or the limit")
+		}
+	}
+	if begins != maxRunningTransfers || len(early) != starts-maxRunningTransfers {
+		t.Fatalf("target begins %d, early answers %d, want %d and %d", begins, len(early), maxRunningTransfers, starts-maxRunningTransfers)
+	}
+	for _, rec := range early {
+		if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), `"code":"busy"`) {
+			t.Fatalf("over the limit: %d %s", rec.Code, rec.Body)
+		}
+	}
+
+	unblock.Do(func() { close(release) })
+	var ids []string
+	for range maxRunningTransfers {
+		rec := <-results
+		ids = append(ids, started(t, rec).ID)
+	}
+	wg.Wait()
+	for _, id := range ids {
+		if end := waitTransfer(t, d, mux, id); end.State != proto.TransferDone {
+			t.Fatalf("end %+v", end)
+		}
+	}
+	// Every slot was released by runTransfer, not held by a completed or refused start.
+	last := started(t, postTransfer(t, mux, bodies[0]))
+	if end := waitTransfer(t, d, mux, last.ID); end.State != proto.TransferDone {
+		t.Fatalf("after the slots were reused: %+v", end)
 	}
 }

@@ -20,12 +20,11 @@ describe("浏览器（ego lite）区块", () => {
     expect(browserView(on({ job: { kind: "install", state: "running", step: "正在下载" } }), true)).toEqual({ kind: "installing", text: "正在下载" });
   });
 
-  it("装好没做首次设置时给四步引导，屏幕共享开着时有 VNC", () => {
+  it("装好没做首次设置时给四步引导", () => {
     const v = browserView(on({ installed: true, screen_sharing: true, job: { kind: "open", state: "done" } }), true);
     expect(v.kind).toBe("setup");
     if (v.kind !== "setup") return;
     expect(v.steps.map((s) => s.id)).toEqual(["open", "import", "finish", "recheck"]);
-    expect(v.screen).toBe(true);
   });
 
   it("做完设置但没跑通时说 node 给的原因", () => {

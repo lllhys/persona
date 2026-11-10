@@ -70,5 +70,6 @@
   "pick_group": "Select all in {name}",
   "load_older": "Show older",
   "loading_older": "Loading…",
-  "older_failed": "Couldn't load older items: {error}"
+  "older_failed": "Couldn't load older items: {error}",
+  "subscriptions": "Subscriptions"
 }

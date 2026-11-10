@@ -69,6 +69,32 @@ struct SyncEventTests {
         #expect(old.permissionMode == nil && old.effort == nil)
     }
 
+    @Test func modeCapabilitiesDriveModeControls() throws {
+        func decode(_ body: String) throws -> Session { try JSON.decoder.decode(Session.self, from: Data(body.utf8)) }
+        let desktop = try decode(#"{"session_id":"desktop","status":"working","agent":"claude","source_kind":"claude_desktop","capabilities":{"read":true,"send":true,"modes":false}}"#)
+        #expect(desktop.canSend && !desktop.canChangeModes)
+        let orca = try decode(#"{"session_id":"orca","status":"working","agent":"claude","source_kind":"runtime","capabilities":{"read":true,"send":true,"modes":true}}"#)
+        #expect(orca.canChangeModes)
+        let agy = try decode(#"{"session_id":"agy","status":"working","agent":"agy","source_kind":"runtime","capabilities":{"read":true,"send":true,"modes":true}}"#)
+        #expect(agy.canChangeModes)
+        #expect(agy.capabilities?.modes == true)
+
+        // An older hub omits modes: preserve the old agent-based behavior rather than treating absence as a refusal.
+        let oldDesktop = try decode(#"{"session_id":"old-desktop","status":"working","agent":"claude","source_kind":"claude_desktop","capabilities":{"read":true,"send":true}}"#)
+        #expect(oldDesktop.canChangeModes)
+        let oldAgy = try decode(#"{"session_id":"old-agy","status":"working","agent":"agy","source_kind":"runtime","capabilities":{"read":true,"send":true}}"#)
+        #expect(!oldAgy.canChangeModes)
+        let noSend = try decode(#"{"session_id":"read-only","status":"working","agent":"agy","source_kind":"runtime","capabilities":{"read":true,"modes":true}}"#)
+        #expect(!noSend.canChangeModes)
+        let offlineAgy = try decode(#"{"session_id":"offline-agy","status":"offline","agent":"agy","source_kind":"runtime","capabilities":{"read":true,"send":true,"modes":true}}"#)
+        #expect(!offlineAgy.canChangeModes)
+        // As on the web, an assistant can change its modes even while offline: the hub applies them to the next run.
+        let offlineAssistant = try decode(#"{"session_id":"offline-assistant","status":"offline","assistant":true}"#)
+        #expect(offlineAssistant.canChangeModes)
+        let assistantNoModes = try decode(#"{"session_id":"assistant-no-modes","status":"working","assistant":true,"capabilities":{"send":true,"modes":false}}"#)
+        #expect(!assistantNoModes.canChangeModes)
+    }
+
     /// A Codex thread the hub drives through its app-server lists its levels (`efforts`): only its effort changes, among them.
     @Test func codexThreadOnItsAppServerSetsItsEffortOnly() throws {
         func decode(_ body: String) throws -> Session { try JSON.decoder.decode(Session.self, from: Data(body.utf8)) }

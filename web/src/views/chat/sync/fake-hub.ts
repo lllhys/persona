@@ -67,6 +67,8 @@ export interface Request {
   post?: "messages" | "resolve" | "conversations";
   id?: string;
   new_op?: boolean;
+  /** Any one of these, where the protocol allows several ways (#2770). */
+  one_of?: Request[];
 }
 
 /** A request the page made, as the case's `requests` names them. */
@@ -360,7 +362,10 @@ export class SyncHub {
       }
       const opPath = path.match(/^\/api\/v1\/ops\/([^/]+)$/);
       if (opPath) {
-        const r = this.receipts.get(decodeURIComponent(opPath[1]).toLowerCase());
+        const asked = decodeURIComponent(opPath[1]).toLowerCase();
+        // the case's id for the write that op went with ({"get": "/ops", "id"})
+        this.seen.push({ get: "/ops", key: this.seen.find((s) => s.op?.toLowerCase() === asked)?.key ?? asked });
+        const r = this.receipts.get(asked);
         if (!r) return json({ error: "no such operation" }, 404);
         const body = btoa(JSON.stringify(r.body));
         return json({ id: opPath[1], state: r.status >= 200 && r.status < 300 ? "done" : "failed", result: { status: r.status, body, content_type: "application/json" } });

@@ -61,8 +61,8 @@ func TestTaskAuthorizedWaitIsNoCard(t *testing.T) {
 }
 
 // Irreversible or outward steps stay the user's whatever the task says; a step its task does not ask for (or says not
-// to take), or an agent with no todo, is asked as before.
-func TestUnauthorizedWaitIsStillACard(t *testing.T) {
+// to take), or an agent with no todo, gets no card and no wake: the hub only cards a question the Agent wrote (#3290).
+func TestUnauthorizedWaitIsNoCardNoWake(t *testing.T) {
 	for _, c := range []struct{ name, notes, reply string }{
 		{"send", releaseTask, `{"phase":"blocked","on":"external","line":"等上线","wait":{"what":"上线完成","then":"回复产品已经上线","check_minutes":5}}`},
 		{"delete", "清理测试泳道，删除旧分支，然后发布。", `{"phase":"blocked","on":"external","line":"等","wait":{"what":"发布完成","then":"删除旧分支","check_minutes":5}}`},
@@ -80,8 +80,8 @@ func TestUnauthorizedWaitIsStillACard(t *testing.T) {
 		f.setSessions("box", stopped("s1", "等着"))
 		triage(t, s, "s1")
 		e := entryOf(t, s, "s1")
-		if len(s.workCards()) != 1 || e.InteractionID == "" || e.WakeAt != nil || e.Work.On != proto.WaitUser {
-			t.Fatalf("%s: not asked: %+v", c.name, e)
+		if len(s.workCards()) != 0 || e.InteractionID != "" || e.WakeAt != nil || e.Work.On == proto.WaitUser {
+			t.Fatalf("%s: carded or woken without a question: %+v", c.name, e)
 		}
 		if n := workEvents(s, "auto_approved"); n != 0 {
 			t.Fatalf("%s: auto_approved %d", c.name, n)

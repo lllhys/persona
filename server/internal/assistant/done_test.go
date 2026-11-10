@@ -81,6 +81,7 @@ func TestTaskDoneSourceAllowsBackgroundWorkButKeepsQueuedPeer(t *testing.T) {
 func TestTaskDonePromptsGolden(t *testing.T) {
 	golden(t, "task_done", prompts.RenderTaskDone(prompts.TaskDone{Owner: "User"}))
 	golden(t, "task_done.delivery", prompts.RenderTaskDone(prompts.TaskDone{Owner: "User", Delivery: true}))
+	golden(t, "task_done.language", prompts.RenderTaskDone(prompts.TaskDone{Owner: "User", Language: "English"}))
 	in := prompts.TaskDoneInput{Title: "Fix the login failure", Prompt: "Fix the login failure and test the correction.",
 		Criteria: []string{"Login regression test passes"}, Replies: []prompts.TaskDoneReply{{Machine: "Computer", From: "peer-agent", Source: "peer",
 			Ask: "Did this session fix the unrelated parser?", Text: "Another session was informed; this session did not handle that problem."}}}

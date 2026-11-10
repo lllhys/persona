@@ -31,6 +31,7 @@ private struct LarkConversationsPage: View {
     @Environment(\.shell) private var shell
     /// iPhone Duo's bars down the side: the shell's bar is the side rail there (`ShellSideRail`).
     @Environment(\.shellRailEdge) private var railEdge
+    @Environment(\.pageTabSwitch) private var pageTabSwitch
     @Environment(\.tabIsActive) private var active
     @State private var store: LarkConversationsModel
     @State private var path: [LarkConversation] = []
@@ -188,6 +189,11 @@ private struct LarkConversationsPage: View {
             }
             .navigationDestination(for: LarkConversation.self) { LarkChatView(conversation: $0, messageComposer: true) }
         }
+        #if os(iOS)
+        // A phone's tabs (iPhone Duo open): the switch at the very top, over the list and a chat opened from it, as on
+        // Agents (#2623).
+        .safeAreaInset(edge: .top, spacing: 0) { if shell == nil, pageTabSwitch { PageTabSwitchRow() } }
+        #endif
         .onChange(of: store.accountID) { _, _ in path = []; pins = LarkPinnedInteraction() }
         .onChange(of: query) { _, _ in
             pins = LarkPinnedInteraction(); scroll.resetShelf()

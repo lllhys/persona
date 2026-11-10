@@ -16,8 +16,17 @@
   "change_done_needs_delivery": "「上线并实测才算做完」：{before} → {after}",
   "title_leaders": "Leader 对话",
   "change_leaders": "Leader 对话（督办自己派出的任务）：{before} → {after}",
+  "title_interject_background": "插话时把手头的命令转到后台",
+  "change_interject_background": "「插话时把手头的命令转到后台」：{before} → {after}",
+  "title_agent_tasks": "Persona 启动的每个 Agent 都归入一个有人跟进的任务",
+  "change_agent_tasks": "「Persona 启动的每个 Agent 都归入一个有人跟进的任务」：{before} → {after}",
   "title_model_tiers": "Agent 预设",
   "change_model_tier": "{profile} · {tier}：{before} → {after}",
   "title_review_sample_percent": "抽查验收的比例",
-  "change_review_sample_percent": "抽查验收的比例：{before}% → {after}%"
+  "change_review_sample_percent": "抽查验收的比例：{before}% → {after}%",
+  "title_meeting_attendance_default": "录音会议里的 Persona",
+  "change_meeting_attendance_default": "录音会议里的 Persona：{before} → {after}",
+  "meeting_role_off": "不参加",
+  "meeting_role_listener": "旁听",
+  "meeting_role_participant": "参与"
 }

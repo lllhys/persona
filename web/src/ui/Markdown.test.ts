@@ -97,7 +97,7 @@ describe("KaTeX", () => {
     expect(html).toContain('<span data-math-pending="inline">$\\pi r^2$</span>');
     expect(html).toMatch(/data-math-pending="display">\$\$\nE=mc\^2\n\$\$/);
     // an ordinary code span is still code
-    expect(renderToStaticMarkup(createElement(Markdown, { text: "`a_b`" }))).toContain("<code>a_b</code>");
+    expect(renderToStaticMarkup(createElement(Markdown, { text: "`a_b`" }))).toMatch(/<code [^>]*data-copy-code[^>]*>a_b<\/code>/);
   });
 
   it("renders what normalizeMath writes and mhchem once loaded", async () => {
@@ -201,11 +201,13 @@ describe("Mermaid blocks", () => {
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { createElement } = await import("react");
     const { Markdown } = await import("./Markdown");
-    for (const text of ["```js\nlet a = 1\n```", "```mermaid\ngraph TD; A-->B\n```"]) {
-      const html = renderToStaticMarkup(createElement(Markdown, { text }));
-      expect(html).toContain("[@media(hover:none)]:opacity-100");
-      expect(html).toMatch(/aria-label="拷贝代码"[^>]*touch-hit/);
-    }
+    // a code block's Copy is in its title bar, always shown (#2984); a diagram's buttons show on a touch screen
+    const code = renderToStaticMarkup(createElement(Markdown, { text: "```js\nlet a = 1\n```" }));
+    expect(code).toMatch(/data-code-bar[^]*aria-label="拷贝代码"[^>]*touch-hit/);
+    expect(code).not.toContain("opacity-0");
+    const diagram = renderToStaticMarkup(createElement(Markdown, { text: "```mermaid\ngraph TD; A-->B\n```" }));
+    expect(diagram).toContain("[@media(hover:none)]:opacity-100");
+    expect(diagram).toMatch(/aria-label="拷贝代码"[^>]*touch-hit/);
   });
 
   it("errors read in Chinese with the line, Mermaid's text kept", async () => {

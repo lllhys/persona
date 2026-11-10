@@ -314,7 +314,13 @@ class CaseHub:
                     return self.read(device, "/items", lambda: self.truth.before(int(q["before_seq"]), turns))
                 return self.read(device, "/items", lambda: self.truth.latest(self.case["start"]["hub"].get("page_turns") or turns))
             if path.startswith("/api/v1/ops/"):
-                r = self.receipts.get(path[len("/api/v1/ops/"):].lower())
+                asked = path[len("/api/v1/ops/"):].lower()
+                with self.lock:
+                    seen = self.devices[device].seen
+                    # the case's id for the write that op went with ({"get": "/ops", "id"}, #2770)
+                    key = next((s["key"] for s in seen if str(s.get("op") or "").lower() == asked), asked)
+                    seen.append({"get": "/ops", "key": key})
+                r = self.receipts.get(asked)
                 if not r:
                     return 404, {"error": "no such operation"}
                 encoded = base64.b64encode(json.dumps(r["body"]).encode()).decode()

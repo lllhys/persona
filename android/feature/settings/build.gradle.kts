@@ -11,7 +11,11 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
-            all { it.maxHeapSize = "1g" }
+            all {
+                it.maxHeapSize = "1g"
+                // Robolectric's API 36 shared-memory setup accesses the JDK file-descriptor bridge.
+                it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
+            }
         }
     }
     defaultConfig {

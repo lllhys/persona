@@ -8,7 +8,7 @@
 // it takes answers (feature assistant_views); while a reply is still being written the card is drawn, nothing sends.
 // An html component is never run on the web (lib/assistant-html.ts): the card shows its plain-text fallback.
 import { createContext, useContext, useMemo, useState } from "react";
-import { assistantView } from "../lib/assistant-view";
+import { assistantView, cardText } from "../lib/assistant-view";
 import { blockKey, blockOf, cardKnown, checkCard, openTarget, type OpenTarget } from "../lib/assistant-blocks";
 import { hasHtml } from "../lib/assistant-html";
 import { conversationCards, draftKey, submitAction, updateDraft, useCards, type CardDraft } from "../lib/assistant-views";
@@ -67,7 +67,9 @@ export function LiveCard({ conversation, id, first }: { conversation: string; id
 
 function LegacyCard({ lang, code, fallback }: { lang: string; code: string; fallback: React.ReactNode }) {
   const view = useMemo(() => assistantView(lang, code), [lang, code]);
-  if (!view) return <>{fallback}</>;
+  // A card no app draws (an unknown type…) reads as its words, never its JSON; one still being written stays code.
+  const words = useMemo(() => (view ? null : cardText(code)), [view, code]);
+  if (!view) return words ? <FallbackCard text={words} /> : <>{fallback}</>;
   return (
     <div className="card-ui my-3 flex flex-col gap-3 text-[13px] leading-normal" data-assistant-card={lang}>
       {view.title && <p className="px-1 text-[13px] font-semibold text-ink">{view.title}</p>}

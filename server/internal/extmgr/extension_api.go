@@ -85,6 +85,9 @@ func (h *Manager) features() []string {
 	// Transport support is independent of installed pages or source activation.
 	// Client opt-in, native context and authorization remain separate gates.
 	out = append(out, extwire.FeatureUIStream)
+	if h.subscriptionsShown() {
+		out = append(out, subscriptionsFeature) // /api/v1/subscriptions, once they deliver (subscriptions.go)
+	}
 	if len(h.extensions.messagingSources()) > 0 && !slices.Contains(out, messagingFeature) {
 		out = append(out, messagingFeature)
 	}

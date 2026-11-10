@@ -85,4 +85,15 @@ class OperationFeedbackTest {
         assertEquals(UiText.Res(R.string.designsystem_feedback_no_machine), noMachine.text)
         assertNull(noMachine.hubWords)
     }
+
+    /** A provider outside the computer's scope: the hub's own sentence names the provider and the computer, so it is shown. */
+    @Test fun aProviderOutOfScopeShowsTheHubsWords() {
+        val words = "“jv_gw” is not set to run on Laptop."
+        val feedback = operationFeedback(HubFailure(HubError.Server, words, status = 409, code = "launcher_out_of_scope", retryable = false))
+        assertEquals(UiText.Plain(words), feedback.text)
+        assertEquals(FailureAction.EditProvider, feedback.action)
+        // Without words (an older hub, a bare status) the app says it.
+        val bare = operationFeedback(HubFailure(HubError.Server, "HTTP 409", status = 409, code = "launcher_own_service", retryable = false))
+        assertEquals(UiText.Res(R.string.designsystem_feedback_provider_out_of_scope), bare.text)
+    }
 }

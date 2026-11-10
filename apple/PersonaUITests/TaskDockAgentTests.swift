@@ -1,10 +1,10 @@
 import XCTest
 
-/// The main conversation's agents opened by hand (#1113), on the phone in the action bar's trays (#2879): Progress lists
-/// the tasks and its All the board, Agents the agents with the waiting one first, and a tap opens the agent's page in
-/// the task's sheet. Against
-/// scripts/mock/mock_hub.py with MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 and MOCK_TASKS_DOCK unset (four tasks, two agents) or
-/// =pair (one task, one agent) (PERSONA_MOCK_HUB; PERSONA_DOCK_MODE names which). With PERSONA_SHOTS set it writes the
+/// The main conversation's agents opened by hand (#1113), in the action bar's trays (#3393): In Progress lists the
+/// tasks going on, an agent linked to a hand-made to-do once as that to-do's row (/orders); its All opens the board, and
+/// a tap on the row opens the agent's page in the task's sheet. Against
+/// scripts/mock/mock_hub.py with MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 and MOCK_TASKS_DOCK unset (PERSONA_MOCK_HUB;
+/// PERSONA_DOCK_MODE names the screenshots). With PERSONA_SHOTS set it writes the
 /// dock, the board and the agent's sheet there (PERSONA_DOCK_APPEARANCE names the simulator's appearance in the file).
 final class TaskDockAgentTests: XCTestCase {
     private var hub: String!
@@ -26,23 +26,22 @@ final class TaskDockAgentTests: XCTestCase {
     }
 
     @MainActor func testAgentsFollowTheTasks() throws {
-        let pair = ProcessInfo.processInfo.environment["PERSONA_DOCK_MODE"] == "pair"
         let app = XCUIApplication()
         let url = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", url]
+        // the main conversation: only it lists the Agents opened by hand
+        app.launchArguments = ["-pairURL", url, "-tab", "assistant", "-dev.openChat", "",
+                               "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001"]
         app.launchPinned()
 
-        // Progress lists the conversation's tasks; Agents its agents, the ones of its own among them.
-        let progress = app.openActionTray("progress")
+        // In Progress lists the tasks going on (the widget fix among them).
+        let progress = app.openActionTray("running")
         let tasks = app.trayTasks
-        let agents = app.trayAgents
-        let want = pair ? (tasks: 1, agents: 1) : (tasks: 4, agents: 2)
-        app.waitForRows(tasks, atLeast: want.tasks)
-        XCTAssertGreaterThanOrEqual(tasks.count, want.tasks, app.debugDescription)
+        app.waitForRows(tasks, atLeast: 1)
+        XCTAssertGreaterThanOrEqual(tasks.count, 1, app.debugDescription)
         sleep(2) // the conversation above settles
         try shot(app, "dock")
 
-        // Progress' All: the board lists them under Needs You / Working.
+        // In Progress' All: the board lists them under Needs You / Working.
         let board = app.buttons["action-tray.board"]
         XCTAssertTrue(board.waitForExistence(timeout: 5), app.debugDescription)
         board.tap()
@@ -54,15 +53,18 @@ final class TaskDockAgentTests: XCTestCase {
         XCTAssertTrue(progress.waitForExistence(timeout: 5))
         sleep(1)
 
-        // Agents: the one waiting for the user (the photo sync) says so, first.
-        app.openActionTray("agents")
-        app.waitForRows(agents, atLeast: want.agents)
-        XCTAssertGreaterThanOrEqual(agents.count, want.agents, app.debugDescription)
-        XCTAssertTrue(agents.element(boundBy: 0).label.contains("需要你"), agents.element(boundBy: 0).label)
+        // The /orders agent was opened by hand and linked to a to-do made by hand: it is that to-do's one row in In
+        // Progress, never a second row of its own (#3393, #3443); the same holds for the photo sync in Needs You.
+        app.openActionTray("running")
+        let orders = tasks.matching(NSPredicate(format: "label CONTAINS %@", "/orders"))
+        app.waitForRows(orders, atLeast: 1)
+        XCTAssertEqual(orders.count, 1, app.debugDescription)
+        XCTAssertEqual(app.trayAgents.matching(NSPredicate(format: "label CONTAINS %@", "/orders")).count, 0, "the /orders agent is listed besides its to-do")
+        XCTAssertTrue(orders.firstMatch.label.contains("工作中"), orders.firstMatch.label)
         try shot(app, "dock-scrolled")
 
         // A tap opens the agent's page in the task's sheet.
-        agents.element(boundBy: 0).tap()
+        orders.firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(identifier: "chat.title").firstMatch.waitForExistence(timeout: 5), app.debugDescription)
         sleep(2)
         try shot(app, "sheet")

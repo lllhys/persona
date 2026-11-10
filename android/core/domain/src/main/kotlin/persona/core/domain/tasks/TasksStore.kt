@@ -338,7 +338,9 @@ class TasksStore(
         val now = clock.instant()
         val today = LocalDate.now(clock)
         todayAsked[conversation]?.let { (at, day) ->
-            if (LocalDate.ofInstant(at, clock.zone) == today &&
+            // at.atZone(…).toLocalDate(), not LocalDate.ofInstant: that one is Java 9, on Android only from API 34, and this
+            // module is plain JVM (no lint, no desugaring), so it built fine and threw NoSuchMethodError on API 30–33 (#5227).
+            if (at.atZone(clock.zone).toLocalDate() == today &&
                 (day == null || day > today || now < at + todayRecheck)) return
         }
         todayAsked[conversation] = now to null

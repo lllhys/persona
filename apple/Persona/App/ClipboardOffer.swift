@@ -21,9 +21,11 @@ nonisolated enum ClipboardOffer {
         return ready.first { $0.ref.path == preferred } ?? ready.first
     }
 
-    /// Offer only when it is on, the pasteboard changed while the app was away and it holds something.
-    static func shouldOffer(enabled: Bool, seen: Int?, now: Int, hasContent: Bool) -> Bool {
-        guard enabled, let seen else { return false }
+    /// Offer only when it is on, the pasteboard changed while the app was away and it holds something; never while
+    /// VoiceOver or Switch Control runs (`assistive`): the offer is a toast whose button they can't reach before it goes
+    /// (docs/design/HIG_AUDIT.md HIG-005), and the computer page's Send Clipboard does the same.
+    static func shouldOffer(enabled: Bool, seen: Int?, now: Int, hasContent: Bool, assistive: Bool = false) -> Bool {
+        guard enabled, !assistive, let seen else { return false }
         return seen != now && hasContent
     }
 }
@@ -61,7 +63,9 @@ nonisolated enum ClipboardOffer {
         guard away else { return }
         away = false
         let enabled = UserDefaults.standard.bool(forKey: ClipboardOffer.enabledKey)
-        guard ClipboardOffer.shouldOffer(enabled: enabled, seen: seen, now: now, hasContent: PhonePasteboard.live.hasContent()) else { return }
+        let assistive = UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+        guard ClipboardOffer.shouldOffer(enabled: enabled, seen: seen, now: now, hasContent: PhonePasteboard.live.hasContent(),
+                                         assistive: assistive) else { return }
         offering?.cancel()
         offering = Task { [weak app] in
             // After the app has settled in front (a toast posted during the switch is easily missed), and on a cold

@@ -46,12 +46,13 @@ async function undoArchive(s: Session, title: string, deps: ConversationMenuDeps
   reread(deps);
 }
 
-export function conversationMenuItems(s: Session, o: { main: boolean; pinned: boolean }, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem[] {
+/** `leader`: a leader conversation, pinned by the hub on every browser, so it has no Pin / Unpin of its own. */
+export function conversationMenuItems(s: Session, o: { main: boolean; pinned: boolean; leader?: boolean }, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem[] {
   const title = sessionTitle(s);
   const own: MenuItem[] = o.main
     ? []
     : [
-        { key: "pin", label: o.pinned ? t("conversation-menu.unpin") : t("conversation-menu.pin"), icon: "pin", accel: "p", onSelect: () => togglePinnedConversation(s.session_id) },
+        ...(o.leader ? [] : [{ key: "pin", label: o.pinned ? t("conversation-menu.unpin") : t("conversation-menu.pin"), icon: "pin" as const, accel: "p", onSelect: () => togglePinnedConversation(s.session_id) }]),
         {
           key: "rename",
           label: t("conversation-menu.rename"),
@@ -110,9 +111,9 @@ export function conversationMenuItems(s: Session, o: { main: boolean; pinned: bo
 }
 
 /** The menu of a row (`at`: where a right click opened it; without it, beside `anchor`). */
-export function ConversationRowMenu({ s, main, pinned, anchor, at, onClose }: { s: Session; main: boolean; pinned: boolean; anchor: HTMLElement; at?: MenuAt; onClose: () => void }) {
+export function ConversationRowMenu({ s, main, pinned, leader, anchor, at, onClose }: { s: Session; main: boolean; pinned: boolean; leader?: boolean; anchor: HTMLElement; at?: MenuAt; onClose: () => void }) {
   const p = at ?? { anchor };
-  return <Menu anchor={p.anchor ?? null} point={p.point} onClose={onClose} align="right" width={200} items={conversationMenuItems(s, { main, pinned })} />;
+  return <Menu anchor={p.anchor ?? null} point={p.point} onClose={onClose} align="right" width={200} items={conversationMenuItems(s, { main, pinned, leader })} />;
 }
 
 /** The section title's menu: "Unpin all" when something is pinned. */

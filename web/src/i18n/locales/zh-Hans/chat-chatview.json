@@ -1,4 +1,5 @@
 {
+  "share": "分享…",
   "forked": "已分支到新聊天",
   "fork_failed": "分支失败：{error}",
   "session_unavailable": "这条对话暂时不可用，稍后再试，或开一段新对话",
@@ -71,6 +72,7 @@
   "close_agent_title": "关闭这个 Agent？",
   "close_agent": "关闭 Agent",
   "close_agent_detail": "会退出 {machine} 上「{where}」里的 Claude 并关掉这个标签页。对话记录还在，之后可以从「最近」里恢复。",
+  "close_runtime_detail": "会结束 {machine} 上的「{title}」。对话记录会保留。",
   "route_no_images": "直接发给任务暂不支持图片，请移除图片后重试",
   "not_live": "不是实时的",
   "not_live_reload": "重新加载",

@@ -12,8 +12,13 @@ internal class ChatRealtimeState(private val key: SessionKey) {
     private val tools = LinkedHashMap<String, ToolCallEvent>()
     private var screen: Item? = null
     private var screenAfter: String? = null
+    private var projectedTranscript: List<Item>? = null
+    private var projectedItems: List<Item>? = null
+
+    private fun invalidate() { projectedTranscript = null; projectedItems = null }
 
     fun delta(event: DeltaEvent, items: List<Item>) {
+        invalidate()
         if (event.turnFinished) {
             finish()
             return
@@ -26,9 +31,10 @@ internal class ChatRealtimeState(private val key: SessionKey) {
         draft.item = draft.item.copy(text = event.text)
     }
 
-    fun finish() { active = null; screen = null }
+    fun finish() { active = null; screen = null; invalidate() }
 
     fun screen(event: ScreenEvent, items: List<Item>) {
+        invalidate()
         screenAfter = items.lastOrNull()?.id
         screen = event.text.takeIf { it.isNotEmpty() }?.let {
             Item("realtime-screen:${key.path}#0", screen?.seq ?: nextSeq(items),
@@ -43,11 +49,13 @@ internal class ChatRealtimeState(private val key: SessionKey) {
     fun tool(event: ToolCallEvent, transcript: List<Item>): Boolean {
         tools[event.callId] = event
         if (tools.size > 128) tools.remove(tools.keys.first())
-        return transcript.any { it.kind == "tool_use" && it.toolUseId == event.callId }
+        // Without its row nothing shown changes; the row arrives in a new transcript list, which misses the cache.
+        return transcript.any { it.kind == "tool_use" && it.toolUseId == event.callId }.also { if (it) invalidate() }
     }
 
     fun reset() {
         drafts.clear(); active = null; aliases.clear(); tools.clear(); screen = null; screenAfter = null
+        invalidate()
     }
 
     fun canonicalId(id: String): String = aliases.entries.firstOrNull { it.value == id }?.key ?: id
@@ -55,6 +63,7 @@ internal class ChatRealtimeState(private val key: SessionKey) {
     fun streamingItemIds(): Set<String> = setOfNotNull(active?.item?.id)
 
     fun items(transcript: List<Item>): List<Item> {
+        if (projectedTranscript === transcript) projectedItems?.let { return it }
         val claimed = aliases.keys.toMutableSet()
         val pending = mutableListOf<Item>()
         val overlays = mutableMapOf<String, String>()
@@ -91,12 +100,18 @@ internal class ChatRealtimeState(private val key: SessionKey) {
         }
         drafts.clear(); drafts += retained
         if (screenAfter != transcript.lastOrNull()?.id) screen = null
-        return (transcript.map { item ->
+        val result = (transcript.map { item ->
             val tool = item.toolUseId?.let(tools::get).takeIf { item.kind == "tool_use" }
             val mapped = if (tool == null) item else item.copy(toolName = tool.name, toolInput = tool.args)
             overlays[item.id]?.let { mapped.copy(text = it) } ?: mapped
         } + pending + listOfNotNull(screen?.copy(seq = nextSeq(transcript))))
-            .sortedWith(order).map { it.copy(id = displayId(it.id)) }
+            .sortedWith(order).map { item ->
+                val id = displayId(item.id)
+                if (id == item.id) item else item.copy(id = id)
+            }
+        projectedTranscript = transcript
+        projectedItems = result
+        return result
     }
 
     private fun nextSeq(items: List<Item>): Int =

@@ -273,16 +273,19 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
 
     suspend fun pair(pairing: Pairing) = gate.withLock { pairLegacyLocked(pairing) }
 
-    /** Replaces every pairing with [credentials] (already verified and encrypted by the pairing flow). */
-    suspend fun pair(credentials: HubCredentials) = gate.withLock {
+    /**
+     * Replaces every pairing with [credentials] (already verified and encrypted by the pairing flow); [access] is the
+     * Cloudflare Access service token the pairing was made with.
+     */
+    suspend fun pair(credentials: HubCredentials, access: HubAccess? = null) = gate.withLock {
         cleanupLocked()
-        addLocked(credentials)
+        addLocked(credentials, access = access)
         app.pairings.clear()
     }
 
     /** Adds a hub next to the existing ones: into the group its mesh puts it in, else as a new group. */
-    suspend fun addHub(credentials: HubCredentials): String? = gate.withLock {
-        addLocked(credentials).also { app.pairings.clear() }
+    suspend fun addHub(credentials: HubCredentials, access: HubAccess? = null): String? = gate.withLock {
+        addLocked(credentials, access = access).also { app.pairings.clear() }
     }
 
     private suspend fun pairLegacyLocked(pairing: Pairing) {
@@ -296,9 +299,9 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
         app.pairings.clear()
     }
 
-    private suspend fun addLocked(credentials: HubCredentials, hubName: String? = null): String? {
+    private suspend fun addLocked(credentials: HubCredentials, hubName: String? = null, access: HubAccess? = null): String? {
         require(credentials.hubAddress.isNotBlank() && credentials.deviceToken.isNotBlank())
-        val stored = dataStore.storeHub(credentials)
+        val stored = dataStore.storeHub(credentials, access)
         val change = dataStore.change { it.addPairedHub(StoredScope.of(stored), hubName, System.currentTimeMillis()) }
         lastRevoked = false
         applyLocked(change.document, change.erase)
@@ -651,7 +654,7 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
                     HubTunnelInfo(hub.hubId, hub.name ?: shortHubName(hub.hubId), paired.hubAddress, paired.routes.ssh, paired.routes.proxy,
                         states[hub.hubId to TunnelKind.Ssh], states[hub.hubId to TunnelKind.Proxy],
                         routed = tunnel?.takeIf { it.hubId == hub.hubId }?.kind,
-                        online = state in setOf(ConnectionState.Online, ConnectionState.Updating))
+                        online = state in setOf(ConnectionState.Online, ConnectionState.Updating), access = paired.routes.access)
                 }
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -664,10 +667,17 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
             ways.verifyProxy(route, address, hubId)
         }
         override suspend fun saveProxy(hubId: String, route: LocalProxyRoute?) = saveTunnels(hubId, TunnelKind.Proxy) { it.copy(proxy = route) }
+        override suspend fun saveAccess(hubId: String, access: HubAccess?) = saveTunnels(hubId, null) { it.copy(access = access) }
     }
 
-    /** A tunnel that waited for new settings (a refused key, a changed server key) is dialled again once they are saved. */
-    private suspend fun saveTunnels(hubId: String, kind: TunnelKind, change: (PairedTunnels) -> PairedTunnels): Unit = gate.withLock {
+    /** A paired hub's Cloudflare Access service token, as its connection's requests send it (read per request). */
+    override fun access(hubId: String): HubAccess? = pairedTunnels.value[hubId]?.routes?.access
+
+    /**
+     * A tunnel that waited for new settings (a refused key, a changed server key) is dialled again once they are saved;
+     * [kind] null is the Cloudflare Access token, which only needs a connection that is not up to try again.
+     */
+    private suspend fun saveTunnels(hubId: String, kind: TunnelKind?, change: (PairedTunnels) -> PairedTunnels): Unit = gate.withLock {
         val entry = registry.value.groups.firstOrNull { group -> group.hubs.any { it.hubId == hubId } }
             ?: throw IllegalStateException("Not a paired hub")
         val hub = entry.hubs.first { it.hubId == hubId }
@@ -675,7 +685,7 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
             ?: dataStore.credentials(hub.pairing.scope)?.hubAddress ?: throw IllegalStateException("Not a paired hub")
         val saved = dataStore.updateTunnels(hub.pairing.scope, change)
         pairedTunnels.update { it + (hubId to PairedHubTunnels(hub.pairing.path, address, saved)) }
-        ways.unblock(hubId, kind)
+        kind?.let { ways.unblock(hubId, it) }
         val group = mutableGroups.value.firstOrNull { it.id == entry.id } ?: return@withLock
         val online = group.state.value in setOf(ConnectionState.Online, ConnectionState.Updating)
         group.updateTunnels(tunnels(entry))

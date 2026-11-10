@@ -1,5 +1,6 @@
 // Pinned Persona conversations (the iOS sidebar's "Pinned", `assistant.pinned`; Android's drawer): kept per browser, as the
 // app keeps them per device. The main conversation is always first and is never in the list. The newest pin comes first.
+// The hub's leader conversations are pinned on every browser, ahead of these (pinOrder).
 import { useSyncExternalStore } from "react";
 import { isAutoConversation } from "./conversation-origins";
 import { firstAndCurrent } from "./persona-nav";
@@ -66,6 +67,13 @@ const subscribe = (l: () => void) => {
 
 export function usePinnedConversations(): string[] {
   return useSyncExternalStore(subscribe, getPinnedConversations, () => cached.ids);
+}
+
+/** The order of the sidebar's pinned Persona chats: the leader conversations first (the hub's `assistant.leaders`, the
+ *  same on every browser and device, in their order), then this browser's own pins. A leader pinned here too is listed once. */
+export function pinOrder(leaders: readonly string[] | undefined, pins: readonly string[]): string[] {
+  const lead = leaders ?? [];
+  return [...lead, ...pins.filter((id) => !lead.includes(id))];
 }
 
 /** The sidebar's "Persona chats" apart from the main one: the pinned ones in pin order (all of them), then the newest

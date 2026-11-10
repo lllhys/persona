@@ -11,6 +11,7 @@
   "done": "完了",
   "interrupted": "中断",
   "follow_up": "フォローアップ",
+  "task_waiting": "待機中",
   "not_started": "未着手",
   "failed": "開始失敗",
   "count_needs_you_other": "要対応{count}件",

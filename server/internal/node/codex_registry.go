@@ -487,6 +487,7 @@ func (n *Node) codexSessionsIn(seen map[string]bool, pass *codexListPass) []prot
 	cfg := n.codexInventory()
 	for _, home := range cfg.Homes {
 		n.registerRollouts(home)
+		n.registerCodexAppThreads(home, pass) // the App's chats whose rollout is old or gone (codex_appdb.go)
 	}
 	n.codices.mu.Lock()
 	sources := make(map[string]codexSource, len(n.codices.threads))
@@ -530,6 +531,12 @@ func (n *Node) codexSessionsIn(seen map[string]bool, pass *codexListPass) []prot
 				s.Title = threadTitle(src.home, src.thread)
 				untitled(&s, m)
 			}
+		} else if t, ok := codexAppThreadOf(src); ok {
+			// A Codex App chat whose rollout is gone: its row in the App's database (codex_appdb.go).
+			if !n.sessionScopeAllows(t.Cwd) || identity.IsAssistantDir(t.Cwd) {
+				continue
+			}
+			s.Cwd, s.Title, s.UpdatedAt, s.Rev = t.Cwd, t.Title, t.updated(), t.UpdatedAtMs
 		}
 		s.AgentName = filepath.Base(src.home)
 		if holder := liveRollouts[id]; holder != "" && heldRecently(m, src.path, pass) {
@@ -570,6 +577,12 @@ func (n *Node) codexSessionsIn(seen map[string]bool, pass *codexListPass) []prot
 			n.codexEffortRow(id, &s.Efforts, &s.Effort, m) // codex_effort.go
 		} else if err != errCodexNoOwner {
 			s.ReadOnlyReason = err.Error()
+		} else if src.path == "" && codexDesktopChatIn(src, pass) {
+			// The App's chat whose rollout is gone: sent to through the App, as one with a rollout.
+			s.AgentName, s.AgentSurface = "Codex App", transcript.SurfaceDesktop
+			s.Capabilities.Send = true
+			s.ReadOnlyReason = ""
+			n.placeCodexDesktop(&s, src, src.thread, false)
 		} else if o := readCodexOrigin(src.path); o.desktop {
 			switch {
 			case o.parent != "":

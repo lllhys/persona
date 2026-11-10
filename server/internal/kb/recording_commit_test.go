@@ -19,8 +19,8 @@ import (
 func TestRejectedRecordingRevisionKeepsAcceptedTranscript(t *testing.T) {
 	e := goldenEngine(t, nil)
 	now := time.Now().UTC()
-	if status, err := e.PutRecording(recID, recUpload(1, now, true, "accepted transcript"), now); err != nil || status != RecordingStored {
-		t.Fatalf("seed: %s %v", status, err)
+	if status, err := e.PutRecording(recID, recUpload(1, now, true, "accepted transcript"), now); err != nil || status.Status != RecordingStored {
+		t.Fatalf("seed: %s %v", status.Status, err)
 	}
 	// Prevent only the final metadata write. Both accepted metadata and transcript
 	// remain readable, and the production file operations supply the error.
@@ -29,7 +29,7 @@ func TestRejectedRecordingRevisionKeepsAcceptedTranscript(t *testing.T) {
 	}
 	status, err := e.PutRecording(recID, recUpload(2, now, true, "rejected replacement"), now.Add(time.Second))
 	if err == nil {
-		t.Fatalf("update unexpectedly succeeded: %s", status)
+		t.Fatalf("update unexpectedly succeeded: %s", status.Status)
 	}
 	t.Logf("revision 2 rejected: %v", err)
 	r, _ := e.Store.Recording(recID)
@@ -136,8 +136,8 @@ func TestRecordingWriteBoundaries(t *testing.T) {
 						e.Index = nil
 						mustStoreRecording(t, e, recID, recUpload(2, now, true, "rejected zeppelin"), now)
 						assertRecordingView(t, e, true, "rejected zeppelin", "accepted orchard")
-						if status, err := e.PutRecording(recID, recUpload(1, now, true, "stale text"), now); err != nil || status != RecordingStale {
-							t.Fatalf("stale = %s, %v", status, err)
+						if status, err := e.PutRecording(recID, recUpload(1, now, true, "stale text"), now); err != nil || status.Status != RecordingStale {
+							t.Fatalf("stale = %s, %v", status.Status, err)
 						}
 						mustStoreRecording(t, e, recID, recUpload(2, now, true, "rejected zeppelin"), now)
 					})
@@ -149,8 +149,8 @@ func TestRecordingWriteBoundaries(t *testing.T) {
 
 func mustStoreRecording(t *testing.T, e *Engine, id string, u RecordingUpload, now time.Time) {
 	t.Helper()
-	if status, err := e.PutRecording(id, u, now); err != nil || status != RecordingStored {
-		t.Fatalf("store = %s, %v", status, err)
+	if status, err := e.PutRecording(id, u, now); err != nil || status.Status != RecordingStored {
+		t.Fatalf("store = %s, %v", status.Status, err)
 	}
 }
 

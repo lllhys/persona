@@ -2,18 +2,21 @@ package hub
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	neturl "net/url"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/sessionlist"
@@ -72,7 +75,7 @@ func TestRuntimeExactLookupFullRow(t *testing.T) {
 	other := newMachine(h, MachineConfig{ID: "other"})
 	other.sessions = []proto.Session{{MachineID: "other", SessionID: full.SessionID, Title: "Other machine"}}
 	h.machines, h.byID["other"] = append(h.machines, other), other
-	q := "summary=0&limit=50&machine_id=demo&session_id=" + url.QueryEscape(full.SessionID)
+	q := "summary=0&limit=50&machine_id=demo&session_id=" + neturl.QueryEscape(full.SessionID)
 	exact := runtimePage(t, h, q)
 	legacy := runtimePage(t, h, "machine_id=demo")
 	if exact.Total != 1 || len(exact.Sessions) != 1 || exact.HasMore || exact.Cursor != "" || len(exact.Remove) != 0 || exact.Revision == "" ||
@@ -86,8 +89,8 @@ func TestRuntimeExactLookupFullRow(t *testing.T) {
 	if page := runtimePage(t, h, "summary=1&limit=50&machine_id=demo"); slices.ContainsFunc(page.Sessions, func(s proto.Session) bool { return s.SessionID == full.SessionID }) {
 		t.Fatal("test target should be beyond the first ordinary page")
 	}
-	for _, q := range []string{"machine_id=demo&session_id=missing", "machine_id=missing&session_id=" + url.QueryEscape(full.SessionID),
-		"machine_id=demo&session_id=" + url.QueryEscape(full.SessionID) + "&state=offline"} {
+	for _, q := range []string{"machine_id=demo&session_id=missing", "machine_id=missing&session_id=" + neturl.QueryEscape(full.SessionID),
+		"machine_id=demo&session_id=" + neturl.QueryEscape(full.SessionID) + "&state=offline"} {
 		page := runtimePage(t, h, q)
 		if page.Total != 0 || len(page.Sessions) != 0 || page.Sessions == nil || page.Remove == nil || page.HasMore || page.Cursor != "" {
 			t.Fatalf("missing: %+v", page)
@@ -185,11 +188,11 @@ func TestRuntimeListPagesAndSummary(t *testing.T) {
 	m.sessions[1].UpdatedAt = time.Unix(200, 0)
 	m.mu.Unlock()
 	h.sessionsChanged(m)
-	second := runtimePage(t, h, "summary=1&limit=1&cursor="+url.QueryEscape(first.Cursor))
+	second := runtimePage(t, h, "summary=1&limit=1&cursor="+neturl.QueryEscape(first.Cursor))
 	if second.Sessions[0].SessionID != "b" || second.Revision != first.Revision || len(second.Sessions[0].Background) != 0 || len([]rune(second.Sessions[0].LastText)) != 180 {
 		t.Fatalf("second: %+v", second)
 	}
-	third := runtimePage(t, h, "summary=1&limit=1&cursor="+url.QueryEscape(second.Cursor))
+	third := runtimePage(t, h, "summary=1&limit=1&cursor="+neturl.QueryEscape(second.Cursor))
 	if third.HasMore || third.Sessions[0].SessionID != "c" {
 		t.Fatalf("third: %+v", third)
 	}
@@ -214,7 +217,7 @@ func TestRuntimeListDeltaTransitionsAndMachineRemoval(t *testing.T) {
 	m.sessions[0].Title = "Now working"
 	m.mu.Unlock()
 	h.sessionsChanged(m)
-	delta := runtimePage(t, h, "summary=1&state=needs_you&since="+url.QueryEscape(first.Revision))
+	delta := runtimePage(t, h, "summary=1&state=needs_you&since="+neturl.QueryEscape(first.Revision))
 	if len(delta.Sessions) != 0 || len(delta.Remove) != 1 || delta.Remove[0] != runtimeListID("demo", "s/with/slashes") || delta.Total != 0 {
 		t.Fatalf("exit: %+v", delta)
 	}
@@ -223,7 +226,7 @@ func TestRuntimeListDeltaTransitionsAndMachineRemoval(t *testing.T) {
 	h.machines = nil
 	delete(h.byID, "demo")
 	h.mu.Unlock()
-	gone := runtimePage(t, h, "summary=1&since="+url.QueryEscape(all.Revision))
+	gone := runtimePage(t, h, "summary=1&since="+neturl.QueryEscape(all.Revision))
 	if len(gone.Remove) != 1 || gone.Total != 0 {
 		t.Fatalf("gone: %+v", gone)
 	}
@@ -255,7 +258,7 @@ func TestRuntimeListCountsAndErrors(t *testing.T) {
 	p := runtimePage(t, h, "limit=1")
 	other := newTestHub(t)
 	w := httptest.NewRecorder()
-	other.listSessions(w, httptest.NewRequest("GET", "/api/v1/sessions?since="+url.QueryEscape(p.Revision), nil))
+	other.listSessions(w, httptest.NewRequest("GET", "/api/v1/sessions?since="+neturl.QueryEscape(p.Revision), nil))
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "revision_expired") {
 		t.Fatalf("restart: %d %s", w.Code, w.Body)
 	}
@@ -313,7 +316,7 @@ func TestRuntimeListFollowsRevs(t *testing.T) {
 	if !notified {
 		t.Fatal("paged client not told about the new revs")
 	}
-	delta := runtimePage(t, h, "summary=1&since="+url.QueryEscape(first.Revision))
+	delta := runtimePage(t, h, "summary=1&since="+neturl.QueryEscape(first.Revision))
 	if len(delta.Sessions) != 1 || delta.Sessions[0].SessionID != "a" || delta.Sessions[0].Rev != 7 {
 		t.Fatalf("delta: %+v", delta)
 	}
@@ -631,5 +634,181 @@ func TestReindexKeptMatchesDecorated(t *testing.T) {
 	}
 	if s := got.Items(ids[2:3])[0].Summary.(json.RawMessage); !strings.Contains(string(s), `"manager":"m-0b0b0b"`) {
 		t.Fatalf("a summary without its new manager: %s", s)
+	}
+}
+
+// ?manager=<id> lists and counts only the sessions on that manager's computers (feature sessions_manager): the paged
+// list, its counts, an exact lookup and the whole list alike. Without the key every manager's are listed as before,
+// whatever X-Persona-Manager says. A computer that moves to another manager leaves the old one's list as a removal.
+func TestSessionsOfOneManager(t *testing.T) {
+	h, url, _, _ := reachHub(t) // A (assistant) has ma with s3, B (m-0b0b0b) has mb with b1
+	if !slices.Contains(h.features(), featureSessionsManager) {
+		t.Fatalf("features lack %s: %v", featureSessionsManager, h.features())
+	}
+	get := func(path string, header map[string]string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", url+path, nil)
+		req.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+		for k, v := range header {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out json.RawMessage
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, string(out)
+	}
+	page := func(query string) listTestPage {
+		t.Helper()
+		code, out := get("/api/v1/sessions?"+query, nil)
+		var p listTestPage
+		if err := json.Unmarshal([]byte(out), &p); code != 200 || err != nil {
+			t.Fatalf("%s: %d %s %v", query, code, out, err)
+		}
+		return p
+	}
+	ids := func(p listTestPage) string {
+		var out []string
+		for _, s := range p.Sessions {
+			out = append(out, s.MachineID+"/"+s.SessionID+"@"+s.Manager)
+		}
+		slices.Sort(out)
+		return strings.Join(out, " ")
+	}
+	const a, b = "ma/s3@assistant", "mb/b1@m-0b0b0b"
+	for query, want := range map[string]string{
+		"limit=10":                                               a + " " + b,
+		"limit=10&manager=assistant":                             a,
+		"limit=10&manager=m-0b0b0b":                              b,
+		"summary=1&limit=10&manager=m-0b0b0b":                    b,
+		"limit=10&manager=m-0b0b0b&machine_id=ma":                "", // both filters hold
+		"limit=10&manager=m-0b0b0b&q=b-session":                  b,
+		"limit=10&machine_id=mb&session_id=b1&manager=m-0b0b0b":  b,
+		"limit=10&machine_id=mb&session_id=b1&manager=assistant": "", // an exact lookup is filtered too
+		"manager=assistant":                                      a,  // the whole list
+		"manager=m-0b0b0b":                                       b,
+		"manager=m-0b0b0b&machine_id=ma":                         "",
+		"":                                                       a + " " + b,
+	} {
+		p := page(query)
+		if got := ids(p); got != want {
+			t.Errorf("%q: got %q, want %q", query, got, want)
+		}
+		if strings.Contains(query, "limit=") && p.Total != len(p.Sessions) {
+			t.Errorf("%q: total %d of %d sessions", query, p.Total, len(p.Sessions))
+		}
+	}
+	// The header alone filters nothing here: an app that sends it with every request gets what it got.
+	if code, out := get("/api/v1/sessions?limit=10", map[string]string{ManagerHeader: "m-0b0b0b"}); code != 200 ||
+		!strings.Contains(out, "A-SESSION") || !strings.Contains(out, "B-SESSION") {
+		t.Errorf("the header filtered the list: %d %s", code, out)
+	}
+	counts := func(query string) sessionlist.Counts {
+		t.Helper()
+		code, out := get("/api/v1/sessions?counts=1"+query, nil)
+		var c sessionlist.Counts
+		if err := json.Unmarshal([]byte(out), &c); code != 200 || err != nil {
+			t.Fatalf("counts %s: %d %s %v", query, code, out, err)
+		}
+		return c
+	}
+	if c := counts("&manager=m-0b0b0b"); c.Total != 1 || !reflect.DeepEqual(c.Machine, map[string]int{"mb": 1}) {
+		t.Errorf("B's counts: %+v", c)
+	}
+	if c := counts("&manager=assistant"); c.Total != 1 || !reflect.DeepEqual(c.Machine, map[string]int{"ma": 1}) {
+		t.Errorf("A's counts: %+v", c)
+	}
+	if c := counts(""); c.Total != 2 {
+		t.Errorf("everyone's counts: %+v", c)
+	}
+	for path, want := range map[string]struct {
+		status int
+		code   string
+	}{
+		"/api/v1/sessions?limit=10&manager=m-ffffff":                   {404, "no_manager"},
+		"/api/v1/sessions?manager=m-ffffff":                            {404, "no_manager"},
+		"/api/v1/sessions?counts=1&manager=m-ffffff":                   {404, "no_manager"},
+		"/api/v1/sessions?limit=10&manager=":                           {400, "invalid_query"},
+		"/api/v1/sessions?manager=":                                    {400, "invalid_query"},
+		"/api/v1/sessions?limit=10&manager=assistant&manager=m-0b0b0b": {400, "invalid_query"},
+	} {
+		if code, out := get(path, nil); code != want.status || !strings.Contains(out, want.code) {
+			t.Errorf("%s: %d %s", path, code, clip(out, 200))
+		}
+	}
+	// B's extension: its own manager named is as not naming one; another is refused, on every form of the list.
+	for _, path := range []string{"/api/v1/sessions?limit=10&manager=assistant", "/api/v1/sessions?manager=assistant", "/api/v1/sessions?counts=1&manager=assistant"} {
+		if code, out := extDo(t, url, "GET", path, "", nil); code != http.StatusForbidden || !strings.Contains(out, codeOtherManager) {
+			t.Errorf("an extension naming another manager, %s: %d %s", path, code, clip(out, 200))
+		}
+	}
+	for _, path := range []string{"/api/v1/sessions?limit=10&manager=m-0b0b0b", "/api/v1/sessions?manager=m-0b0b0b"} {
+		if code, out := extDo(t, url, "GET", path, "", nil); code != 200 || !strings.Contains(out, "B-SESSION") || strings.Contains(out, "A-SESSION") {
+			t.Errorf("an extension naming its own manager, %s: %d %s", path, code, clip(out, 300))
+		}
+	}
+
+	// ma moves to B: it leaves A's list (a removal for an app that follows A's with since) and joins B's.
+	mine, theirs := page("summary=1&limit=10&manager=assistant"), page("summary=1&limit=10&manager=m-0b0b0b")
+	if _, err := h.moveMachine(context.Background(), "ma", "m-0b0b0b"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "A's list is empty after the move", func() bool { return page("limit=10&manager=assistant").Total == 0 })
+	left := page("summary=1&limit=10&manager=assistant&since=" + neturl.QueryEscape(mine.Revision))
+	if len(left.Remove) != 1 || left.Remove[0] != runtimeListID("ma", "s3") || len(left.Sessions) != 0 || left.Total != 0 {
+		t.Errorf("A's delta after the move: %+v", left)
+	}
+	came := page("summary=1&limit=10&manager=m-0b0b0b&since=" + neturl.QueryEscape(theirs.Revision))
+	if got := ids(came); got != "ma/s3@m-0b0b0b" || came.Total != 2 || len(came.Remove) != 0 {
+		t.Errorf("B's delta after the move: %q %+v", got, came)
+	}
+	if c := counts("&manager=m-0b0b0b"); c.Total != 2 || !reflect.DeepEqual(c.Machine, map[string]int{"ma": 1, "mb": 1}) {
+		t.Errorf("B's counts after the move: %+v", c)
+	}
+	// A cursor of one manager's list is not another's.
+	first := page("limit=1&manager=m-0b0b0b")
+	if !first.HasMore || first.Total != 2 {
+		t.Fatalf("B's first page: %+v", first)
+	}
+	if code, out := get("/api/v1/sessions?limit=1&manager=assistant&cursor="+neturl.QueryEscape(first.Cursor), nil); code != 400 {
+		t.Errorf("B's cursor on A's list: %d %s", code, clip(out, 200))
+	}
+	if next := page("limit=1&manager=m-0b0b0b&cursor=" + neturl.QueryEscape(first.Cursor)); next.HasMore || len(next.Sessions) != 1 || next.Sessions[0].SessionID == first.Sessions[0].SessionID {
+		t.Errorf("B's second page: %+v", next)
+	}
+}
+
+// An extension of a manager with two computers asks for its own sessions: the bounded page, the counts and the
+// whole list come from its computers only (one computer would fall back to a machine_id lookup and skip ownPage / ownCounts).
+func TestSessionsOfOneManagerSeveralComputersExtension(t *testing.T) {
+	h, url, _, b := reachHub(t) // A has ma (s3); B has mb (b1)
+	h.cfg.Machines = append(h.cfg.Machines, MachineConfig{ID: "mc", Name: "mc", Kind: "local"})
+	if _, err := h.moveMachine(context.Background(), "mc", "m-0b0b0b"); err != nil {
+		t.Fatal(err)
+	}
+	b.report(t, devicewire.State{Machine: proto.Machine{ID: "mb", Name: "mb"}}, devicewire.State{Machine: proto.Machine{ID: "mc", Name: "mc"}}) // one report is B's whole share
+	eventually(t, 5*time.Second, "mc", func() bool { return h.localMachine("mc") != nil })
+	h.takeFleetSessions(assistantwire.FleetSessions{MachineID: "mb", Sessions: []proto.Session{{MachineID: "mb", SessionID: "b1", Title: "B-SESSION"}}})
+	h.takeFleetSessions(assistantwire.FleetSessions{MachineID: "mc", Sessions: []proto.Session{{MachineID: "mc", SessionID: "c1", Title: "C-SESSION"}}})
+
+	for _, path := range []string{"/api/v1/sessions?limit=10&manager=m-0b0b0b", "/api/v1/sessions?summary=1&limit=10&manager=m-0b0b0b", "/api/v1/sessions?manager=m-0b0b0b"} {
+		code, out := extDo(t, url, "GET", path, "", nil)
+		if code != 200 || !strings.Contains(out, "B-SESSION") || !strings.Contains(out, "C-SESSION") || strings.Contains(out, "A-SESSION") {
+			t.Errorf("%s: %d %s", path, code, clip(out, 300))
+		}
+		if strings.Contains(path, "limit=") {
+			var p listTestPage
+			if err := json.Unmarshal([]byte(out), &p); err != nil || p.Total != 2 || len(p.Sessions) != 2 {
+				t.Errorf("%s: total %d of %d sessions (%v)", path, p.Total, len(p.Sessions), err)
+			}
+		}
+	}
+	code, out := extDo(t, url, "GET", "/api/v1/sessions?counts=1&manager=m-0b0b0b", "", nil)
+	var c sessionlist.Counts
+	if err := json.Unmarshal([]byte(out), &c); code != 200 || err != nil || c.Total != 2 || !reflect.DeepEqual(c.Machine, map[string]int{"mb": 1, "mc": 1}) {
+		t.Errorf("B's counts through its extension: %d %s %v", code, out, err)
 	}
 }

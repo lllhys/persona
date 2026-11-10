@@ -6,6 +6,7 @@
   "agent_no_command": "No command to start",
   "agent_no_data_dir": "The data directory was not found",
   "agent_profile_refused": "sandbox-exec refused the rules for this start: {err}",
-  "agent_unsupported": "The agent sandbox supports only macOS for now; not yet supported on this system ({os})",
+  "agent_too_many_args": "The Linux agent command has {count} bwrap arguments; the limit is {limit}. Reduce top-level data-directory entries or explicit aliases",
+  "agent_unsupported": "The agent sandbox supports macOS and Linux; it is not supported on this system ({os})",
   "probe_tmp": "The sandbox probe could not create a temporary directory: {err}"
 }

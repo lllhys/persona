@@ -40,6 +40,7 @@ function endIfDone(sessionId) {
   const turn = turns.get(sessionId)
   if (!turn || !turn.cancelled || turn.open.size > 0) return
   turns.delete(sessionId)
+  record({ ended: sessionId })
   send({ jsonrpc: '2.0', id: turn.id, result: { stopReason: 'cancelled' } })
 }
 
@@ -55,8 +56,9 @@ function onRequest(msg) {
     case 'session/set_model':
     case 'session/set_mode':
     case 'session/set_config_option':
-    case 'session/close':
       return answer({})
+    case 'session/close':
+      return send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found: session/close' } })
     case 'session/prompt': {
       const sessionId = params.sessionId
       const mode = params.prompt?.find((b) => b.type === 'text')?.text?.trim() || ''

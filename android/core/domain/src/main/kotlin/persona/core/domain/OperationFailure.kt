@@ -14,13 +14,22 @@ enum class FailureReason {
     // The hub's coded refusals of the main conversation (docs/assistant/onboarding.md 4.6, 5.2).
     NoMachine, MachinePending, ComputerOffline, ClaudeMissing, LauncherMissing, NotLoggedIn, AuthFailed, AssistantRestarting,
     KnowledgeDisabled, KnowledgeUnavailable, KnowledgeReadOnly,
+    // The provider does not run on that computer (docs/integrations/launchers.md "Device scope and on-demand delivery").
+    ProviderOutOfScope,
 }
+
+/**
+ * The manager's refusals of a start with a provider outside that computer's scope, or skipped there for its own service
+ * (docs/integrations/launchers.md "Device scope and on-demand delivery"): nothing started, and the hub words why in the
+ * request's language.
+ */
+val ProviderScopeCodes = setOf("launcher_out_of_scope", "launcher_own_service")
 
 /**
  * The codes with which the hub refuses to start or answer in the main conversation until a step is done
  * (docs/assistant/onboarding.md 4.6): nothing was started, so the message waits for the user, not for the network.
  */
-val SetupFailureCodes = setOf("no_machine", "machine_pending", "claude_missing", "launcher_missing", "not_logged_in", "auth_failed")
+val SetupFailureCodes = setOf("no_machine", "machine_pending", "claude_missing", "launcher_missing", "not_logged_in", "auth_failed") + ProviderScopeCodes
 data class OperationFailure(val reason: FailureReason, val action: FailureAction, val offline: Boolean = false)
 
 fun mapOperationFailure(
@@ -60,6 +69,7 @@ fun mapOperationFailure(
         "launcher_missing" -> result(FailureReason.LauncherMissing, FailureAction.ConnectModel)
         "not_logged_in" -> result(FailureReason.NotLoggedIn, FailureAction.LoginClaude)
         "auth_failed" -> result(FailureReason.AuthFailed, FailureAction.EditProvider)
+        "launcher_out_of_scope", "launcher_own_service" -> result(FailureReason.ProviderOutOfScope, FailureAction.EditProvider)
         // The assistant's process restarting: it comes back by itself in a few seconds.
         "assistant_offline" -> result(FailureReason.AssistantRestarting, FailureAction.Retry)
         else -> null

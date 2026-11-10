@@ -10,9 +10,38 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 
 class ChatRealtimeStateTest {
     private val key = SessionKey("m1", "s1")
+
+    @Test fun unchangedTranscriptReusesRowsAndEveryOverlayChangeInvalidatesThem() {
+        val state = ChatRealtimeState(key)
+        val transcript = listOf(Item("user#0", 1, role = "user", kind = "text", text = "Question"),
+            Item("tool#0", 2, role = "assistant", kind = "tool_use", toolUseId = "call"))
+        val first = state.items(transcript)
+        assertSame(transcript.first(), first.first())
+        repeat(100) { assertSame(first, state.items(transcript)) }
+        state.tool(ToolCallEvent("call", "example_tool"), transcript)
+        val named = state.items(transcript)
+        assertNotSame(first, named)
+        assertEquals("example_tool", named.last().toolName)
+        state.delta(DeltaEvent("m1", "s1", "Reply"), transcript)
+        assertEquals("Reply", state.items(transcript).last().text)
+        state.delta(DeltaEvent("m1", "s1", "Updated reply"), transcript)
+        assertEquals("Updated reply", state.items(transcript).last().text)
+        state.reset()
+        assertEquals(transcript, state.items(transcript))
+    }
+
+    @Test fun aToolCallForAnotherSessionKeepsTheProjection() {
+        val state = ChatRealtimeState(key)
+        val transcript = listOf(Item("tool#0", 1, role = "assistant", kind = "tool_use", toolUseId = "mine"))
+        val first = state.items(transcript)
+        assertFalse(state.tool(ToolCallEvent("elsewhere", "example_tool"), transcript))
+        assertSame(first, state.items(transcript))
+    }
 
     @Test
     fun `a streamed reply the hub cut matches its transcript item once`() {

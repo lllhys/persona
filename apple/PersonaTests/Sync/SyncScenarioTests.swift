@@ -401,9 +401,13 @@ final class SyncRun {
             }
             if let want = e["requests"]?.array {
                 var from = d.requestsChecked
+                // one_of: any one of these, where the protocol allows several ways (#2770)
+                func matches(_ got: [String: JSONValue], _ want: JSONValue) -> Bool {
+                    if let any = want["one_of"]?.array { return any.contains { matches(got, $0) } }
+                    return (want.object ?? [:]).allSatisfy { got[$0.key] == $0.value }
+                }
                 for r in want {
-                    let wanted = r.object ?? [:]
-                    guard let i = d.requests[from...].firstIndex(where: { got in wanted.allSatisfy { got[$0.key] == $0.value } }) else {
+                    guard let i = d.requests[from...].firstIndex(where: { matches($0, r) }) else {
                         failures.append("\(at): \(d.name) no request \(r) after \(Array(d.requests[d.requestsChecked...]))")
                         break
                     }

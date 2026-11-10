@@ -19,7 +19,8 @@ import kotlinx.coroutines.launch
  */
 @Composable
 internal fun HubsScreen(hubs: HubGroups, onAdd: (() -> Unit)?, onBack: () -> Unit, footer: @Composable () -> Unit = {},
-    tunnels: HubTunnelSettings? = null, onTunnel: (hubId: String, kind: TunnelKind) -> Unit = { _, _ -> }) {
+    tunnels: HubTunnelSettings? = null, onTunnel: (hubId: String, kind: TunnelKind) -> Unit = { _, _ -> },
+    onAccess: (hubId: String) -> Unit = {}) {
     val groups by hubs.groups.collectAsState()
     val tunnelInfos by (tunnels ?: HubTunnelSettings.None).hubs.collectAsState()
     val scope = rememberCoroutineScope()
@@ -49,7 +50,7 @@ internal fun HubsScreen(hubs: HubGroups, onAdd: (() -> Unit)?, onBack: () -> Uni
         groups.forEach { group ->
             item(key = "head-" + group.id) { JSectionHeader(group.name) }
             val withTunnels = group.hubs.filter { it.paired }.mapNotNull { hub -> tunnelInfos.firstOrNull { it.hubId == hub.hubId } }
-            val rows = group.hubs.size + 1 + 2 * withTunnels.size
+            val rows = group.hubs.size + 1 + 3 * withTunnels.size
             item(key = "state-" + group.id) {
                 JGroupItem(GroupPosition.of(0, rows)) {
                     JRow(if (group.state == ConnectionState.Online) stringResource(R.string.settings_hubs_connected) else group.state.label(), leadingIcon = PhIcons.TreeStructure,
@@ -68,11 +69,19 @@ internal fun HubsScreen(hubs: HubGroups, onAdd: (() -> Unit)?, onBack: () -> Uni
             withTunnels.forEachIndexed { index, info ->
                 listOf(TunnelKind.Ssh, TunnelKind.Proxy).forEachIndexed { offset, kind ->
                     item(key = "tunnel-" + group.id + "-" + info.hubId + "-" + kind) {
-                        JGroupItem(GroupPosition.of(group.hubs.size + 1 + 2 * index + offset, rows)) {
+                        JGroupItem(GroupPosition.of(group.hubs.size + 1 + 3 * index + offset, rows)) {
                             JRow(tunnelRowTitle(kind, info.name.takeIf { withTunnels.size > 1 }),
                                 leadingIcon = if (kind == TunnelKind.Ssh) PhIcons.Terminal else PhIcons.ShareNetwork,
                                 value = stringResource(tunnelRowValue(info, kind)), onClick = { onTunnel(info.hubId, kind) })
                         }
+                    }
+                }
+                item(key = "access-" + group.id + "-" + info.hubId) {
+                    JGroupItem(GroupPosition.of(group.hubs.size + 3 + 3 * index, rows)) {
+                        JRow(info.name.takeIf { withTunnels.size > 1 }?.let { stringResource(R.string.settings_access_of, it) }
+                            ?: stringResource(R.string.settings_access_title), leadingIcon = PhIcons.ShieldCheck,
+                            value = stringResource(if (info.access != null) R.string.settings_access_on else R.string.settings_access_off),
+                            onClick = { onAccess(info.hubId) })
                     }
                 }
             }

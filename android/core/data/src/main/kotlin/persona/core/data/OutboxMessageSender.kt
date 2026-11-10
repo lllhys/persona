@@ -29,7 +29,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -123,6 +125,11 @@ class OutboxMessageSender(
             }
         }
     }
+
+    /** Sessions holding a message that may have been delivered but is not yet seen in their transcript. */
+    val awaitingTranscript: Flow<Set<SessionKey>> = store.entries
+        .map { entries -> entries.filter { it.state in reconcilable }.mapTo(mutableSetOf()) { it.session } }
+        .distinctUntilChanged()
 
     /** Tells the outbox which sessions are at work (the pairing's session list). */
     fun connectActivity(busy: (SessionKey) -> Boolean) { this.busy = busy }

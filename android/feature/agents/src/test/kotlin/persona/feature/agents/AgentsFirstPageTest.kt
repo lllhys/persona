@@ -2,7 +2,9 @@ package persona.feature.agents
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -38,8 +40,9 @@ class AgentsFirstPageTest {
     private val stored = MutableStateFlow<Preferences?>(null)
 
     @Test fun noEmptyStateBeforeTheFirstPageAndThenTheSessions() {
+        val rows = MutableStateFlow(listOf(Session("box", "s1", title = "Example task", state = "working")))
         val model = AgentsViewModel(object : SessionsRepository {
-            override val sessions = MutableStateFlow(listOf(Session("box", "s1", title = "Example task", state = "working")))
+            override val sessions = rows
             override val machines = MutableStateFlow(listOf(Machine("box", "Example computer", online = true)))
             override suspend fun refresh() = Unit
         }, object : InteractionCenter {
@@ -71,6 +74,7 @@ class AgentsFirstPageTest {
         rule.waitForIdle()
         // The placeholder page: nothing built yet, so neither empty state shows.
         assertFalse(model.page.value.loaded)
+        rule.onNodeWithContentDescription("Loading").assertIsDisplayed()
         listOf("No computers yet", "Start your first coding session").forEach {
             assertTrue("no \"$it\" before the first page",
                 rule.onAllNodesWithText(it, substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
@@ -84,6 +88,12 @@ class AgentsFirstPageTest {
         fun shown(text: String) = rule.onAllNodesWithText(text, substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         assertTrue(shown("Example computer"))
         assertFalse(shown("No computers yet"))
+        rule.onNodeWithContentDescription("Loading").assertDoesNotExist()
+
+        rule.runOnIdle { rows.value = emptyList() }
+        rule.waitForIdle()
+        assertTrue("a loaded empty page keeps its empty state", shown("Start your first coding session"))
+        rule.onNodeWithContentDescription("Loading").assertDoesNotExist()
     }
 
     private object Nowhere : Navigator {

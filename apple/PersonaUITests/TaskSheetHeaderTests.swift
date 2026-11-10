@@ -32,7 +32,7 @@ final class TaskSheetHeaderTests: XCTestCase {
         app.launchArguments = ["-pairURL", url, "-holdChromeOpen", "YES", "-tab", "assistant"] // a run before may have ended on the Agents page
         app.launchPinned()
 
-        app.openActionTray("progress") // the phone lists the tasks in the action bar's Progress tray (#2879)
+        app.openActionTray("running") // the action bar lists the working tasks in In Progress (#3393)
         let pill = app.buttons.matching(NSPredicate(format: "identifier == 'action-tray.task' AND label CONTAINS '修小组件横屏崩溃'")).firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 20), "no task in Progress:\n\(app.debugDescription)")
         sleep(2) // the conversation settles

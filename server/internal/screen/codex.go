@@ -138,6 +138,7 @@ var (
 	codexColumnsRE  = lazyre.New(`^(.*?\S)\s{2,}(\S.*)$`)
 	codexNumberedRE = lazyre.New(`^›\s*\d+\.\s`)
 	codexStatusRE   = lazyre.New(`^\s{2,}\S.*\s·\s(?:~[/\\]|/|[A-Za-z]:[/\\])`)
+	codexWarningRE  = lazyre.New(`\s⚠\s+\d+\s+warnings?\s+·\s+f2 to view$`)
 )
 
 // ReadCodex reads a Codex screen, best read with its colors: without them a draft the user typed cannot be told from
@@ -220,7 +221,10 @@ func codexBox(plain []string) int {
 func codexDraft(raw, plain []string, i int, noColor bool) string {
 	var rows []string
 	end := len(plain)
-	if end > i+2 {
+	if end > i+1 && codexStatusRE.MatchString(plain[end-1]) && codexWarningRE.MatchString(plain[end-1]) {
+		// 0.166 also draws one status row with a warning and no shortcuts row.
+		end--
+	} else if end > i+2 {
 		last := strings.TrimSpace(plain[end-1])
 		if (strings.HasPrefix(last, "? for shortcuts") || strings.HasPrefix(last, "← for agents · ? for shortcuts")) &&
 			codexStatusRE.MatchString(plain[end-2]) {

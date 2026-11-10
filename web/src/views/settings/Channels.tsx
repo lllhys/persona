@@ -462,6 +462,19 @@ function BindSteps({ c, onDone }: { c: Channel; onDone: () => Promise<void> }) {
           {prompt.error && <p role="alert" className="text-[12px] text-red">{prompt.error}</p>}
         </div>
       )}
+      {prompt.link && (
+        <div className="px-4 pb-2.5 pt-0.5">
+          <a
+            href={prompt.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="touch-hit inline-flex items-center gap-1 self-start whitespace-nowrap text-[12.5px] font-medium text-accent hover:underline"
+          >
+            {prompt.link_text || prompt.link}
+            <Icon name="logout" size={12} />
+          </a>
+        </div>
+      )}
       {prompt.kind === "qr" && prompt.qr ? (
         <QRStep rows={prompt.qr.rows} app={c.name} label={t("settings-channels.qr_label")} onCancel={() => setPrompt(null)} />
       ) : prompt.kind === "pair_code" || prompt.kind === "device_code" ? (

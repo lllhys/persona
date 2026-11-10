@@ -6,6 +6,7 @@
   "agent_no_command": "没有要启动的命令",
   "agent_no_data_dir": "找不到数据目录",
   "agent_profile_refused": "sandbox-exec 不接受这次的规则：{err}",
-  "agent_unsupported": "agent 沙箱暂时只支持 macOS，这个系统（{os}）上尚未支持",
+  "agent_too_many_args": "Linux agent 命令有 {count} 个 bwrap 参数，超过 {limit} 的上限；减少数据目录顶层条目或显式别名",
+  "agent_unsupported": "agent 沙箱支持 macOS 和 Linux，这个系统（{os}）上不支持",
   "probe_tmp": "探测沙箱无法创建临时目录：{err}"
 }

@@ -35,9 +35,6 @@ type errorReports struct {
 	once  sync.Once
 	gate  *errreport.Gate
 	queue chan wire.ErrorReport
-	// dropped counts the reports the queue had no room for (the extension is slower than the errors come).
-	mu      sync.Mutex
-	dropped int
 	// own: the manager's own reports, taken on another goroutine (ReportOwn is called from inside a log write, maybe
 	// under a lock the pipeline takes); on: ErrorReportsOn as the last report to the hub said, read without a lock.
 	own chan wire.ErrorReport
@@ -107,10 +104,8 @@ func (h *Manager) takeErrorReport(r wire.ErrorReport, sender string, sources []s
 	select {
 	case p.queue <- r:
 		return true
-	default:
-		p.mu.Lock()
-		p.dropped++
-		p.mu.Unlock()
+	default: // the extension is slower than the errors come: the next one of this problem counts it
+		p.gate.Unsent(&r)
 		return false
 	}
 }

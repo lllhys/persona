@@ -114,7 +114,6 @@ internal class AssistantTaskHost(
     /** Original records remain inspectable from Progress, never discarded by the conversation projection. */
     val backgroundRecords: List<persona.core.domain.lines.ChatLine> = emptyList(),
     val onOpenBackground: (() -> Unit)? = null,
-    val onOpenProgress: (() -> Unit)? = null,
 ) {
     /** Each session's first card ([firstBySession]). */
     val cards: Map<SessionKey, persona.core.contracts.Interaction> by lazy { pending.firstBySession() }
@@ -174,15 +173,44 @@ internal fun AssistantExtraLine(payload: Any, host: AssistantTaskHost?) {
             style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         is AssistantExtra.Quick -> QuickResultCard(payload.result)
         is AssistantExtra.Feed -> FeedLine(payload.item, host)
-        is persona.core.domain.tasks.DispatchHint -> {
-            val label = pluralStringResource(R.plurals.chat_assistant_dispatched, payload.count, payload.count)
-            Row(Modifier.fillMaxWidth().clickable(enabled = host.onOpenProgress != null,
-                onClickLabel = label) { host.onOpenProgress?.invoke() }.padding(vertical = Tokens.Space.xs)
-                .testTag("assistant-dispatch-hint"), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
-                Text(label, Modifier.weight(1f, fill = false), style = PersonaTheme.type.caption,
-                    color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        is persona.core.domain.tasks.DispatchHint -> DispatchLine(payload, host)
+    }
+}
+
+/**
+ * What a reply dispatched, under it (#3700): one task reads "Dispatched: <title> · Open", several list their titles. Each
+ * opens that task's detail (its agent, or the task while it starts), never the whole In progress tray. A task the hub
+ * could not start has no to-do yet and has no link (its plan says why).
+ */
+@Composable
+private fun DispatchLine(hint: persona.core.domain.tasks.DispatchHint, host: AssistantTaskHost) {
+    val fallback = stringResource(R.string.chat_tasks_default_title)
+    val open = stringResource(R.string.chat_assistant_dispatch_open)
+    fun Modifier.opens(task: persona.core.domain.tasks.DispatchedTask) =
+        clickable(enabled = task.todoId != null, onClickLabel = open) { task.todoId?.let { host.sheet.value = TaskSheet.Task(it) } }
+    val single = hint.tasks.singleOrNull()
+    if (single != null) {
+        Row(Modifier.fillMaxWidth().opens(single).padding(vertical = Tokens.Space.xs).testTag("assistant-dispatch-hint"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+            Text(stringResource(R.string.chat_assistant_dispatched_one, single.title.ifBlank { fallback }), Modifier.weight(1f, fill = false),
+                style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (single.todoId != null) {
+                Text(stringResource(R.string.chat_assistant_dispatch_open_line, open), style = PersonaTheme.type.caption,
+                    color = PersonaTheme.palette.accent, maxLines = 1)
                 JIcon(PhIcons.CaretRight, decorative = true, size = Tokens.Space.m, tint = PersonaTheme.palette.ink3)
+            }
+        }
+        return
+    }
+    Column(Modifier.fillMaxWidth().testTag("assistant-dispatch-hint")) {
+        Text(pluralStringResource(R.plurals.chat_assistant_dispatched, hint.count, hint.count), Modifier.padding(vertical = Tokens.Space.xs),
+            style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1)
+        hint.tasks.forEach { task ->
+            Row(Modifier.fillMaxWidth().opens(task).padding(vertical = Tokens.Space.xs).testTag("assistant-dispatched-task"),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+                Text(task.title.ifBlank { fallback }, Modifier.weight(1f, fill = false), style = PersonaTheme.type.caption,
+                    color = if (task.todoId != null) PersonaTheme.palette.ink else PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (task.todoId != null) JIcon(PhIcons.CaretRight, decorative = true, size = Tokens.Space.m, tint = PersonaTheme.palette.ink3)
             }
         }
     }

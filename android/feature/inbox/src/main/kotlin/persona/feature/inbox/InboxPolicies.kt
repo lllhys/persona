@@ -261,32 +261,25 @@ private fun PolicyChoice(title: String, selected: Boolean, enabled: Boolean, onS
 @Stable
 class InboxRulesModel(private val repository: InboxRepository) {
     var rules by mutableStateOf<List<InboxPolicy>?>(null); private set
-    /** Several managers: each one's rules, or why they couldn't be read, the default first; null with one. */
-    var shares by mutableStateOf<List<ManagerListShare<InboxPolicy>>?>(null); private set
     /** Why the first read failed; a later one leaves the shown list and throws. */
     var failed by mutableStateOf<Throwable?>(null); private set
 
-    /** Nothing to show: no rules, and no manager whose couldn't be read. */
-    val isEmpty: Boolean get() = shares?.none { it.shown } ?: (rules?.isEmpty() == true)
+    /** Nothing to show: no rules. */
+    val isEmpty: Boolean get() = rules?.isEmpty() == true
 
     private var reads = 0
+    private var shownOf: String? = null
 
-    /** Reads the list; only the newest read lands. */
-    suspend fun load(roster: ManagerRoster? = null) {
+    /** Reads [manager]'s list (null: one manager, none named); only the newest read lands. */
+    suspend fun load(manager: String? = null) {
         val read = ++reads
         failed = null
-        if (roster != null && roster.isMulti) {
-            val each = readEach(roster) { id -> repository.inboxPolicies(manager = id).map { it.copy(manager = id) } }
-            if (read != reads) return
-            shares = each
-            rules = each.flatMap { it.group.items }.newestFirst()
-            return
-        }
+        // Another assistant's rules never stay under this one's name.
+        if (manager != shownOf) { rules = null; shownOf = manager }
         try {
-            val list = repository.inboxPolicies()
+            val list = repository.inboxPolicies(manager = manager)
             if (read != reads) return
-            rules = list
-            shares = null
+            rules = if (manager == null) list else list.map { it.copy(manager = manager) }
         }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) {
@@ -299,18 +292,14 @@ class InboxRulesModel(private val repository: InboxRepository) {
     suspend fun remove(policy: InboxPolicy) {
         val same = { p: InboxPolicy -> p.id == policy.id && p.manager == policy.manager }
         rules = rules?.filterNot(same)
-        shares = shares?.map { it.withItems { list -> list.filterNot(same) } }
         try {
             repository.removePolicy(policy.id, policy.manager)
             // A reload read before the removal reached the hub may have brought it back.
             rules = rules?.filterNot(same)
-            shares = shares?.map { it.withItems { list -> list.filterNot(same) } }
         }
         catch (e: Exception) {
             // Back only this one: another remove that went through meanwhile stays gone.
-            fun back(list: List<InboxPolicy>) = (list.filterNot(same) + policy).newestFirst()
-            rules = rules?.let(::back)
-            shares = shares?.map { if (it.group.id == policy.manager) it.withItems(::back) else it }
+            rules = rules?.let { list -> (list.filterNot(same) + policy).newestFirst() }
             throw e
         }
     }
@@ -322,13 +311,13 @@ internal fun InboxRulesSheet(repository: InboxRepository, onDismiss: () -> Unit)
     val scope = rememberCoroutineScope()
     val feedback = LocalAppFeedback.current
     val res = LocalResources.current
-    val roster = LocalManagerRoster.current
+    val owner = currentAssistant().listOwner()
     val model = remember(repository) { InboxRulesModel(repository) }
     var editing by remember { mutableStateOf<InboxPolicyTarget?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     fun load() {
         scope.launch {
-            try { model.load(roster) }
+            try { model.load(owner.id) }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { feedback?.failure(e) }
         }
@@ -343,7 +332,7 @@ internal fun InboxRulesSheet(repository: InboxRepository, onDismiss: () -> Unit)
             catch (e: Exception) { failure = res.getString(R.string.inbox_rules_remove_failed, failureReasonText(e).resolve(res)) }
         }
     }
-    LaunchedEffect(model, roster.readKey()) { load() } // a change of the managers reads it again
+    LaunchedEffect(model, owner) { load() } // another assistant, or this one back online, reads it again
     // The rule's own sheet takes the list's place; the list reads again when it closes.
     editing?.let { target ->
         InboxPolicySheet(repository, target, onDismiss = { editing = null; load() })
@@ -352,7 +341,6 @@ internal fun InboxRulesSheet(repository: InboxRepository, onDismiss: () -> Unit)
     JSheet(onDismiss, title = stringResource(R.string.inbox_rules_title), scrollable = true) {
         val list = model.rules
         val failed = model.failed
-        val shares = model.shares
         @Composable fun rule(p: InboxPolicy) =
             JRow(p.name, subtitle = (listOf(p.sourceName ?: p.source, stringResource(muteTagName(p.tag))) + p.summary.map { stringResource(it) })
                 .filter { it.isNotBlank() }.joinToString(" · "),
@@ -364,12 +352,11 @@ internal fun InboxRulesSheet(repository: InboxRepository, onDismiss: () -> Unit)
                     }
                 })
         when {
-            failed != null -> JNotice(stringResource(R.string.inbox_rules_failed, failureReasonText(failed).text()), status = Status.NeedsYou,
+            failed != null -> JNotice(if (owner.offline) stringResource(R.string.inbox_rules_offline)
+                else stringResource(R.string.inbox_rules_failed, failureReasonText(failed).text()), status = Status.NeedsYou,
                 actionLabel = stringResource(R.string.inbox_retry), onAction = ::load)
             list == null -> JLoading()
             model.isEmpty -> JEmptyState(stringResource(R.string.inbox_rules_empty_title), stringResource(R.string.inbox_rules_empty_text), icon = PhIcons.Target)
-            shares != null -> ManagerListShares(shares, R.string.inbox_rules_offline,
-                said = { stringResource(R.string.inbox_rules_failed, failureReasonText(it).text()) }) { rule(it) }
             else -> JGroup(rows = list.map { p -> { rule(p) } })
         }
         failure?.let { JNotice(it, Modifier.padding(top = Tokens.Space.l), status = Status.NeedsYou) }

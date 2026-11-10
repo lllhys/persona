@@ -25,6 +25,7 @@ func (m *Meta) ClaudeTurnStarted(wake bool) {
 	resumes := m.TurnErrorResumes && wake
 	m.clearTurnError()
 	m.TurnErrorResumes, m.turnWorked = resumes, false
+	m.turnParts = nil
 	m.resumesSaid = m.resumesSaid || !wake
 }
 

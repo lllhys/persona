@@ -12,7 +12,7 @@ from hub_release_paths import prepare_remote_staging, release_directory, validat
 from manager_artifacts import manager_manifest
 from publish_hub_release import connect_publisher
 
-MODULES = ('hub_release_paths', 'node_artifacts', 'manager_artifacts', 'promote_hub_release',
+MODULES = ('hub_release_paths', 'node_artifacts', 'manager_artifacts', 'node_package_mirror', 'promote_hub_release',
            'manager_idle', 'promote_manager_release')
 
 

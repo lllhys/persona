@@ -43,19 +43,23 @@ import Testing
         #expect(AgentFilter.all.state == nil)
     }
 
-    /// Lark Group is a botmux session, Terminal a herdr pane (#2526); other hosts and paneless sessions are neither.
+    /// Lark Group is a botmux session, Terminal a herdr or Tern pane (#2526, #2154); other hosts and paneless sessions are
+    /// neither.
     @Test func sourceFiltersSplitBotmuxFromHerdr() {
         var botmux = session("b", state: "idle"), herdr = session("h", state: "working"), orca = session("o", state: "idle")
+        var tern = session("t", state: "idle")
         let bare = session("n", state: "idle")
         botmux.paneID = "botmux:abc"
         herdr.paneID = "w1:p1"
         orca.paneID = "orca:1"
+        tern.paneID = "tern:201863462919" // a Tern block's number behind its kind
         #expect(botmux.source == .feishu)
         #expect(herdr.source == .terminal)
+        #expect(tern.hostKind == "tern" && tern.source == .terminal)
         #expect(orca.source == nil && bare.source == nil)
-        let all = [botmux, herdr, orca, bare]
+        let all = [botmux, herdr, orca, tern, bare]
         #expect(all.filter { AgentFilter.feishu.matches($0) }.map(\.sessionID) == ["b"])
-        #expect(all.filter { AgentFilter.terminal.matches($0) }.map(\.sessionID) == ["h"])
+        #expect(all.filter { AgentFilter.terminal.matches($0) }.map(\.sessionID) == ["h", "t"])
         #expect(AgentFilter.feishu.state == nil && AgentFilter.feishu.title == "飞书群")
     }
 

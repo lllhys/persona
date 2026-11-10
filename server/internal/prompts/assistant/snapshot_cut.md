@@ -1,0 +1,1 @@
+- 快照到此截断；其余用 agents_list、todo_list、inbox 查

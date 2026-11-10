@@ -125,6 +125,22 @@ final class AgentRowStylesTests: XCTestCase {
         XCTAssertTrue(first.isSelected, "back to Avatar")
     }
 
+    /// Grouped By Repository the list keeps its one-line tree whatever is chosen: the page says so first (#3182); not in
+    /// the other groupings.
+    @MainActor func testTheLayoutPageSaysByRepositoryKeepsItsTree() throws {
+        let app = launch(["-tab", "settings", "-openAppearance", "layout", "-dev.grouping", "repo"])
+        let note = app.descendants(matching: .any)["layout-repo-note"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 20), "no note grouped By Repository:\n\(app.debugDescription)")
+        let first = app.buttons["layout-agents-avatar"]
+        XCTAssertTrue(first.exists, "no Avatar choice")
+        XCTAssertLessThanOrEqual(note.frame.maxY, first.frame.minY, "the note is not above the choices")
+        shot(app, "layout-page-repo")
+        app.terminate()
+        let other = launch(["-tab", "settings", "-openAppearance", "layout", "-dev.grouping", "space"])
+        XCTAssertTrue(other.buttons["layout-agents-avatar"].waitForExistence(timeout: 20), "no Layout page By Project")
+        XCTAssertFalse(other.descendants(matching: .any)["layout-repo-note"].exists, "the note shows By Project")
+    }
+
     /// The Agents list By Project, as the mock hub's agents are, its look forgotten (-openAgentsFresh).
     private static let agents = ["-app.tab", "chats", "-tab", "dev", "-dev.openChat", "", "-openAgentsFresh", "YES",
                                  "-dev.grouping", "space", "-dev.compact", "NO"]

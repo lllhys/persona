@@ -19,6 +19,8 @@ nonisolated struct InboxItem: Codable, Identifiable, Hashable, Sendable {
     var summary: String?
     var reason: String?
     var read: Bool?
+    /// Reading changes navigation badges without filing the pending item.
+    var isUnread: Bool { read != true && !isDone }
     var doneAt: Date?
     var doneBy: String?
     var lark: Lark?

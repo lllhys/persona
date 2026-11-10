@@ -57,7 +57,12 @@ struct HealthView: View {
     @State private var page = HealthModel()
     // Upload a Checkup Report (docs/assistant/health.md「Checkup reports」): the picked files go to reports/; once they are up the conversation starts.
     @State private var showReports = false
-    @State private var reports = FileUploads()
+    /// Kept by the app, not the page (#2836): built again with the whole tree when iPhone Duo folds or opens, the page
+    /// lost the uploads under way.
+    private var reports: FileUploads { model.healthReportUploads() }
+    #if DEBUG
+    private static var reportUploadShown = false
+    #endif
 
     /// The default manager's assistant machine (the hub's unless set otherwise), where the health space's directory is.
     private var machine: MachineRef { model.hubRef(model.healthMachineID) }
@@ -94,12 +99,19 @@ struct HealthView: View {
         .pageTitle(String(localized: "Health"))
         .fileUploadPicker(isPresented: $showReports) { uploadReports($0) }
         #if DEBUG
-        .task { // `-showReportUpload <name>`: a made-up report uploaded as if picked, to check the whole way without the picker
-            if let name = UserDefaults.standard.string(forKey: "showReportUpload") {
+        // `-showReportUpload <name>[,<name>…]`: made-up reports uploaded as if picked, to check the whole way without the
+        // picker; `-showReportUploadMB <n>`: each that big, on its way a while (the mock hub reads it slowly). Once a launch:
+        // the page built again (a fold, #2836) does not upload them twice.
+        .task {
+            if let list = UserDefaults.standard.string(forKey: "showReportUpload"), !Self.reportUploadShown {
+                Self.reportUploadShown = true
                 try? await Task.sleep(for: .seconds(3))
-                let url = FileManager.default.temporaryDirectory.appending(path: name)
-                try? Data("%PDF-1.7 demo".utf8).write(to: url)
-                uploadReports([url])
+                let mb = UserDefaults.standard.integer(forKey: "showReportUploadMB")
+                uploadReports(list.split(separator: ",").map { name in
+                    let url = FileManager.default.temporaryDirectory.appending(path: String(name))
+                    try? (mb > 0 ? Data(count: mb << 20) : Data("%PDF-1.7 demo".utf8)).write(to: url)
+                    return url
+                })
             }
         }
         #endif

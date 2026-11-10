@@ -338,6 +338,7 @@ struct ToolCallRow: View {
     var autoExpand: Bool
     /// A row of an open work line's card (`WorkCardSlice` draws the card): no gray tile of its own, 44 pt tall.
     var grouped = false
+    var headerID = "chat.tool-call"
     @State private var expanded: Bool?
     @Environment(\.openTools) private var openTools
 
@@ -449,6 +450,7 @@ struct ToolCallRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(headerID)
     }
 
     /// The row's head: BeautifulUI's tool row — kind icon (a chevron once open), the verb, the subject in a chip.
@@ -458,11 +460,13 @@ struct ToolCallRow: View {
             if call.isError { ThemedIcon(Theme.Icon.errorFilled).foregroundStyle(Theme.danger).font(Theme.Font.label) }
         }
         .padding(Self.chipInsets(grouped: grouped))
+        .accessibilityIdentifier(headerID)
     }
 
     /// A call that went to the background says how its task went (Background · Done).
     @ViewBuilder private var taskBadge: some View {
-        if let id = call.use.toolUseID, tasks.started.contains(id) || tasks.notes[id] != nil {
+        if let id = call.use.toolUseID, tasks.started.contains(id) || tasks.notes[id] != nil,
+           !SubagentCard.isAgent(call) || tasks.started.contains(id) || call.input["run_in_background"]?.bool == true {
             let b = TaskNoteText.badge(tasks.notes[id] ?? [])
             if AppStyle.current.usesBeautifulUI {
                 BUIPill(b.text, tone: b.failed ? .red : .neutral)
@@ -550,7 +554,15 @@ struct ToolDetail: View {
             }
             // An answered ask_user shows the picks under its questions (AskUserDetail), not the text the model got; a
             // password run its commands' outcomes (SecretRunToolDetail).
-            if let result = call.result, (base != "Edit" && base != "ask_user" && base != SecretRun.tool) || result.isError == true {
+            if (base == "Agent" || base == "Task"), !call.results.isEmpty {
+                let reports = call.results.filter { !SubagentDelivery.isReceipt($0) && !($0.text ?? "").isEmpty }
+                ForEach(reports) { report in
+                    ResultBlock(text: report.cutText, isError: report.isError ?? false, cut: report.fullSize.map { (report.id, $0) })
+                }
+                if reports.isEmpty, let result = call.result {
+                    ResultBlock(text: "", isError: result.isError ?? false)
+                }
+            } else if let result = call.result, (base != "Edit" && base != "ask_user" && base != SecretRun.tool) || result.isError == true {
                 ResultBlock(text: result.cutText, isError: result.isError ?? false, cut: result.fullSize.map { (result.id, $0) })
                 if base == "Bash" { PortChips(text: result.cutText) } // a dev server saying where it listens
             } else if call.isRunning {

@@ -174,6 +174,35 @@ type syncRequest struct {
 	Post     string `json:"post,omitempty"`
 	ID       string `json:"id,omitempty"`
 	NewOp    bool   `json:"new_op,omitempty"`
+	// OneOf: any one of these requests, where the protocol allows several ways (#2770): a send's retry or its op's
+	// receipt, the rest from a replay's cap or the whole gap read on reconnect.
+	OneOf []syncRequest `json:"one_of,omitempty"`
+}
+
+// validRequest: one request as a view's `requests` names it, or (not inside another) a one_of of two or more.
+func validRequest(r syncRequest, nested bool) bool {
+	if r.OneOf != nil {
+		if nested || len(r.OneOf) < 2 || r.Get != "" || r.WS != "" || r.Post != "" || r.ID != "" || r.NewOp || r.AfterSeq != nil || r.SinceSeq != nil {
+			return false
+		}
+		for _, o := range r.OneOf {
+			if !validRequest(o, true) {
+				return false
+			}
+		}
+		return true
+	}
+	switch {
+	case r.Get == "/items":
+		return r.WS == "" && r.Post == "" && r.ID == "" && !r.NewOp && r.SinceSeq == nil
+	case r.Get == "/ops": // an op's receipt, by the write's id in the case
+		return r.WS == "" && r.Post == "" && r.ID != "" && !r.NewOp && r.AfterSeq == nil && r.SinceSeq == nil
+	case r.WS == "subscribe":
+		return r.Get == "" && r.Post == "" && r.ID == "" && !r.NewOp && r.AfterSeq == nil
+	case r.Post == "messages" || r.Post == "resolve" || r.Post == "conversations":
+		return r.Get == "" && r.WS == "" && (r.ID != "") != r.NewOp && r.AfterSeq == nil && r.SinceSeq == nil
+	}
+	return false
 }
 
 // The frames a step may deliver, as the hub writes them (hub/http.go, hub/elicitation.go, hub/sessions_push.go).
@@ -944,10 +973,7 @@ func checkView(t *testing.T, where string, d *syncDeviceState, v syncView, end b
 		t.Errorf("%s: status %q", where, *v.Status)
 	}
 	for _, r := range v.Requests {
-		ok := (r.Get == "/items" && r.WS == "" && r.Post == "") ||
-			(r.WS == "subscribe" && r.Get == "" && r.Post == "") ||
-			((r.Post == "messages" || r.Post == "resolve" || r.Post == "conversations") && r.Get == "" && r.WS == "" && (r.ID != "") != r.NewOp)
-		if !ok {
+		if !validRequest(r, false) {
 			t.Errorf("%s: request %s", where, jsonString(r))
 		}
 	}
@@ -1026,4 +1052,29 @@ func sameJSON(a, b any) bool {
 func jsonString(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// A view's requests: one_of takes two or more plain requests (#2770); an op's receipt names the write.
+func TestSyncRequestShapes(t *testing.T) {
+	for _, c := range []struct {
+		raw string
+		ok  bool
+	}{
+		{`{"get":"/items","after_seq":4}`, true},
+		{`{"get":"/ops","id":"m1"}`, true},
+		{`{"get":"/ops"}`, false},
+		{`{"get":"/ops","id":"m1","after_seq":4}`, false},
+		{`{"one_of":[{"post":"messages","id":"m1"},{"get":"/ops","id":"m1"}]}`, true},
+		{`{"one_of":[{"get":"/items","after_seq":12}]}`, false},
+		{`{"one_of":[{"get":"/items"},{"one_of":[{"get":"/items"},{"ws":"subscribe"}]}]}`, false},
+		{`{"one_of":[{"get":"/items"},{"ws":"subscribe"}],"get":"/items"}`, false},
+	} {
+		var r syncRequest
+		if err := json.Unmarshal([]byte(c.raw), &r); err != nil {
+			t.Fatal(err)
+		}
+		if got := validRequest(r, false); got != c.ok {
+			t.Errorf("%s: valid %v, want %v", c.raw, got, c.ok)
+		}
+	}
 }

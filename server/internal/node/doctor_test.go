@@ -465,9 +465,9 @@ func TestCheckAgentSandbox(t *testing.T) {
 		words  []string
 	}{
 		{"off", macSandbox, false, nil, DoctorOK, []string{"未开启", "本机可以开启"}},
-		{"off on linux", sandbox.Support{OS: "linux"}, false, nil, DoctorOK, []string{"未开启", "不支持"}},
+		{"off on linux without bwrap", sandbox.Support{OS: "linux", Why: "机器上没有 bwrap"}, false, nil, DoctorOK, []string{"未开启", "工具不可用", "bwrap"}},
 		{"on", macSandbox, true, &sandbox.AgentStatus{State: sandbox.AgentActive}, DoctorOK, []string{"已开启", "已在沙箱里", "docker", "sudo", "herdr", "personad launch"}},
-		{"on on linux", sandbox.Support{OS: "linux"}, true, nil, DoctorWarn, []string{"不支持"}},
+		{"on on linux without bwrap", sandbox.Support{OS: "linux", Why: "机器上没有 bwrap"}, true, nil, DoctorWarn, []string{"工具不可用", "bwrap"}},
 		{"on without sandbox-exec", sandbox.Support{OS: "darwin", Why: "机器上没有 sandbox-exec"}, true, nil, DoctorWarn, []string{"工具不可用", "sandbox-exec"}},
 		{"a start skipped", macSandbox, true, &sandbox.AgentStatus{State: sandbox.AgentSkipped, Why: "Claude 开了自带 sandbox"}, DoctorWarn, []string{"跳过", "Claude 开了自带 sandbox"}},
 	}
@@ -489,4 +489,21 @@ func TestCheckAgentSandbox(t *testing.T) {
 			}
 		})
 	}
+	t.Run("active on linux", func(t *testing.T) {
+		agentSandboxFakes(t, sandbox.Support{OS: "linux", Bwrap: "/usr/bin/bwrap"})
+		n := agentNode(t, true)
+		recordAgentSandbox(n.dir, "launch claude", sandbox.AgentStatus{State: sandbox.AgentActive})
+		got := checkAgentSandbox(n.dir)
+		if got.Status != DoctorOK {
+			t.Fatalf("%+v", got)
+		}
+		for _, want := range []string{"已开启", "已在沙箱里", "node 重启", "一并重启", "node.sock"} {
+			if !strings.Contains(got.Detail, want) {
+				t.Errorf("%q not in %q", want, got.Detail)
+			}
+		}
+		if strings.Contains(got.Detail, "ps、top、sudo") {
+			t.Errorf("Linux shows the macOS setuid limitation: %q", got.Detail)
+		}
+	})
 }

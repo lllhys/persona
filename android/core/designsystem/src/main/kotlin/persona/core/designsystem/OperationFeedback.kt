@@ -42,6 +42,12 @@ fun operationFeedback(error: Throwable): OperationFeedback {
     if (error is persona.core.contracts.api.InteractionPromptChangedException)
         return operationFeedback(mapOperationFailure("prompt_changed", "none", false))
     val failure = HubFailure.from(error)
+    // Cloudflare Access in front of the hub, not the hub: what to fix is the service token in Settings › hub.
+    when (failure.kind) {
+        HubError.AccessRequired -> return OperationFeedback(UiText.Res(R.string.designsystem_core_endpoint_access_required), FailureAction.None)
+        HubError.AccessRejected -> return OperationFeedback(UiText.Res(R.string.designsystem_core_endpoint_access_rejected), FailureAction.None)
+        else -> Unit
+    }
     val category = when (failure.kind) {
         HubError.PairingExpired, HubError.HubMismatch -> FailureCategory.Pairing
         HubError.CertificateMismatch -> FailureCategory.Certificate
@@ -60,8 +66,11 @@ fun operationFeedback(error: Throwable): OperationFeedback {
         "unknown" else failure.delivered
     // The hub words these refusals in the request's language (docs/assistant/onboarding.md 4.6, apierr.codeActions); for the
     // other codes its `error` is raw detail (node_unreachable: "rpc: connection closed"), never shown.
-    val words = failure.message.takeIf { code in HubWordedCodes && failure.status != null && it.isNotBlank() && !it.startsWith("HTTP ") }
-    return operationFeedback(mapOperationFailure(code, delivered, failure.retryable, category), words)
+    val words = failure.message.takeIf { (code in HubWordedCodes || code in ProviderScopeCodes) && failure.status != null && it.isNotBlank() && !it.startsWith("HTTP ") }
+    val mapped = operationFeedback(mapOperationFailure(code, delivered, failure.retryable, category), words)
+    // A provider outside that computer's scope: the hub names the provider and the computer, which the app's words cannot.
+    if (code in ProviderScopeCodes && words != null && mapped.action == FailureAction.EditProvider) return mapped.copy(text = UiText.Plain(words))
+    return mapped
 }
 
 /**
@@ -112,5 +121,6 @@ private fun codedFeedback(reason: FailureReason): Int? = when (reason) {
     FailureReason.NotLoggedIn -> R.string.designsystem_feedback_not_logged_in
     FailureReason.AuthFailed -> R.string.designsystem_feedback_auth_failed
     FailureReason.AssistantRestarting -> R.string.designsystem_feedback_assistant_restarting
+    FailureReason.ProviderOutOfScope -> R.string.designsystem_feedback_provider_out_of_scope
     else -> null
 }

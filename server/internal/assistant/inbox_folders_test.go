@@ -45,6 +45,7 @@ func folderHub(t *testing.T, n int) *inboxHub {
 	if err := h.inboxReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitNeedsYouIdle(t, h.Service)
 	h.inbox.folderCfg = InboxFolderConfig{Enabled: true}
 	at := time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
 	for i := 1; i <= n; i++ {

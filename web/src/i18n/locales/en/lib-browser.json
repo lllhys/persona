@@ -1,5 +1,5 @@
 {
-  "step_open": "Click Open ego lite and it opens on that Mac (with Screen Sharing on, use VNC to work it from here)",
+  "step_open": "Click Open ego lite and it opens on that Mac (with Screen Sharing on, use View screen at the top of this page to work it from here)",
   "step_import": "In its first-run setup, import data from Chrome (or another browser): your sign-ins to websites come along. macOS asks for the keychain password several times; enter that Mac's login password each time. You can skip importing",
   "step_finish": "Finish the first-run setup; it installs the ego-browser command",
   "step_recheck": "Come back here and click Check again",

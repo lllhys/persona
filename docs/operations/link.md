@@ -251,10 +251,13 @@ Both sides ignore a message type they don't know.
   | Case | Wait |
   | --- | --- |
   | Replaced by a new link from the same computer (4001) | 30 seconds |
-  | Credentials rejected (401 / 403) or revoked (4002) | 5 minutes, or retry immediately when link.json changes (re-pairing) |
+  | Credentials rejected (401 / 403) or revoked (4002) | 5 minutes, or retry within 2 seconds when link.json changes (re-pairing) |
   | Hub restarts (1001) | Normal backoff |
   | Manual **Reconnect now** | No wait |
+  | Paired again while connected (new token, pin, trust or machine in link.json) | No wait: the link ends as with **Reconnect now** and comes back with the new pairing within about 2 seconds |
 
+- Any wait ends within 2 seconds when link.json changes (re-paired, an address added). The change counts from when the attempt read link.json, so a new credential written while the hub was refusing the old one is tried at the next check, not after 5 minutes; while a link is up, only a new credential counts (the link writes the hub's addresses and names into link.json itself).
+- While connected, persona-link looks at link.json every 2 seconds when its modification time changed and compares the pairing itself (token, pin, trust, machine), not just the time: the hub's endpoints and renames rewrite link.json with the same pairing and leave the link alone.
 - Only one persona-link can run per computer (`~/.persona/link.json.run` file lock), or they replace each other repeatedly.
 
 **Network changes**
@@ -267,7 +270,7 @@ Both sides ignore a message type they don't know.
 
 **Forwarding**
 - Only forwards to `~/.persona/node-attach.sock` and only connects back to the hub address used by this link; stream ids may contain only letters, digits, `-`, `_`. The hub can't make it connect elsewhere.
-- Streams enable permessage-deflate compression. SSH previously used `Compression=yes`; see the comment in `devices/machine.go` (the hub-to-manager hop is local loopback and isn't compressed).
+- Streams enable permessage-deflate compression without context takeover (`link.StreamCompression`): each message is compressed on its own, so an idle stream keeps no compression state (with context takeover, about 0.8 MB per end, for about a sixth fewer bytes on the wire). Either end asking for it is enough, so it also applies when only the hub or only Persona Link is new. SSH previously used `Compression=yes`; see the comment in `devices/machine.go` (the hub-to-manager hop is local loopback and isn't compressed).
 - To the resident node, each stream is a new attach connection, replacing the previous one just as with SSH.
 
 ## Hub behind a reverse proxy
@@ -367,7 +370,7 @@ Errors are JSON: `{"error":"<code>","message":"<human-readable Chinese>"}`.
 | `GET /api/v1/connector/stream` | Same | WebSocket upgrade; optional `X-Persona-Ping` (heartbeat, below) | Authenticate, connect node-attach.sock, then upgrade: node unreachable: `503 node_unavailable` (`message` gives the reason for the hub to record as this computer's error); non-upgrade request: `400`; after upgrading, see below |
 
 - Successful pairing replaces the previously paired hub ("only trusts the hub it paired with": the group's primary; a new primary re-pairs after a switch). Old credentials stop working immediately, and streams opened with them close with code **4002**.
-- Streams are binary messages containing unchanged node bytes in both directions. Accepts permessage-deflate (context takeover, like active-mode streams and SSH's former `Compression=yes`).
+- Streams are binary messages containing unchanged node bytes in both directions. Accepts permessage-deflate without context takeover, as active-mode streams use it (SSH formerly used `Compression=yes`); a manager that still asks for context takeover gets none.
   The helper pings every 10 seconds and disconnects after 5 seconds without pong, while answering hub pings normally. When the hub closes a stream, the helper half-closes the node connection (write end), letting the node finish reading and clean up; the stream ends when the node closes.
   With a heartbeat configured in hub.json (`link`), the stream request carries `X-Persona-Ping: <interval milliseconds> <timeout milliseconds>`; the helper uses it on that stream (also clamped to 50 milliseconds–10 minutes);
   absent or not two numbers, it uses its own values. Old helpers ignore the header and retain 10 seconds / 5 seconds.
@@ -756,7 +759,7 @@ Passive mode: `./persona-link install --listen [:18663] [--addr <address the hub
 
 The unit contains neither mode nor listen address: both live in link.json. Changing mode or port requires no service reinstall; the running persona-link switches within a second or two.
 
-Running `install` before pairing starts the service as unpaired; later `persona-link pair` makes it adopt new credentials within seconds, without restart (checks link.json changes every 2 seconds).
+Running `install` before pairing starts the service as unpaired; later `persona-link pair` makes it adopt new credentials within seconds, without restart (checks link.json changes every 2 seconds, also while connected, **Reconnect** above).
 
 Generated unit:
 

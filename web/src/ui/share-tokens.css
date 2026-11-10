@@ -1,0 +1,65 @@
+/* Shared feature geometry. Colors inherit the existing design system; the independent viewer copies only its roles. */
+:root {
+  --share-space-xs: 0.25rem;
+  --share-space-s: 0.5rem;
+  --share-space-m: 0.75rem;
+  --share-space-l: 1rem;
+  --share-space-xl: 1.5rem;
+  --share-space-xxl: 2rem;
+  --share-page-width: 55rem;
+  --share-readable: 44rem;
+  --share-radius: 0.625rem;
+  --share-control-radius: 0.5rem;
+  --share-tap: 2.75rem;
+  --share-display: 1.75rem;
+  --share-heading: 1.0625rem;
+  --share-body: 1rem;
+  --share-caption: 0.8125rem;
+  --share-code: 0.8125rem;
+  --share-leading: 1.6;
+  --share-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --share-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --share-emphasis: 600;
+  --share-display-leading: 1.25;
+  --share-tracking: -0.02em;
+  --share-line: 1px;
+  --share-focus: 2px;
+  --share-disabled: 0.5;
+  --share-viewer-columns: var(--share-tap) minmax(0, 1fr);
+  --share-work-column: 2;
+  --share-page-space: var(--share-space-xxl) var(--share-space-xl);
+  --share-message-gap: var(--share-space-xl);
+}
+@media (max-width: 40rem) {
+  :root {
+    --share-viewer-columns: minmax(0, 1fr);
+    --share-work-column: 1;
+    --share-page-space: var(--share-space-xl) var(--share-space-l);
+    --share-message-gap: var(--share-space-s);
+  }
+}
+.share-stack { display: flex; flex-direction: column; gap: var(--share-space-l); min-width: 0; }
+.share-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--share-space-m); min-width: 0; }
+.share-label { font-size: var(--share-caption); color: var(--ink-2); }
+.share-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--share-leading); }
+.share-box { padding: var(--share-space-l); border-radius: var(--share-radius); background: var(--inset); box-shadow: var(--shadow-hairline); }
+.share-buttons { display: flex; flex-wrap: wrap; gap: var(--share-space-s); }
+.share-buttons > button { min-height: var(--share-tap); }
+.share-selection { display: flex; align-items: flex-start; gap: var(--share-space-m); padding-block: var(--share-space-m); border-bottom: 1px solid var(--line); }
+.share-selection input { margin-top: var(--share-space-xs); accent-color: var(--accent-ink); flex-shrink: 0; }
+.share-selection label { flex: 1; min-width: 0; cursor: pointer; }
+.share-field { min-height: var(--share-tap); padding: var(--share-space-s) var(--share-space-m); border-radius: var(--share-control-radius); background: var(--field); color: var(--ink); border: 1px solid var(--line-strong); font: inherit; max-width: 100%; }
+.share-work { margin-top: var(--share-space-m); color: var(--ink-2); font-size: var(--share-caption); }
+.share-work summary { cursor: pointer; min-height: var(--share-tap); display: list-item; padding-top: var(--share-space-s); }
+.share-work pre { font-family: var(--share-mono); font-size: var(--share-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.share-warning { color: var(--orange); }
+.share-error { color: var(--red); }
+.share-link { user-select: all; overflow-wrap: anywhere; font-family: var(--share-mono); }
+.share-toggle { min-height: var(--share-tap); display: flex; justify-content: space-between; gap: var(--share-space-l); align-items: center; }
+.share-toggle > div { min-width: 0; }
+.share-messages { display: flex; flex-direction: column; gap: var(--share-space-xl); }
+.share-reasons { margin: var(--share-space-xs) 0 0; padding-inline-start: var(--share-space-xl); }
+.share-choice { display: inline-flex; align-items: center; gap: var(--share-space-s); min-height: var(--share-tap); white-space: nowrap; cursor: pointer; }
+.share-choice input { accent-color: var(--accent-ink); }
+.share-stack h3 { font-size: var(--share-heading); font-weight: var(--share-emphasis); }
+.share-work > .share-box + .share-box { margin-top: var(--share-space-s); }

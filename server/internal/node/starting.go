@@ -43,6 +43,16 @@ func (l *startLog) get(id string) *startRec {
 	return l.m[id]
 }
 
+// recovered forgets a failed start after an explicit resume has found or started the agent.
+// Pending starts keep their channel: messages must still wait for them to finish.
+func (l *startLog) recovered(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if r := l.m[id]; r != nil && !r.ended.IsZero() && r.err != nil {
+		delete(l.m, id)
+	}
+}
+
 func (l *startLog) add(id string, r *startRec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -86,6 +86,46 @@ function parts(raw: unknown): Part[] | null {
   return out;
 }
 
+/**
+ * A persona-card no app draws (a type this page does not know, a newer one, or parts that do not add up) as words, so
+ * its JSON never shows: the title, the subtitle, a "label: value unit" line per number (value, total, segments, rest,
+ * points), the note. null when it is not a whole JSON object yet (still being written: the code block shows it).
+ */
+export function cardText(code: string): string | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(code);
+  } catch {
+    return null;
+  }
+  if (!isObject(raw)) return null;
+  const unit = str(raw.unit);
+  const total = isObject(raw.total) ? num(raw.total.value) : undefined;
+  const totalUnit = isObject(raw.total) ? str(raw.total.unit) || unit : unit;
+  const lines: string[] = [];
+  const title = str(raw.title);
+  const subtitle = str(raw.subtitle);
+  if (title) lines.push(title);
+  if (subtitle) lines.push(subtitle);
+  const value = num(raw.value);
+  if (value !== undefined) lines.push(`${title ? t("lib-assistant-view.current") : t("lib-assistant-view.value")}: ${amount(value, unit)}`);
+  if (total !== undefined) lines.push(`${t("lib-assistant-view.total")}: ${amount(total, totalUnit)}`);
+  const each = [raw.segments, isObject(raw.rest) ? [raw.rest] : undefined, raw.points];
+  for (const list of each) {
+    if (!Array.isArray(list)) continue;
+    for (const p of list) {
+      if (!isObject(p)) continue;
+      const v = num(p.value);
+      if (v === undefined) continue;
+      const note = str(p.note);
+      lines.push(`${str(p.label) || "·"}: ${amount(v, total !== undefined ? totalUnit : unit)}${note ? ` (${note})` : ""}`);
+    }
+  }
+  const note = str(raw.note);
+  if (note) lines.push(note);
+  return lines.length ? lines.join("\n") : null;
+}
+
 /** A persona-card as the apps draw it (sdk/go/wire/personacard.go); null when they cannot: it stays a code block. */
 export function cardView(raw: unknown): UIView | null {
   if (!isObject(raw)) return null;

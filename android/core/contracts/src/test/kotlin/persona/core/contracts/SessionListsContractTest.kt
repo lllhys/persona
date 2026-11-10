@@ -7,6 +7,18 @@ import org.junit.Test
 import persona.core.contracts.api.*
 
 class SessionListsContractTest {
+    @Test fun compactWorkflowProgressRoundTripsWithoutDetailArrays() {
+        val summary = JsonCodec.decodeFromString<Session>("""{"session_id":"worker","waiting":true,"background_tasks_count":2,"running_subagents":3,"running_workflows":1,"workflow_progress":{"task_id":"flow","status":"running","running":true,"phase":"Adversarial review","agents_done":5,"agents_started":6,"agents_running":1}}""")
+        assertEquals(2, summary.backgroundTasksCount)
+        assertEquals("Adversarial review", summary.workflowProgress?.phase)
+        assertEquals(5, summary.workflowProgress?.agentsDone)
+        assertNull(summary.workflows); assertNull(summary.background); assertNull(summary.subagents)
+        assertEquals(summary, JsonCodec.decodeFromString<Session>(JsonCodec.encodeToString(summary)))
+        val ended = JsonCodec.decodeFromString<Session>("""{"session_id":"worker","waiting":false,"background_tasks_count":0}""")
+        assertEquals(0, ended.backgroundTasksCount); assertNull(ended.workflowProgress)
+        assertNull(JsonCodec.decodeFromString<Session>("""{"session_id":"legacy"}""").backgroundTasksCount)
+    }
+
     @Test fun listInvalidationDecodesAndEncodesWithoutBecomingABaseline() {
         val event = ServerEvent.decode("""{"type":"sessions_list","revision":"checkpoint","event_seq":42}""")
         assertEquals(SessionsListEvent("checkpoint"), event)

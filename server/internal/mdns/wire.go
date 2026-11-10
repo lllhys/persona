@@ -303,8 +303,10 @@ func packMessage(m *message) ([]byte, error) {
 // budget is shared by all the names of one message: each label read and each pointer followed takes one, and going
 // past it is errNameBudget. Backwards-only pointers alone still let every name walk a chain through all the names
 // before it, or let every 2-byte pointer read a long name again, so a crafted packet would cost work far beyond its
-// size; a budget for the whole message keeps it linear (each label is at most maxLabel bytes), while one deep but
-// legitimate name (an ip6.arpa name compressed label by label) still reads.
+// size; a budget for the whole message keeps it linear (each label is at most maxLabel bytes), while a deep name read
+// once still fits, since each of its labels and pointers takes at least two bytes of the message. A message with a
+// record at every level of a deep name (an ip6.arpa name compressed label by label) reads the levels again for each
+// record and runs out (TestNameBudgetLabelByLabel).
 func readName(msg []byte, off int, budget *int) (name, int, error) {
 	var n name
 	next := -1

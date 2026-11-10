@@ -151,12 +151,12 @@ export function AcceptRow({ row, stacked = false }: { row: BriefRow; stacked?: b
 /** What the Handled button of a question that can wait says: idle, the hub took it, or it was not in the queue any more. */
 type Marking = "idle" | "busy" | "marked" | "handled";
 
-function LaterRow({ row }: { row: BriefRow }) {
+function LaterRow({ row, conversation }: { row: BriefRow; conversation: string }) {
   const [state, setState] = useState<Marking>("idle");
   const mark = () => {
     if (state !== "idle") return;
     setState("busy");
-    handledLater(row.id).then(
+    handledLater(row.id, conversation).then(
       (res) => setState(res),
       (e) => {
         setState("idle");
@@ -247,7 +247,7 @@ export function BriefCard({ item }: { item: FeedItem }) {
       {body.later.length > 0 && (
         <Section icon="chat" tint="bg-field text-ink-2" title={t("assistant-brief.later_head", { n: body.later_total })}>
           {body.later.map((r) => (
-            <LaterRow key={r.id} row={r} />
+            <LaterRow key={r.id} row={r} conversation={item.conversation} />
           ))}
           <More n={body.later_total - body.later.length} text="assistant-brief.later_more" />
         </Section>
@@ -260,7 +260,7 @@ export function BriefCard({ item }: { item: FeedItem }) {
                 <div className="min-w-0 flex-1 text-[13.5px] font-medium [overflow-wrap:anywhere]">{p.title}</div>
                 <Button onClick={() => openPanel({ kind: "task", todo: p.id })}>{t("assistant-brief.open")}</Button>
               </div>
-              <TodoStageBar stage={p.stage} />
+              <TodoStageBar stage={p.stage} stageKind={p.stage_kind} />
             </div>
           ))}
           <More n={body.progress_total - body.progress.length} />

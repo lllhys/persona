@@ -4,12 +4,16 @@
 import { formatDate, t } from "../i18n";
 import type { BackgroundTask, Item, LoopInfo, Subagent, TaskNote } from "./types";
 import type { AgentStatus } from "./work-groups";
+import { launchedTaskID } from "./task-association";
+export { attachedAgentNotices } from "./task-association";
 
 /** Background tasks and the calls that started them. A notice names its call by tool_use_id, or only by the task id
  *  the call's result announced ("running in background with ID: …", "Monitor started (task …"). */
 export interface TaskIndex {
   /** A call's notices, oldest first, by the call's tool_use_id. */
   notes: Map<string, TaskNote[]>;
+  /** Every associated subagent report item, oldest first; never replace an earlier report. */
+  reports: Map<string, Item[]>;
   /** The call a notice came from (notice item id → tool_use_id). */
   calls: Map<string, string>;
   /** Calls whose result says they went to the background (they may not have reported back yet). */
@@ -19,11 +23,8 @@ export interface TaskIndex {
   startedAt: Map<string, string>;
 }
 
-// agentId takes its colon: Claude Code 2.1.319's receipt says "including the agentId below" before the id line.
-const LAUNCHED = /(?:running in background with ID:?|agentId:|Monitor started \(task:?|moved to the background \(ID:?)\s*([A-Za-z0-9_-]+)/;
-
 export function emptyTaskIndex(): TaskIndex {
-  return { notes: new Map(), calls: new Map(), started: new Set(), descriptions: new Map(), startedAt: new Map() };
+  return { notes: new Map(), reports: new Map(), calls: new Map(), started: new Set(), descriptions: new Map(), startedAt: new Map() };
 }
 
 export function buildTaskIndex(items: Item[]): TaskIndex {
@@ -38,23 +39,30 @@ export function buildTaskIndex(items: Item[]): TaskIndex {
     if (use.ts && !x.startedAt.has(call)) x.startedAt.set(call, use.ts);
   };
   for (const it of items) {
-    if (it.kind === "tool_use") {
-      if (it.tool_use_id) uses.set(it.tool_use_id, it);
-    } else if (it.kind === "tool_result") {
-      const text = it.text ?? "";
-      if (!it.tool_use_id || !(text.includes("background") || text.includes("Monitor started") || text.includes("agentId"))) continue;
-      const m = LAUNCHED.exec(text);
-      if (!m) continue;
-      byTask.set(m[1], it.tool_use_id);
-      x.started.add(it.tool_use_id);
-      describe(it.tool_use_id);
-    } else if (it.kind === "notice" && it.task) {
-      const n = it.task;
-      const call = n.tool_use_id || (n.task_id ? byTask.get(n.task_id) : undefined);
-      if (!call) continue;
+    if (it.kind === "tool_use" && it.tool_use_id) uses.set(it.tool_use_id, it);
+    if (it.kind === "tool_result" && it.tool_use_id) {
+      const id = launchedTaskID(it.text ?? "");
+      if (id) {
+        byTask.set(id, it.tool_use_id);
+        x.started.add(it.tool_use_id);
+      }
+    }
+  }
+  for (const it of items) {
+    if (it.kind !== "tool_result" && it.kind !== "notice") continue;
+    const n = it.task;
+    const call = it.tool_use_id || n?.tool_use_id || (n?.task_id ? byTask.get(n.task_id) : undefined);
+    if (!call) continue;
+    const name = uses.get(call)?.tool_name;
+    const agent = n?.kind === "agent" || name === "Agent" || name === "Task";
+    if (n || agent || x.started.has(call)) describe(call);
+    if (n) {
       x.notes.set(call, [...(x.notes.get(call) ?? []), n]);
       x.calls.set(it.id, call);
-      describe(call);
+      if (n.status === "running") x.started.add(call);
+    }
+    if (agent && !isLaunchReceipt(it) && (it.kind === "tool_result" ? it.text?.trim() : n?.detail?.trim())) {
+      x.reports.set(call, [...(x.reports.get(call) ?? []), it]);
     }
   }
   return x;
@@ -124,7 +132,7 @@ export function taskPill(n: TaskNote, startedAt?: string, at?: string): { text: 
 export function taskBadge(notes: TaskNote[]): { text: string; failed: boolean } {
   const events = notes.filter((n) => n.status === "event").length;
   const last = [...notes].reverse().find((n) => n.status !== "event");
-  if (!last) return { text: events > 0 ? t("lib-tasks.badge_events", { count: events }) : t("lib-tasks.badge_running"), failed: false };
+  if (!last || last.status === "running" || last.kind === "agent" && !["completed", "failed", "killed", "stopped", "ended", "waiting"].includes(last.status ?? "")) return { text: events > 0 ? t("lib-tasks.badge_events", { count: events }) : t("lib-tasks.badge_running"), failed: false };
   const state = last.status === "failed" ? t("lib-tasks.state_failed") : last.status === "killed" || last.status === "stopped" ? t("lib-tasks.state_stopped") : last.status === "waiting" ? t("lib-tasks.state_waiting") : last.status === "ended" ? t("lib-tasks.state_ended") : t("lib-tasks.state_done");
   return { text: events > 0 ? t("lib-tasks.badge_state_events", { state, count: events }) : t("lib-tasks.badge_state", { state }), failed: taskFailed(last) };
 }
@@ -228,7 +236,7 @@ export function subagentTitle(a: Subagent): string {
 // ── a subagent call in the chat (its card, cindy's AgentTaskCard) ──
 
 /** What an Agent / Task call returned when it only started the subagent in the background. */
-const LAUNCH_RECEIPT = /Async agent launched|This is an internal ID for your use/;
+const LAUNCH_RECEIPT = /^\s*(?:Async agent launched|This is an internal ID for your use)/;
 /** The "agentId: …" line Claude Code appends to a subagent's report. */
 const AGENT_ID_LINE = /^\s*agentId:.*$/gm;
 
@@ -243,6 +251,7 @@ export function subagentParent(sid: string): string {
 }
 
 export function isLaunchReceipt(result?: Item): boolean {
+  if (result?.task?.kind === "agent" && (result.task.detail || agentNoteStatus(result.task) !== "running")) return false;
   return LAUNCH_RECEIPT.test(result?.text ?? "");
 }
 
@@ -251,12 +260,43 @@ export function isLaunchReceipt(result?: Item): boolean {
  *  result done; none yet runs while the exchange is live or the list says it does, and stopped otherwise. A
  *  background subagent (its result is the launch receipt) is the list's to tell; without it, it runs while the
  *  exchange is live. */
-export function agentStatus(result: Item | undefined, meta: Subagent | undefined, live: boolean): AgentStatus {
+/** Structured subagent lifecycle is authoritative; a running report is not a completed tool call. */
+function agentNoteStatus(note: TaskNote | undefined): AgentStatus | undefined {
+  if (note?.kind !== "agent") return undefined;
+  if (taskFailed(note)) return "failed";
+  switch (note.status) {
+    case "running":
+    case "waiting":
+    case "event": return "running";
+    case "completed":
+    case "ended": return "completed";
+    case "killed":
+    case "stopped": return "stopped";
+  }
+  return "running";
+}
+
+export function agentStatus(result: Item | undefined, meta: Subagent | undefined, live: boolean, notes?: TaskNote[]): AgentStatus {
   if (result?.is_error) return "failed";
+  const status = agentNoteStatus(notes?.at(-1)) ?? agentNoteStatus(result?.task);
+  if (status) return status;
   if (!result) return live || meta?.running ? "running" : "stopped";
   if (!isLaunchReceipt(result)) return "completed";
   if (meta) return meta.running ? "running" : "completed";
   return live ? "running" : "completed";
+}
+
+/** Calls with a terminal result or notification. Launch receipts and interim reports leave work visible. */
+export function terminalCalls(items: Item[], index = buildTaskIndex(items)): Set<string> {
+  const answered = new Set<string>();
+  for (const it of items) {
+    const call = it.tool_use_id || index.calls.get(it.id);
+    if (!call) continue;
+    const status = agentNoteStatus(it.task);
+    if (status === "running") answered.delete(call);
+    else if (status || it.kind === "tool_result" && !isLaunchReceipt(it)) answered.add(call);
+  }
+  return answered;
 }
 
 /** When a finished subagent ended (ms): at its result, but a background one's result is the launch receipt, written as

@@ -3,6 +3,7 @@ package persona.feature.settings
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.navigation3.runtime.EntryProviderScope
@@ -37,16 +38,21 @@ fun EntryProviderScope<NavKey>.settingsDetailEntries(navigator: Navigator, servi
     }
     entry<ExtensionRoute> { route ->
         val manager = remember(route) { ExtensionOwners.of(route.manager) }
+        val subscriptionsTitle = stringResource(R.string.settings_subscriptions_title)
         ExtensionPage(services.extensions.takeUnless { demo }, route.extensionId, onBack = navigator::back, startSignIn = route.signIn,
             manager = manager,
             onPage = { page -> navigator.navigate(ExtensionUiRoute(page.extension.ifBlank { route.extensionId }, page.id, page.title.ifBlank { page.id }, manager = manager)) },
             onChannel = { navigator.navigate(ChannelRoute(it)) }, machines = services.sessions.machines,
             launchers = services.providers.takeUnless { demo }?.let { p -> { p.launchers() } },
             onUpgrade = { market, id -> navigator.navigate(ExtensionCatalogRoute(market, id, manager = manager)) },
-            connectors = services.connectors.takeUnless { demo }, onConnector = { navigator.navigate(ConnectorRoute(it, manager)) })
+            connectors = services.connectors.takeUnless { demo }, onConnector = { navigator.navigate(ConnectorRoute(it, manager)) },
+            onSubscriptions = { navigator.navigate(subscriptionsRoute(subscriptionsTitle, extension = route.extensionId)) })
     }
     entry<ConnectorRoute> { route ->
-        HubConnectorPage(services.connectors.takeUnless { demo }, route.connectorId, onBack = navigator::back, manager = route.manager)
+        val subscriptionsTitle = stringResource(R.string.settings_subscriptions_title)
+        HubConnectorPage(services.connectors.takeUnless { demo }, route.connectorId, onBack = navigator::back, manager = route.manager,
+            extensions = services.extensions.takeUnless { demo },
+            onSubscriptions = { navigator.navigate(subscriptionsRoute(subscriptionsTitle, connector = route.connectorId)) })
     }
     entry<ExtensionUiRoute> { route ->
         ExtensionUiPage(services.extensions.takeUnless { demo }, route.extensionId, route.uiId, route.title, onBack = navigator::back,

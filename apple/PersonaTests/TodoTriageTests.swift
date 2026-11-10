@@ -38,13 +38,15 @@ struct TodoTriageTests {
                                reviews: [.init(at: ago(5), verdict: "accepted", checks: when.prefix(5).map { .init(criterion: $0, met: true) })])
     }
 
-    private var lookup: TodosLogic.SessionLookup {
-        TodosLogic.makeSessionLookup([
+    private var sessions: [Session] {
+        [
             session("ask", state: .needsYou), session("run", state: .working), session("unseen", state: .unread),
             session("idle", state: .idle, updatedHoursAgo: 2), session("old", state: .idle, updatedHoursAgo: 100),
             session("old2", state: .idle, updatedHoursAgo: 120),
-        ])
+        ]
     }
+
+    private var lookup: TodosLogic.SessionLookup { TodosLogic.makeSessionLookup(sessions) }
 
     private func at(_ t: TodoItem) -> TodoTriage { TodoTriageLogic.triage(t, lookup: lookup, now: now) }
     private func ask(_ outcome: String?, verdict: String = "v") -> TodoAsk {
@@ -131,13 +133,16 @@ struct TodoTriageTests {
         #expect(TodoTriageLogic.bucket(done, lookup: lookup, now: now) == .closed)
         let all = [stale, accepted, open, done]
         let header = TodoTriageLogic.triageTodos(all, lookup: lookup, now: now, restored: [:])
-        let rows = all.map { ActionTrayContent.TaskRow(id: $0.id, state: .followup, createdAt: $0.createdAt,
-                                                       bucket: TodoTriageLogic.bucket($0, lookup: lookup, now: now)) }
-        let tray = ActionTrayContent(tasks: rows, own: [], taskAgents: [])
-        #expect(tray.count(.progress) == header.open)
-        // shelved ones are left out of the tray; the accepted and the closed are listed after the open
-        #expect(tray.progress.first?.id == "task:open")
-        #expect(Set(tray.progress.map(\.id)) == ["task:open", "task:accepted", "task:done"])
+        // the action bar's two entries count the same open to-dos, the shelved one folded and not counted (#3387)
+        let entries = AssistantEntries.split(conversation: "conv", main: "conv", todos: all, sessions: sessions, interactions: [],
+                                             plans: [:], feed: [], now: now)
+        let tray = ActionTrayContent(entries)
+        // (its other rows are the sessions here that belong to no task: Agents opened by hand)
+        let tasks = (tray.needsYou + tray.running).map(\.id).filter { $0.hasPrefix("task:") }
+        #expect(tasks.count == header.open)
+        #expect(tasks == ["task:open"])
+        #expect(entries.shelved.map(\.id) == ["task:stale"])
+        #expect(!(tray.needsYou + tray.running).contains { $0.id == "task:accepted" || $0.id == "task:done" })
     }
 
     @Test func ownTodoWithoutAgentsOrDueAheadNeverShelves() {
@@ -213,7 +218,10 @@ struct TodoTriageTests {
             todo("accepted", agents: ["old"]) { $0.supervision = acceptedReopened() },
             todo("quiet") { $0.quiet = true },
         ], lookup: lookup, now: now, quiet: false)
-        #expect([r.open, r.shelved, r.finished] == [1, 1, 2])
+        // Each its own: the array literal against the three counts no longer type-checks (ambiguous `==`, Xcode 27.1).
+        #expect(r.open == 1)
+        #expect(r.shelved == 1)
+        #expect(r.finished == 2)
     }
 
     @Test func relatedKeysIgnoreCaseSpacesPunctuationAndATrailingSlash() {

@@ -47,7 +47,7 @@ class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean)
         }
     }
 
-    /** iOS DeviceTool's keys; android_version and sdk stand where iOS has ios_version. */
+    /** iOS DeviceTool's keys (app_version, app_build, app_channel too); android_version and sdk stand where iOS has ios_version. */
     private fun device(): PhoneToolResult {
         val battery = context.getSystemService(BatteryManager::class.java)
         val power = context.getSystemService(PowerManager::class.java)
@@ -74,6 +74,9 @@ class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean)
                 for (i in 0 until languages.size()) add(languages[i].toLanguageTag())
             })
             put("thermal_state", thermalState(power.currentThermalStatus))
+            val app = context.packageManager.getPackageInfo(context.packageName, 0)
+            put("app_version", app.versionName.orEmpty()); put("app_build", app.longVersionCode.toString())
+            put("app_channel", appChannel(context.applicationInfo.flags))
         }.toString())
     }
 
@@ -85,6 +88,9 @@ class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean)
         else -> "other"
     }
 }
+
+/** iOS's app_channel: a debuggable build is "debug", any other "release". */
+internal fun appChannel(flags: Int): String = if (flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) "debug" else "release"
 
 internal fun batteryState(status: Int): String = when (status) {
     BatteryManager.BATTERY_STATUS_CHARGING -> "charging"

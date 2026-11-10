@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="settings_managers_title">管理者</string>
-    <string name="settings_managers_hint">每个管理者是一个完整的助手，跑在哪由你定</string>
-    <string name="settings_managers_unsupported">这台 hub 的版本还不支持管理者，升级 hub 后再来</string>
-    <string name="settings_managers_demo">体验模式里没有管理者，连上自己的 hub 后再来</string>
+    <string name="settings_managers_title">助手</string>
+    <string name="settings_managers_hint">每个助手都有自己的对话、收件箱和电脑，跑在哪由你定</string>
+    <string name="settings_managers_unsupported">这台 hub 的版本还不支持助手，升级 hub 后再来</string>
+    <string name="settings_managers_demo">体验模式里没有助手，连上自己的 hub 后再来</string>
     <string name="settings_managers_default">默认</string>
     <string name="settings_managers_online">在线</string>
     <string name="settings_managers_offline">离线</string>
@@ -22,16 +22,16 @@
     <string name="settings_managers_save">保存</string>
     <string name="settings_managers_make_default">设为默认</string>
     <string name="settings_managers_move">换个地方装</string>
-    <string name="settings_managers_move_confirm">换个地方装会给一个新的安装码；用它装好后，原来那处的管理者立即停止工作。</string>
+    <string name="settings_managers_move_confirm">换个地方装会给一个新的安装码；用它装好后，原来那处的助手立即停止工作。</string>
     <string name="settings_managers_new_code">新的安装码</string>
     <string name="settings_managers_delete">删除</string>
     <string name="settings_managers_delete_confirm">删除「%1$s」？它的 token 立即失效，连着的连接会断开。</string>
     <string name="settings_managers_cancel_install">取消安装</string>
     <string name="settings_managers_cancel_install_confirm">取消安装「%1$s」？安装码会作废。</string>
     <string name="settings_managers_keep">保留</string>
-    <string name="settings_managers_delete_builtin">hub 自己运行的管理者不能删除</string>
-    <string name="settings_managers_delete_default">默认管理者不能删除，先把别的设为默认</string>
-    <string name="settings_managers_new">新建管理者</string>
+    <string name="settings_managers_delete_builtin">hub 自己运行的助手不能删除</string>
+    <string name="settings_managers_delete_default">默认助手不能删除，先把别的设为默认</string>
+    <string name="settings_managers_new">新建助手</string>
     <string name="settings_managers_create">新建</string>
     <string name="settings_managers_code_title">安装码</string>
     <string name="settings_managers_copy">复制</string>
@@ -39,11 +39,11 @@
     <string name="settings_managers_expired">已过期</string>
     <string name="settings_managers_install_service">装成服务</string>
     <string name="settings_managers_install_docker">用 Docker</string>
-    <string name="settings_managers_code_note">在要运行它的电脑上用这个安装码装好管理者，装好后它会出现在列表里。</string>
+    <string name="settings_managers_code_note">在要运行它的电脑上用这个安装码装好助手，装好后它会出现在列表里。</string>
     <string name="settings_managers_done">完成</string>
-    <string name="settings_managers_err_default">这是默认管理者，先把别的设为默认再删除</string>
-    <string name="settings_managers_err_builtin">这是 hub 自己运行的管理者，不能删除或换地方装</string>
-    <string name="settings_managers_err_gone">这个管理者已经不在了</string>
+    <string name="settings_managers_err_default">这是默认助手，先把别的设为默认再删除</string>
+    <string name="settings_managers_err_builtin">这是 hub 自己运行的助手，不能删除或换地方装</string>
+    <string name="settings_managers_err_gone">这个助手已经不在了</string>
     <string name="settings_managers_err_installing">它还没装好，装好后才能改名或设为默认</string>
     <string name="settings_managers_err_name">名字要 1 到 40 个字</string>
     <string name="settings_managers_err_forbidden">这台设备没有修改权限</string>
@@ -51,12 +51,15 @@
         <item quantity="other">安装中 · 码 %1$d 分钟后过期</item>
     </plurals>
     <string name="settings_managers_push">推送通知</string>
-    <string name="settings_managers_push_note">关掉后，这台设备不再收到这个管理者的推送</string>
+    <string name="settings_managers_push_note">关掉后，这台设备不再收到这个助手的推送</string>
     <string name="settings_managers_push_failed">推送通知没改成：%1$s</string>
     <plurals name="settings_managers_delete_machines">
-        <item quantity="other">它的 %1$d 台电脑会回到 hub 自己的管理者。</item>
+        <item quantity="other">它的 %1$d 台电脑会回到 hub 自己的助手。</item>
     </plurals>
-    <string name="settings_managers_delete_sources">它的来源（比如邮箱账号）存在它自己的库里，不先移到别的管理者，就会随它一起删掉。</string>
+    <string name="settings_managers_delete_sources">它的来源（比如邮箱账号）存在它自己的库里，不先移到别的助手，就会随它一起删掉。</string>
     <string name="settings_managers_needs_update">需要更新</string>
     <string name="settings_managers_needs_update_note">它的 personad 版本较旧，还不读自己的设置（manager.json），在用内置的默认值。请在它所在的电脑上更新 personad。</string>
+    <string name="settings_switcher_line">%1$s · %2$s</string>
+    <string name="settings_switcher_switched">已切换到 %1$s</string>
+    <string name="settings_switcher_manage">管理助手…</string>
 </resources>

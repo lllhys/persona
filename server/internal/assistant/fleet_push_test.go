@@ -491,3 +491,14 @@ func TestToldElsewhereTurnUsesUpItsReportMark(t *testing.T) {
 		t.Fatalf("the user's turn after it: %+v", got)
 	}
 }
+
+// The main chat's push for a turn that wrote a long report, called agent_send and closed with a short line: the node
+// puts the turn's answer from the report on in the row's LastText (node assistantAnswer), and the body is that, so the
+// report is what the lock screen shows first.
+func TestDoneAlertBodyStartsWithTheReport(t *testing.T) {
+	row := "今天的进展：第一项已经合并，第二项在等 CI，第三项需要你决定是否上线。 已经发给它了。"
+	_, text := doneAlert(i18n.ZhHans, proto.Session{Title: "主对话", Cwd: "/home/me/.persona/assistant", LastText: row})
+	if !strings.HasPrefix(text, "今天的进展") || !strings.HasSuffix(text, "已经发给它了。") {
+		t.Fatalf("body %q", text)
+	}
+}

@@ -14,6 +14,8 @@ data class SessionListStatus(
     val paged: Boolean = false,
     val loaded: Boolean = false,
     val loading: Boolean = false,
+    /** The last request failed; an empty first page offers retry instead of a permanent spinner. */
+    val failed: Boolean = false,
     val hasMore: Boolean = false,
     val hasPrevious: Boolean = false,
     val total: Int = 0,

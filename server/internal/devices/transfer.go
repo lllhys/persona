@@ -42,8 +42,9 @@ const (
 )
 
 type transfers struct {
-	mu   sync.Mutex
-	byID map[string]*transfer
+	mu    sync.Mutex
+	byID  map[string]*transfer
+	slots chan struct{} // capacity reserved before the machines' RPCs, not only once the transfer is listed (#3599)
 }
 
 type transfer struct {
@@ -78,13 +79,38 @@ func (t *transfer) snapshot() proto.FileTransfer {
 	return t.st
 }
 
+// reserveSlot takes one of the running-transfer slots without waiting. Reserving before the first machine RPC is
+// what keeps a burst of starts from all passing runningTransfers before any of them is listed.
+func (t *transfers) reserveSlot() bool {
+	t.mu.Lock()
+	if t.slots == nil {
+		t.slots = make(chan struct{}, maxRunningTransfers)
+	}
+	slots := t.slots
+	t.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *transfers) releaseSlot() { <-t.slots }
+
 // startTransfer checks both ends and opens the upload on the target, then sends the bytes in the background. It
 // answers the transfer as it starts; refusals before that are *transferError or the machines' rpc errors.
 func (d *Devices) startTransfer(ctx context.Context, from, to *Machine, src proto.FileTransferSource) (proto.FileTransfer, error) {
-	if d.runningTransfers() >= maxRunningTransfers {
+	if !d.transfers.reserveSlot() {
 		return proto.FileTransfer{}, &transferError{status: http.StatusTooManyRequests, code: "busy",
 			key: "hub-upload.transfer_busy", args: i18n.Args{"n": maxRunningTransfers}}
 	}
+	reserved := true
+	defer func() {
+		if reserved {
+			d.transfers.releaseSlot()
+		}
+	}()
 	step := func(m *Machine, method string, params, out any) error {
 		c, cancel := context.WithTimeout(ctx, transferStep)
 		defer cancel()
@@ -139,6 +165,7 @@ func (d *Devices) startTransfer(ctx context.Context, from, to *Machine, src prot
 	d.transfers.mu.Unlock()
 	d.logf("transfer %s: %s → %s, %d bytes", t.st.ID, from.cfg.ID, to.cfg.ID, info.Size)
 	d.pushTransfer(t, true)
+	reserved = false // runTransfer releases it when the transfer ends
 	go d.runTransfer(run, t, from, to, proto.FileChunkRequest{Path: info.Path, Cwd: src.Cwd, Revision: info.Revision}, begin.UploadID)
 	return t.snapshot(), nil
 }
@@ -179,6 +206,7 @@ type transferChunk struct {
 // runTransfer sends the bytes: a reader asks the source for the next chunk while the last one is written to the
 // target. Any failure, on either side, or a cancel, aborts the upload on the target so no part file stays.
 func (d *Devices) runTransfer(ctx context.Context, t *transfer, from, to *Machine, req proto.FileChunkRequest, uploadID string) {
+	defer d.transfers.releaseSlot()
 	defer close(t.done)
 	defer t.cancel()
 	total := t.st.Total

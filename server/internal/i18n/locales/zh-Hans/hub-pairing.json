@@ -1,4 +1,6 @@
 {
+  "assistant_away": "这台电脑现在所在的助手不在线，挪不过来。等那个助手上线后再试",
+  "assistant_installing": "这个助手还没装好，装好后再添加电脑",
   "computer_code": "{device} 给电脑「{name}」出了一个配对码",
   "computer_joining": "新电脑「{name}」想加入：打开 App 确认是不是你的",
   "confirmed_computer": "这台电脑已经确认过。要重新配对，在 hub 的管理页或 hub 所在的机器上出码",
@@ -6,6 +8,7 @@
   "mesh_member": "这台 hub 是互联组里的成员，在中心 hub 上添加电脑",
   "name_required": "给这台电脑起个名字",
   "new_device": "有新设备配对：{name}",
+  "no_assistant": "没有这个助手",
   "no_computer": "没有这台电脑",
   "some_device": "一台设备",
   "tls_required": "hub 还没打开安全连接，电脑接不进来",

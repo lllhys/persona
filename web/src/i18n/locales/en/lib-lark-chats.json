@@ -2,7 +2,7 @@
   "preview_mine": "Me: {text}",
   "preview_sender": "{sender}: {text}",
   "not_logged_in": "The hub's Lark gateway isn't signed in to Lark. Sign in on the hub machine, then try again.",
-  "not_configured": "The hub isn't connected to Lark yet: run the Lark gateway on the hub machine and add it under lark in the manager's manager.json.",
+  "not_configured": "The hub isn't connected to Lark yet: run the Lark gateway on the hub machine and add it under lark in the assistant's manager.json.",
   "load_failed": "Couldn't load Lark chats: {error}",
   "account_changed": "The Lark account changed"
 }

@@ -21,7 +21,7 @@ import (
 	"text/template/parse"
 )
 
-//go:embed agents assistant bot channel inbox kb tools shared mcp voice todo
+//go:embed agents assistant bot channel inbox kb tools shared mcp voice todo meeting
 var files embed.FS
 
 // templates is every template parsed so far, in one text/template set so {{template}} finds the ones it includes.

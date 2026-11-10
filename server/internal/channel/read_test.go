@@ -109,6 +109,18 @@ func TestReadTurnPagesToTheEnd(t *testing.T) {
 	}
 }
 
+// What the Lark bot posts for a long report, a tool call and a short closing line: both, the report first.
+func TestReadTurnAnswerKeepsTheReportBeforeATool(t *testing.T) {
+	report := "## 今天的进展\n\n" + strings.Repeat("第一项已经合并，第二项在等 CI。", 6)
+	src := &pagedSource{page: 50, items: numbered(
+		userSays("lark-1", "汇报一下"), agentSays("我先查一下。"), toolUse, toolResult,
+		agentSays(report), toolUse, toolResult, agentSays("已经发给它了。"))}
+	rd, err := ReadTurn(context.Background(), src, &Run{MsgIDs: []string{"lark-1"}})
+	if err != nil || !rd.Found || rd.Answer != report+"\n\n已经发给它了。" {
+		t.Fatalf("%q %v", rd.Answer, err)
+	}
+}
+
 // The answer's cut items are read whole (/full); a message found by its probe may be cut before what the user wrote.
 func TestReadTurnReadsCutItemsWhole(t *testing.T) {
 	long := agentSays("The answer, cut…")

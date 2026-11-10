@@ -1,13 +1,14 @@
 // The one quiet line about the hub at the top of the Agents list (#2897, docs/operations/hub-update.md "In the app", the app's
 // HubNoticeRow): an update under way, one that went back, auto-update turned on (once), a newer version or Docker image.
 // Clicking the line opens Settings › hub; its buttons each do their own thing. Follows the hub's `hub_update` pushes and
-// reads again on every hello (a hub that just restarted into a new version).
+// reads again on a fresh hello (a hub that just restarted into a new version).
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "../../lib/api";
 import {
   dismissedHubNotices, dismissHubNotice, hubNotice, hubNoticeKey, hubNoticeText, hubUpdate, setHubUpdateSettings, startHubUpdate,
   type HubNotice, type HubUpdateStatus,
 } from "../../lib/hub-update";
+import { isResumed } from "../../lib/reconnect";
 import { navigate } from "../../lib/router";
 import { onHubEvent } from "../../lib/store";
 import { Spinner, toast } from "../../ui/atoms";
@@ -20,11 +21,24 @@ export function HubNoticeLine() {
 
   useEffect(() => {
     let dead = false;
+    // Only the newest read may land, and a hub_update push outdates every read still on its way: a GET that left
+    // before the push would otherwise put the older status back (an "Update" button in the middle of an update).
+    let seq = 0;
     // an older hub without /hub/update, or one that can't be read now: no line
-    const read = () => void hubUpdate().then((s) => !dead && setStatus(s), () => {});
+    const read = () => {
+      const mine = ++seq;
+      void hubUpdate().then((s) => !dead && mine === seq && setStatus(s), () => {});
+    };
     read();
-    const offUpdate = onHubEvent("hub_update", (m) => m.update && setStatus(m.update as HubUpdateStatus));
-    const offHello = onHubEvent("hello", read);
+    const offUpdate = onHubEvent("hub_update", (m) => {
+      if (!m.update) return;
+      seq++;
+      setStatus(m.update as HubUpdateStatus);
+    });
+    // A resumed hello does not read: the hub replays the hub_update pushes it missed, which carry the update state. The
+    // auto-update settings behind the auto_on and available lines are not pushed, so a change another device made while
+    // the socket was down shows with the next push or fresh hello (Settings › hub works the same way).
+    const offHello = onHubEvent("hello", (m) => !isResumed(m) && read());
     return () => {
       dead = true;
       offUpdate();

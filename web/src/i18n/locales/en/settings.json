@@ -150,6 +150,8 @@
   "stale": "{machines} not updated",
   "stale_mark": "Not updated",
   "launchers_failed": "Couldn't load the providers: {error}",
+  "devices": "Devices",
+  "machine_keys": "Own keys",
   "search_settings": "Search settings",
   "search_in_page": "In this page",
   "search_no_results": "No matching settings",

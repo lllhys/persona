@@ -248,16 +248,29 @@ func (s *Service) dropQueuedNeeds(todoID string) bool {
 // quietAgentTask: an agent agent_start opened from the main conversation is a quiet task while the user wants those
 // told only there (quietTask), and so is one a reporting conversation opened (reporters.go): a todo is made and the
 // agent is linked to it, so it goes like a task_plan task (card, snapshot, receipt, notices). Without the setting it
-// stays an agent of its own (false).
-func (s *Service) quietAgentTask(ctx context.Context, conversation string, m Device, cwd, prompt string, tab any, sid string) bool {
+// stays an agent of its own (false). While assistant.agent_tasks is on (#3617, agent_tasks.go) an agent any other
+// conversation starts is a quiet task too, whatever main_tasks_quiet says: supervised by that conversation when it is
+// a leader, else by the main one. told is who hears of the task, as agent_start's answer says it.
+func (s *Service) quietAgentTask(ctx context.Context, conversation string, m Device, cwd, prompt string, tab any, sid string) (told string, ok bool) {
 	if sid == "" {
-		return false
+		return "", false
 	}
-	if _, reports := s.reporterOf(ctx, conversation); !reports && !s.isMain(ctx, conversation) {
-		return false
+	_, reports := s.reporterOf(ctx, conversation)
+	supervisor, managed := "", false
+	if !reports {
+		supervisor, managed = s.agentTaskSupervisor(ctx, conversation)
 	}
-	if !s.quietTask(ctx, conversation) {
-		return false
+	if !managed {
+		supervisor = ""
+		if !reports && !s.isMain(ctx, conversation) {
+			return "", false
+		}
+		if !s.quietTask(ctx, conversation) {
+			return "", false
+		}
+	}
+	if s.isMain(ctx, conversation) {
+		supervisor = conversation
 	}
 	// The prompt cleaned up now, the model's name for it later (todo_titles.go); the tab name when nothing is left.
 	tabName, _ := tab.(string)
@@ -265,10 +278,10 @@ func (s *Service) quietAgentTask(ctx context.Context, conversation string, m Dev
 	if title == "" {
 		title, retitle = tabName, false
 	}
-	todo, err := s.createTodo(ctx, title, prompt, conversation, "")
+	todo, err := s.newTodo(ctx, title, prompt, conversation, "", managed || s.quietTask(ctx, conversation))
 	if err != nil {
 		s.logf("agent_start %s: todo: %v", short(sid), err)
-		return false
+		return "", false
 	}
 	if retitle {
 		s.nameTodoLater(ctx, todo.ID, title, prompt)
@@ -276,8 +289,8 @@ func (s *Service) quietAgentTask(ctx context.Context, conversation string, m Dev
 	// The main conversation follows up what it hands out (supervise.go), as task_plan has it; a reporting
 	// conversation's task is not supervised: its notices go back to that conversation, not into a supervision message for the
 	// main one (#4101).
-	if s.isMain(ctx, conversation) {
-		s.superviseTodo(ctx, todo.ID, conversation, nil, 0)
+	if supervisor != "" {
+		s.superviseTodo(ctx, todo.ID, supervisor, nil, 0)
 	}
 	if err := s.linkTodoAgent(ctx, todo.ID, m.ID, sid, title, cwd, ""); err != nil {
 		s.logf("agent_start %s: link %s: %v", short(sid), todo.ID, err)
@@ -285,12 +298,23 @@ func (s *Service) quietAgentTask(ctx context.Context, conversation string, m Dev
 	if _, err := s.appendFeed(ctx, conversation, feedTask, todo.ID, nil); err != nil {
 		s.logf("task %s: feed: %v", todo.ID, err)
 	}
-	return true
+	if supervisor != "" && supervisor != conversation {
+		return startToldMain, true
+	}
+	return startToldHere, true
 }
+
+// startToldHere / startToldMain: who hears of an agent_start task, in the tool's answer: the conversation that started it, or
+// the main conversation that supervises it for a conversation that does not supervise (agent_tasks.go).
+const (
+	startToldHere = "you are told here when it is done or waits for the user, nothing else notifies the user"
+	startToldMain = "the main conversation supervises it and is told when it is done or waits for the user, nothing else notifies the user"
+)
 
 // InteractionRaised: an agent of a quiet task asks the user something; the hub pushed nothing.
 func (s *Service) InteractionRaised(ctx context.Context, r InteractionRaised) {
 	ix := r.Interaction
+	s.taskPlanApproval()
 	t, ok := s.taskOf(ctx, ix.MachineID, ix.SessionID)
 	if !ok || !t.Quiet && t.Supervision == nil {
 		return

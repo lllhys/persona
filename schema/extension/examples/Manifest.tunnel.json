@@ -25,6 +25,12 @@
         "default": 18660,
         "minimum": 1,
         "maximum": 65535
+      },
+      "ssh_port": {
+        "type": "integer",
+        "title": "hub 机器的 SSH 端口",
+        "minimum": 1,
+        "maximum": 65535
       }
     },
     "required": [

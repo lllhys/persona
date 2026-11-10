@@ -132,15 +132,17 @@ function answer(id: string, resolution: Record<string, unknown>) {
 /** The requests since the last check, matched in order against what the case names (others may come between). */
 function matchRequests(want: Request[], seen: Seen[], ops: (key: string) => Set<string>, before: Set<string>): string | null {
   let at = 0;
+  const one = (w: Request, s: Seen): boolean => {
+    if (w.one_of) return w.one_of.some((o) => one(o, s));
+    if (w.get === "/ops") return s.get === "/ops" && s.key === w.id;
+    if (w.get) return s.get === w.get && (w.after_seq === undefined || s.after_seq === w.after_seq);
+    if (w.ws) return s.ws === w.ws && (w.since_seq === undefined || s.since_seq === w.since_seq);
+    if (w.post !== s.post) return false;
+    if (w.new_op) return s.op !== undefined && !before.has(s.op);
+    return s.key === w.id;
+  };
   for (const w of want) {
-    const k = seen.findIndex((s, i) => {
-      if (i < at) return false;
-      if (w.get) return s.get === w.get && (w.after_seq === undefined || s.after_seq === w.after_seq);
-      if (w.ws) return s.ws === w.ws && (w.since_seq === undefined || s.since_seq === w.since_seq);
-      if (w.post !== s.post) return false;
-      if (w.new_op) return s.op !== undefined && !before.has(s.op);
-      return s.key === w.id;
-    });
+    const k = seen.findIndex((s, i) => i >= at && one(w, s));
     if (k < 0) return `no ${JSON.stringify(w)} in ${JSON.stringify(seen.slice(at))}`;
     at = k + 1;
   }

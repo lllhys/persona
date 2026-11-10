@@ -45,7 +45,8 @@ func (m *Manifest) Tunnels() []TunnelItem {
 }
 
 // tunnelTargetProblems checks that a manifest with tunnels says where they go: target_host, a required string field
-// of the configuration, and target_port, an integer field when there is one.
+// of the configuration, and target_port and ssh_port (the hub machine's SSH port, for an SSH tunnel the app dials through
+// this tunnel), integer fields when there are.
 func (m *Manifest) tunnelTargetProblems() []string {
 	if len(m.Tunnels()) == 0 {
 		return nil
@@ -67,8 +68,10 @@ func (m *Manifest) tunnelTargetProblems() []string {
 	if host := field("target_host"); host == nil || host.Type != "string" || !host.Required {
 		errs = append(errs, "contributes.tunnels: configuration needs target_host, a required string field")
 	}
-	if port := field("target_port"); port != nil && port.Type != "integer" {
-		errs = append(errs, "contributes.tunnels: configuration's target_port must be an integer field")
+	for _, name := range []string{"target_port", "ssh_port"} {
+		if port := field(name); port != nil && port.Type != "integer" {
+			errs = append(errs, "contributes.tunnels: configuration's "+name+" must be an integer field")
+		}
 	}
 	return errs
 }

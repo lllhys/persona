@@ -64,12 +64,20 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, http.StatusBadRequest, errors.New("recording_days must be 1–365"))
 		return
 	}
+	if m := in.MeetingAttendanceDefault; m != nil && !slices.Contains(meetingRoles, *m) {
+		apierr.Write(w, http.StatusBadRequest, i18n.Err("assistant-meeting.bad_default_role"))
+		return
+	}
 	if p := in.ReviewSamplePercent; p != nil && (*p < 0 || *p > 100) {
 		apierr.Write(w, http.StatusBadRequest, errors.New("review_sample_percent must be 0–100"))
 		return
 	}
 	if d := in.IdleCloseHours; d != nil && (*d < 0 || *d > maxIdleCloseHours) {
 		apierr.Write(w, http.StatusBadRequest, errors.New("idle_close_hours must be 0–8760"))
+		return
+	}
+	if d := in.ArchiveClosedDays; d != nil && (*d < 0 || *d > maxArchiveClosedDays) {
+		apierr.Write(w, http.StatusBadRequest, errors.New("archive_closed_days must be 0–3650"))
 		return
 	}
 	if in.Timezone != "" {
@@ -126,14 +134,26 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		if in.RecordingDays != nil {
 			v.RecordingDays = in.RecordingDays
 		}
+		if in.MeetingAttendanceDefault != nil {
+			v.MeetingAttendanceDefault = in.MeetingAttendanceDefault
+		}
 		if in.IdleCloseHours != nil {
 			v.IdleCloseHours = in.IdleCloseHours
+		}
+		if in.ArchiveClosedDays != nil {
+			v.ArchiveClosedDays = in.ArchiveClosedDays
 		}
 		if in.DoneNeedsDelivery != nil {
 			v.DoneNeedsDelivery = in.DoneNeedsDelivery
 		}
 		if in.ReviewSamplePercent != nil {
 			v.ReviewSamplePercent = in.ReviewSamplePercent
+		}
+		if in.InterjectBackground != nil {
+			v.InterjectBackground = in.InterjectBackground
+		}
+		if in.AgentTasks != nil {
+			v.AgentTasks = in.AgentTasks
 		}
 		if in.DefaultPermissionMode != "" {
 			v.DefaultPermissionMode = in.DefaultPermissionMode

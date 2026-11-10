@@ -22,6 +22,7 @@
     <string name="chat_delivery_dialog_open">Deal with the dialog on the computer first</string>
     <string name="chat_delivery_op_id_reused">This message\'s send ID was already used</string>
     <string name="chat_delivery_invalid">The message isn\'t valid</string>
+    <string name="chat_delivery_out_of_scope">This model provider isn\'t set to run on this computer. Change where it runs in Settings › Model providers.</string>
     <string name="chat_delivery_refused">The computer didn\'t accept this message</string>
     <string name="chat_delivery_delivered_waiting">Delivered, waiting for the chat history</string>
     <string name="chat_delivery_cancel">Cancel send</string>
@@ -439,6 +440,9 @@
     <string name="chat_work_thought">Thought</string>
     <string name="chat_content_copy">Copy</string>
     <string name="chat_content_show_all">Show all</string>
+    <string name="chat_content_copied">Copied</string>
+    <string name="chat_content_quote_more">Show all</string>
+    <string name="chat_content_quote_less">Show less</string>
     <string name="chat_content_full_text">Full text</string>
     <string name="chat_content_image">Chat image</string>
     <plurals name="chat_content_collapse_steps">

@@ -294,14 +294,11 @@ func (s *Service) toolTaskRetry(ctx context.Context, self string, args json.RawM
 	s.remedyStep(ctx, p.Conversation, todo.ID, startRemedyBody{Action: "retry", By: "assistant", Attempt: attempt, Reason: reason})
 	pt.Start.Attempt, pt.Start.By = attempt, "assistant"
 	pt.inPane = inPane
-	go func() {
-		defer func() {
-			s.tasks.mu.Lock()
-			delete(s.tasks.retrying, todo.ID)
-			s.tasks.mu.Unlock()
-		}()
-		s.startPlanTask(p.ID, p.Conversation, i, pt, true)
-	}()
+	s.startPlanTaskAsync(p.ID, p.Conversation, i, pt, true, func() {
+		s.tasks.mu.Lock()
+		delete(s.tasks.retrying, todo.ID)
+		s.tasks.mu.Unlock()
+	})
 	where := "a new tab"
 	if inPane != "" {
 		where = "the same tab"

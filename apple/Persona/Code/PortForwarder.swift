@@ -54,7 +54,7 @@ final class PortForwarder {
         comps.percentEncodedPath = base + "/api/v1/machines/\(key.machine)/ports/\(key.port)/connect"
         comps.scheme = config.url.scheme == "https" ? "wss" : "ws"
         var req = URLRequest(url: HubTransport.resolve(comps.url!, hub: config.url), timeoutInterval: 15)
-        req.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+        config.authorize(&req)
         req.setValue(LanguageStore.shared.launched, forHTTPHeaderField: "Accept-Language")
         return req
     }
@@ -120,6 +120,7 @@ nonisolated final class PortForward: @unchecked Sendable {
 
     private func accept(_ conn: NWConnection) {
         let ws = session.webSocketTask(with: request)
+        ws.delegate = HubRedirects.shared
         ws.maximumMessageSize = 1 << 20
         Pump(conn: conn, ws: ws, queue: queue).start()
     }

@@ -43,7 +43,7 @@ func TestGuestProcessFlags(t *testing.T) {
 		return flags[i+1], true
 	}
 
-	mcpJSON, flags := n.claudeAssistantMCPAndTools("guest-1", t.TempDir())
+	mcpJSON, flags := n.claudeAssistantMCPAndTools("guest-1", t.TempDir(), true)
 	got := servers(mcpJSON)
 	if len(got) != 2 || got["persona"] == nil || got[compat.MCPServer] == nil {
 		t.Fatalf("servers = %v, want Persona's alone", got)
@@ -62,7 +62,7 @@ func TestGuestProcessFlags(t *testing.T) {
 		t.Fatalf("flags = %q", flags)
 	}
 
-	mcpJSON, flags = n.claudeAssistantMCPAndTools("ordinary-1", t.TempDir())
+	mcpJSON, flags = n.claudeAssistantMCPAndTools("ordinary-1", t.TempDir(), true)
 	if servers(mcpJSON)["example"] == nil || slices.Contains(flags, "--tools") || slices.Contains(flags, "--strict-mcp-config") {
 		t.Fatalf("an ordinary conversation changed: %s %q", mcpJSON, flags)
 	}

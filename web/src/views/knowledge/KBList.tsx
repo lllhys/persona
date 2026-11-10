@@ -22,7 +22,7 @@ import {
 import { href, navigate } from "../../lib/router";
 import { Collapse, cx, EASE, IconButton, Loading, Spinner } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
-import { lists, listKey, remember, searches } from "./cache";
+import { lists, listKey, remember, searches, searchKey } from "./cache";
 import { Badges, Card, KBIcon, KIND_ICON, Marked, onPlainClick, SectionTitle, Tile } from "./KBParts";
 import { t } from "../../i18n";
 
@@ -83,7 +83,8 @@ export function ListPane({
     }
     // A cached search paints at once and is still asked again (the hub may have learned new entries since), like the
     // lists above; a failed refresh keeps the cached results without an error.
-    const cached = searches.get(q);
+    const sk = searchKey(q);
+    const cached = searches.get(sk);
     if (cached) setFound({ q, results: cached });
     setSearching(!cached);
     const ac = new AbortController();
@@ -91,7 +92,7 @@ export function ListPane({
       api<{ results: KBResult[] | null }>(`/kb-search?q=${enc(q)}&results=1`, { signal: ac.signal })
         .then((r) => {
           const results = r.results ?? [];
-          searches.set(q, results);
+          searches.set(sk, results);
           remember(results.map((x) => x.entry));
           setFound({ q, results });
         })

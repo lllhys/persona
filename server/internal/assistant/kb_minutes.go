@@ -1,11 +1,13 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -219,6 +221,57 @@ func (s *Service) minutesTodoNotes(ctx context.Context, rec *kb.Recording, m *kb
 		}
 		return notes
 	}
+}
+
+// minutesActionLines is what kb_get adds to minutes m of recording id: each action item (who, what, the deadline as
+// said) with what became of it, a suggestion the user has not confirmed or its to-do as it is now (open and when due,
+// done, cancelled, deleted), so "what is still open from that meeting" needs no other tool; "" without action items.
+func (s *Service) minutesActionLines(ctx context.Context, id string, m *kb.Minutes) string {
+	if len(m.Actions) == 0 {
+		return ""
+	}
+	loaded := s.ensureTodosLoaded(ctx) == nil
+	now, loc := time.Now(), s.location(ctx)
+	var b strings.Builder
+	b.WriteString("\nAction items as they stand (one becomes a to-do only when the user confirms it):\n")
+	for _, a := range m.Actions {
+		b.WriteString("- " + a.ID + " " + minutesTodoTitle(a))
+		switch {
+		case a.By != "" && a.DueDate != "" && a.By != a.DueDate:
+			b.WriteString(" (by " + a.By + ", " + a.DueDate + ")")
+		case a.By != "" || a.DueDate != "":
+			b.WriteString(" (by " + cmp.Or(a.By, a.DueDate) + ")")
+		}
+		tid := a.TodoID
+		if tid == "" {
+			tid = minutesTodoID(id, m.Version, a.ID) // made, though writing it into the minutes failed
+		}
+		t, ok := s.todoNow(tid)
+		b.WriteString(" → ")
+		switch {
+		case !loaded:
+			b.WriteString("to-do state unknown (the to-dos can't be read now)")
+		case ok:
+			b.WriteString("to-do " + t.ID)
+			if t.Title != minutesTodoTitle(a) {
+				fmt.Fprintf(&b, " %q", clip(oneLine(t.Title), 120))
+			}
+			switch {
+			case t.Cancelled():
+				b.WriteString(" cancelled")
+			case t.DoneAt != nil:
+				b.WriteString(" done " + t.DoneAt.In(loc).Format("2006-01-02"))
+			default:
+				b.WriteString(" open" + todoDue(t, now, loc))
+			}
+		case a.TodoID != "":
+			b.WriteString("its to-do " + a.TodoID + " was deleted")
+		default:
+			b.WriteString("suggested only, not a to-do")
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // minutesTodoRow is the plain to-do (no conversation, no task) action a becomes: due on its date when it has one.

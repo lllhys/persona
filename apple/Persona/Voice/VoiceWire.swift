@@ -502,7 +502,7 @@ nonisolated enum VoiceEndpoint {
 
     static func request(_ api: APIClient, extensionID: String) -> URLRequest {
         var req = URLRequest(url: url(api, extensionID: extensionID), timeoutInterval: 15)
-        req.setValue("Bearer \(api.config.token)", forHTTPHeaderField: "Authorization")
+        api.config.authorize(&req)
         return req
     }
 }

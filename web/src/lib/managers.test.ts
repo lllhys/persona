@@ -6,7 +6,7 @@ import { deleteBlocked, deployText, managerError, minutesLeft, statusLine, unsup
 const NOW = Date.parse("2026-11-05T12:00:00Z");
 const m = (over: Partial<Manager>): Manager => ({ id: "m-1", name: "工作", online: false, ...over });
 
-describe("管理者", () => {
+describe("助手", () => {
   it("运行在哪：机器 · 系统 · 怎么跑", () => {
     expect(whereText(m({ builtin: true, host: "server", os: "linux", deploy: "child" }))).toBe("server · Linux · hub 自己的");
     expect(whereText(m({ host: "MacBook", os: "darwin", deploy: "service" }))).toBe("MacBook · macOS · 服务");
@@ -30,8 +30,8 @@ describe("管理者", () => {
   });
 
   it("hub 自己的、默认的不能删，说为什么", () => {
-    expect(deleteBlocked(m({ builtin: true, default: true }))).toBe("hub 自己运行的管理者不能删除");
-    expect(deleteBlocked(m({ default: true }))).toBe("默认管理者不能删除，先把别的设为默认");
+    expect(deleteBlocked(m({ builtin: true, default: true }))).toBe("hub 自己运行的助手不能删除");
+    expect(deleteBlocked(m({ default: true }))).toBe("默认助手不能删除，先把别的设为默认");
     expect(deleteBlocked(m({}))).toBe("");
   });
 
@@ -44,9 +44,9 @@ describe("管理者", () => {
 
   it("hub 的拒绝说成大白话；没有名册的旧 hub 单独认出来", () => {
     const err = (status: number, code?: string) => new ApiError(status, "raw", code ? { error: "raw", code } : { error: "raw" });
-    expect(managerError(err(409, "default_manager"))).toBe("这是默认管理者，先把别的设为默认再删除");
-    expect(managerError(err(409, "builtin_manager"))).toBe("这是 hub 自己运行的管理者，不能删除或换地方装");
-    expect(managerError(err(404, "no_manager"))).toBe("这个管理者已经不在了");
+    expect(managerError(err(409, "default_manager"))).toBe("这是默认助手，先把别的设为默认再删除");
+    expect(managerError(err(409, "builtin_manager"))).toBe("这是 hub 自己运行的助手，不能删除或换地方装");
+    expect(managerError(err(404, "no_manager"))).toBe("这个助手已经不在了");
     expect(managerError(err(409, "installing"))).toBe("它还没装好，装好后才能改名或设为默认");
     expect(managerError(err(400))).toBe("名字要 1 到 40 个字");
     expect(managerError(err(403))).toBe("这台设备没有修改权限");

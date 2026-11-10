@@ -96,10 +96,10 @@
 
 ## Watch, Siri, Mac, and demo mode
 
-- Watch: the phone sends each group's Watch credentials and group name (`WatchConfigs`; older Watch Apps still read `config`, for the default group). Groups without exchanged Watch credentials are omitted and listed in `missing`; the Watch asks to sync again rather than using the phone's own credentials (#1185). The Watch requests each group separately and merges the display;
+- Watch: the phone sends each group's Watch credentials and group name (`WatchConfigs`; older Watch Apps still read `config`, for the default group). Groups without exchanged Watch credentials are omitted and listed in `missing`; the Watch asks to sync again rather than using the phone's own credentials (#1185). The Watch keeps what it receives in its keychain (`WatchConfigs.store`; it carries tokens), moving the plain copy older builds left in defaults. The Watch requests each group separately and merges the display;
   machine names include the group name, and answers / sends / interrupts target the relevant group. Its Inbox shows only the first group.
   The phone's summary (`WatchSummary`) carries everyone who needs you or is working, and other live Agents up to 20 in all. It dates from its own `at`: the Watch drops a summary older than what it shows, since the application context replays at launch and can arrive after a direct fetch (#6257).
-- Siri / Shortcuts: machine and session entities cover all groups (ids use `path`, machine names include the group name). "Ask Claude" targets the selected machine's group; "Status" totals all groups; "Approve First" selects the oldest interaction across groups and approves it in its own group.
+- Siri / Shortcuts: machine and session entities cover all groups (ids use `path`, machine names include the group name). "Ask Claude" targets the selected machine's group; "Status" totals all groups; "Approve First" selects the oldest interaction across groups and approves it in its own group. Personal Agent intents ("Give an Agent a Task", "Personal Agent Unread") and "New To-Do" use the App's selected group (`hub.group`), the one the Personal Agents and To-dos pages show.
 - The Mac App shares this logic with iOS (`Persona/` and `Shared/`), with notifications and deep links routed by group too. This also fixes `NSScrollView.isTracking`, which did not compile on Mac (introduced in #243).
 - Demo mode works as before: it is a fake group (the default group) that can only exist on its own; pairing a real hub exits it.
 

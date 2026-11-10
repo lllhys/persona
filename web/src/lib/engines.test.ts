@@ -53,7 +53,7 @@ describe("engine choice (iOS EngineSelectionModel)", () => {
 
   it("lists every known engine when the node reports none (offline, older hubs)", () => {
     const m = machine({ engine: "future" });
-    expect(engineOptions(m).map((e) => e.id)).toEqual(["herdr", "herdr-core", "herdr-both", "orca", "paseo", "cindy"]);
+    expect(engineOptions(m).map((e) => e.id)).toEqual(["herdr", "herdr-core", "herdr-both", "orca", "tern", "paseo", "cindy"]);
     expect(engineOptions(m).every((e) => !e.available)).toBe(true);
     expect(engineOptions({ engines: [] }).length).toBe(KNOWN_ENGINES.length);
     // known ones stay selectable offline; an unknown one only while reported available
@@ -67,6 +67,8 @@ describe("engine choice (iOS EngineSelectionModel)", () => {
     expect(engineDetail("herdr-both")).toBe("终端和桌面 App 的会话都显示");
     expect(engineName("paseo")).toBe("Paseo");
     expect(engineDetail("paseo")).toBe("Paseo 里的 Agent");
+    expect(engineName("tern")).toBe("Tern");
+    expect(engineDetail("tern")).toBe("Tern 里的终端");
     expect(engineName("cindy")).toBe("Cindy");
     expect(engineDetail("cindy")).toBe("Cindy 里的 Agent");
     expect(engineDetail("future")).toBeUndefined();
@@ -77,11 +79,13 @@ describe("engine choice (iOS EngineSelectionModel)", () => {
       { id: "herdr", name: "herdr", available: true, version: "0.9.5" },
       { id: "herdr-core", name: "Herdr App", available: true },
       { id: "orca", name: "Orca", available: false, version: "1.0" },
+      { id: "tern", name: "Tern", available: true, version: "0.4.1" },
     ];
     const on = machine({ online: true, engines });
     expect(detectionText("herdr", on)).toBe("检测到可用 · 0.9.5");
     expect(detectionText("herdr-core", on)).toBe("检测到可用");
     expect(detectionText("orca", on)).toBe("没检测到");
+    expect(detectionText("tern", on)).toBe("检测到可用 · 0.4.1");
     expect(detectionText("paseo", on)).toBe("还没有检测结果");
     expect(detectionText("herdr", machine({ engines }))).toBe("电脑离线，没有检测结果");
   });
@@ -108,6 +112,7 @@ describe("engine host sets (#2576)", () => {
     expect(supportsHostSets(machine())).toBe(false);
     expect(currentHosts(machine({ engine: "herdr-both" }))).toEqual({ hosts: ["herdr", "herdr-core"], default: "herdr" });
     expect(currentHosts(machine({ engine: "orca" }))).toEqual({ hosts: ["orca"], default: "orca" });
+    expect(currentHosts(machine({ engine: "tern" }))).toEqual({ hosts: ["tern"], default: "tern" });
     expect(currentHosts(machine())).toEqual({ hosts: ["herdr"], default: "herdr" });
     const m = machine({ engine: "orca", engine_hosts: ["herdr", "orca"], engine_default: "orca" });
     expect(supportsHostSets(m)).toBe(true);
@@ -124,6 +129,9 @@ describe("engine host sets (#2576)", () => {
     c = toggleHost(c, "orca"); // none
     expect(c).toEqual({ hosts: [], default: "" });
     expect(normalizeHosts(["paseo", "herdr", "nope"], "paseo")).toEqual({ hosts: ["herdr", "paseo"], default: "paseo" });
+    // Tern goes between Orca and Paseo (#2154), and may be the default
+    expect(toggleHost({ hosts: ["herdr", "paseo"], default: "herdr" }, "tern")).toEqual({ hosts: ["herdr", "tern", "paseo"], default: "herdr" });
+    expect(normalizeHosts(["paseo", "tern", "orca"], "tern")).toEqual({ hosts: ["orca", "tern", "paseo"], default: "tern" });
     expect(sameHosts({ hosts: ["herdr"], default: "herdr" }, { hosts: ["herdr"], default: "herdr" })).toBe(true);
     expect(sameHosts({ hosts: ["herdr", "orca"], default: "herdr" }, { hosts: ["herdr", "orca"], default: "orca" })).toBe(false);
   });
@@ -132,30 +140,38 @@ describe("engine host sets (#2576)", () => {
     const m = machine({
       online: true,
       engines: [
+        { id: "paseo", name: "Paseo", available: false },
+        { id: "tern", name: "Tern", available: true, version: "0.4.1" },
         { id: "orca", name: "Orca", available: true },
         { id: "herdr-both", name: "herdr + Herdr App", available: false },
         { id: "herdr", name: "herdr", available: true },
       ],
     });
-    expect(hostOptions(m).map((e) => e.id)).toEqual(["herdr", "orca"]);
-    expect(hostOptions(machine()).map((e) => e.id)).toEqual(ENGINE_HOSTS);
+    expect(hostOptions(m).map((e) => e.id)).toEqual(["herdr", "orca", "tern", "paseo"]);
+    const offline = hostOptions(machine());
+    expect(offline.map((e) => e.id)).toEqual(ENGINE_HOSTS);
+    expect(offline.map((e) => e.name)).toEqual(["herdr", "Herdr App", "Orca", "Tern", "Paseo", "Cindy"]);
   });
 
   it("offers every enabled host to start in", () => {
     expect(startHosts(machine({ engine_hosts: ["herdr", "herdr-core", "orca"], engine_default: "herdr" }))).toEqual(["herdr", "herdr-core", "orca"]);
     expect(startHosts(machine({ engine: "herdr-both" }))).toEqual(["herdr", "herdr-core"]);
+    expect(startHosts(machine({ engine_hosts: ["herdr-core", "tern"], engine_default: "tern" }))).toEqual(["herdr-core", "tern"]);
   });
 
   it("names the other hosts a session is open in", () => {
     expect(alsoOpenText({})).toBe("");
     expect(alsoOpenText({ also_open_in: ["orca"] })).toContain("Orca");
+    expect(alsoOpenText({ also_open_in: ["tern"] })).toContain("Tern");
     expect(hostsFooter({ hosts: [], default: "" }, true)).toContain("没有启用终端引擎");
     expect(hostsFooter({ hosts: ["herdr", "orca"], default: "orca" }, false)).toContain("Orca");
+    expect(hostsFooter({ hosts: ["herdr", "tern"], default: "tern" }, true)).toContain("Tern");
   });
 
   it("names a set by its engines, for the header's engine pill", () => {
     expect(hostsName({ hosts: ["herdr", "orca"], default: "herdr" })).toBe("herdr + Orca");
     expect(hostsName({ hosts: ["orca"], default: "orca" })).toBe("Orca");
+    expect(hostsName({ hosts: ["orca", "tern"], default: "tern" })).toBe("Orca + Tern");
     expect(hostsName({ hosts: [], default: "" })).not.toBe("");
   });
 });

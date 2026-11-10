@@ -13,6 +13,7 @@ const deps = (over: Partial<NodeActionDeps> = {}): NodeActionDeps => ({
   renameTab: vi.fn(async () => {}),
   launchers: vi.fn(async () => []),
   newAgent: vi.fn(),
+  openSession: vi.fn(),
   copy: vi.fn(),
   notify: vi.fn(),
   changed: vi.fn(),

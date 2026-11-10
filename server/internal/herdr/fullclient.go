@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,9 +30,7 @@ var ErrFullUnsupported = errors.New("unsupported: a full herdr client needs a Un
 // SessionName is the herdr session this client talks to: the one of `herdr session list` whose socket is Socket (an
 // empty Socket is the default session). An error says why the client cannot be run for it.
 func (c *Client) SessionName(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, c.Bin, "session", "list", "--json").Output()
+	out, err := c.sessionList(ctx, 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("unsupported: herdr session list: %w", err)
 	}

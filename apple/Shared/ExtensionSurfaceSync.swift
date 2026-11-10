@@ -10,7 +10,8 @@ nonisolated enum ExtensionSurfaceSync {
                        answerOnly: Bool = false, capabilities: [String: [String]] = [:]) -> [String: ExtensionSurfaceCredential] {
         Dictionary(uniqueKeysWithValues: configs.map { group, config in
             (group, ExtensionSurfaceCredential(url: config.url, token: config.token, deviceID: devices[group], name: names[group] ?? group,
-                                               answerOnly: answerOnly, capabilities: capabilities[group].map { Array(Set($0)).sorted() }))
+                                               answerOnly: answerOnly, capabilities: capabilities[group].map { Array(Set($0)).sorted() },
+                                               access: config.access))
         })
     }
 
@@ -31,7 +32,7 @@ nonisolated enum ExtensionSurfaceSync {
         let configurations = try? await ExtensionWidgetReconciliation.configurations()
         #endif
         for (group, state) in store.read().groups {
-            let api = APIClient(config: ServerConfig(url: state.credential.url, token: state.credential.token), group: group)
+            let api = APIClient(config: ServerConfig(url: state.credential.url, token: state.credential.token, access: state.credential.access), group: group)
             do {
                 let features = try await ExtensionSurfaceClient(credential: state.credential)
                     .refreshCatalog(group: group, expected: state, store: store)

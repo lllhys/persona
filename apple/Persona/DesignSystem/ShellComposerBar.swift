@@ -128,6 +128,9 @@ struct ShellComposerBar<Attach: View, Modes: View>: View {
     private var expanded: Bool { alwaysOpen || focused.wrappedValue || !text.isEmpty || hasAttachments }
 
     var body: some View {
+        #if DEBUG || PERF_SIGNPOST
+        let _ = PerfTrace.body("ShellComposerBar")
+        #endif
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 0) {
                 if expanded, let quotes, !quotes.wrappedValue.isEmpty {

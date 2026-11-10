@@ -80,5 +80,14 @@
   "deploy_gate_out": "デプロイ待ち：稼働中の hub（{hub}）にマージ {merge} がまだ入っていません",
   "deploy_gate_unmerged": "PR がまだマージされていないため、デプロイされていません",
   "deploy_gate_unknown": "デプロイ未確認：稼働中の hub にこのマージが入っているか確認できません",
-  "deploy_gate_not_in": "デプロイ待ち：稼働中の hub（{hub}）にこの PR のマージがまだ入っていません"
+  "deploy_gate_not_in": "デプロイ待ち：稼働中の hub（{hub}）にこの PR のマージがまだ入っていません",
+  "leader_reached": "達成：{task}",
+  "leader_decision": "判断が必要：{task}",
+  "leader_decision_why": "判断が必要：{task}。{why}",
+  "leader_stuck_waiting": "1 日以上止まっています（あなた待ち）：{task}",
+  "leader_stuck_stopped": "1 日以上止まっています（未完了で停止）：{task}",
+  "leader_plan_waiting": "開始を待っている計画：{tasks}",
+  "progress_reached": "達成：{text}",
+  "progress_doing": "進行中：{text}",
+  "progress_needs_you": "あなたにお願い：{text}"
 }

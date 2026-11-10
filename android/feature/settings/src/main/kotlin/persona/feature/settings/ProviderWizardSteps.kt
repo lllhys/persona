@@ -43,6 +43,8 @@ internal fun LazyListScope.pickStep(res: Resources, state: NewProviderState, onP
 internal fun LazyListScope.keyStep(
     state: NewProviderState, preset: ProviderPreset, editable: Boolean, onEdit: (NewProviderDraft) -> Unit, onAssign: (Boolean) -> Unit,
     onRetest: () -> Unit, onModel: () -> Unit, more: Boolean, onMore: () -> Unit,
+    /** "Computers" under "More options", on a hub with device scopes. */
+    onComputers: () -> Unit = {},
 ) {
     val draft = state.draft
     item("key-preset") {
@@ -108,6 +110,7 @@ internal fun LazyListScope.keyStep(
             SettingsCaption(preset.modelsError?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.settings_src_provider_models_error, it) }
                 ?: stringResource(R.string.settings_src_provider_model_note), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s))
         }
+        computersRow(state, onComputers)
     }
 }
 

@@ -147,9 +147,9 @@ class ManagersStateTest {
 
     @Test fun theHubsRefusalsInWords() {
         fun words(e: Exception) = ManagerText.failure(e).resolve(res)
-        assertEquals("这是默认管理者，先把别的设为默认再删除", words(refused(409, "default_manager")))
-        assertEquals("这是 hub 自己运行的管理者，不能删除或换地方装", words(refused(409, "builtin_manager")))
-        assertEquals("这个管理者已经不在了", words(refused(404, "no_manager")))
+        assertEquals("这是默认助手，先把别的设为默认再删除", words(refused(409, "default_manager")))
+        assertEquals("这是 hub 自己运行的助手，不能删除或换地方装", words(refused(409, "builtin_manager")))
+        assertEquals("这个助手已经不在了", words(refused(404, "no_manager")))
         assertEquals("它还没装好，装好后才能改名或设为默认", words(refused(409, "installing")))
         assertEquals("名字要 1 到 40 个字", words(refused(400)))
         assertEquals("这台设备没有修改权限", words(refused(403, "read_only")))
@@ -190,7 +190,7 @@ class ManagersStateTest {
 
         api.fail = refused(409, "default_manager")
         assertFalse(model.delete("m-3fa21c"))
-        assertEquals("这是默认管理者，先把别的设为默认再删除", model.state.value.failure?.resolve(res))
+        assertEquals("这是默认助手，先把别的设为默认再删除", model.state.value.failure?.resolve(res))
         assertFalse(model.state.value.busy)
     }
 
@@ -270,7 +270,7 @@ class ManagersStateTest {
         assertFalse(model.newCode("m-3fa21c"))
         assertEquals("code m-3fa21c", api.calls.last())
         assertTrue(api.calls.none { it.startsWith("create") })
-        assertEquals("这个管理者已经不在了", model.state.value.failure?.resolve(res))
+        assertEquals("这个助手已经不在了", model.state.value.failure?.resolve(res))
         assertNull(model.state.value.code)
     }
 }

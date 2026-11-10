@@ -5,14 +5,16 @@ import "time"
 // SecurityConfig controls ingress trust and limits failed authentication from public sources.
 // Durations are policy defaults, not measured traffic characteristics.
 type SecurityConfig struct {
-	TrustedCIDRs           []string `json:"trusted_cidrs,omitempty"`
-	AllowPublicPlaintext   bool     `json:"allow_public_plaintext,omitempty"`
-	AuthFailures           int      `json:"auth_failures,omitempty"`
-	AuthWindowSeconds      int      `json:"auth_window_seconds,omitempty"`
-	AuthBlockSeconds       int      `json:"auth_block_seconds,omitempty"`
-	AuthMaxSources         int      `json:"auth_max_sources,omitempty"`
-	AuthCacheEntries       int      `json:"auth_cache_entries,omitempty"`
-	AuthLogIntervalSeconds int      `json:"auth_log_interval_seconds,omitempty"`
+	TrustedCIDRs         []string `json:"trusted_cidrs,omitempty"`
+	AllowPublicPlaintext bool     `json:"allow_public_plaintext,omitempty"`
+	// PlaintextLoopbackOnly refuses plaintext from the LAN too (plaintext_lan.go); it needs public.tls_listen.
+	PlaintextLoopbackOnly  bool `json:"plaintext_loopback_only,omitempty"`
+	AuthFailures           int  `json:"auth_failures,omitempty"`
+	AuthWindowSeconds      int  `json:"auth_window_seconds,omitempty"`
+	AuthBlockSeconds       int  `json:"auth_block_seconds,omitempty"`
+	AuthMaxSources         int  `json:"auth_max_sources,omitempty"`
+	AuthCacheEntries       int  `json:"auth_cache_entries,omitempty"`
+	AuthLogIntervalSeconds int  `json:"auth_log_interval_seconds,omitempty"`
 	// ProxyProtocol: the client addresses a proxy in front passes on (proxy_protocol.go); nil reads no header.
 	ProxyProtocol *ProxyProtocolConfig `json:"proxy_protocol,omitempty"`
 }

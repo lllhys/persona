@@ -81,7 +81,10 @@ func (n *Node) decorateCodexSession(s *proto.Session, src codexSource, legacy st
 		s.Capabilities.Send, s.Capabilities.Attach, s.Capabilities.Interrupt = false, false, false
 	}
 	if !origin.desktop {
-		return
+		// An App chat whose rollout is gone is grouped as one with a rollout (codex_appdb.go).
+		if _, app := codexAppThreadOf(src); !app {
+			return
+		}
 	}
 	s.AgentName, s.AgentSurface = "Codex App", transcript.SurfaceDesktop
 	app := loadCodexAppState(src.home)

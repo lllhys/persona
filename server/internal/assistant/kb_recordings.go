@@ -28,7 +28,8 @@ func (s *Service) recordingRoutes(engine func(http.ResponseWriter, *http.Request
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
-		status, err := e.PutRecording(r.PathValue("id"), u, time.Now())
+		put, err := e.PutRecording(r.PathValue("id"), u, time.Now())
+		status := put.Status
 		switch {
 		case errors.Is(err, kb.ErrRecordingDeleted):
 			apierr.WriteCode(w, http.StatusGone, codeRecordingDeleted, err)
@@ -44,7 +45,13 @@ func (s *Service) recordingRoutes(engine func(http.ResponseWriter, *http.Request
 		if status == kb.RecordingStored && u.Complete {
 			s.kbWake() // its summary and minutes now, not at the next round
 		}
-		apierr.WriteJSON(w, map[string]any{"id": id, "revision": u.Revision, "status": status})
+		// The role in effect, always (an older manager leaves it out, so the phone stops attending), and what was
+		// wrong with the upload's attendance fields, which never fail it.
+		out := map[string]any{"id": id, "revision": u.Revision, "status": status, "attendance": put.Attendance}
+		if put.AttendanceProblem != "" {
+			out["attendance_problem"] = put.AttendanceProblem
+		}
+		apierr.WriteJSON(w, out)
 	})
 	s.handle("DELETE /api/v1/recordings/{id}", func(w http.ResponseWriter, r *http.Request) {
 		e := engine(w, r)
@@ -71,4 +78,5 @@ func (s *Service) recordingRoutes(engine func(http.ResponseWriter, *http.Request
 		apierr.WriteJSON(w, map[string]any{"days": e.RecordingDays(), "recordings": kept, "deleted": deleted})
 	})
 	s.minutesRoutes(engine)
+	s.meetingRoutes()
 }

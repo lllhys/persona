@@ -23,7 +23,7 @@
 | mesh node Upgrade | `jarvis-node` | `persona-node` | 接受两者 | 未协商时使用旧 Upgrade |
 | 会话创建来源 | `started_by_jarvis` | `started_by_persona` | 双读并双输出 | 双读并双输出 |
 | node runtime WS subprotocol | `jarvis-runtime.v1` | `persona-runtime.v1` | 同时接受 | 提供两者，认可任一 |
-| MCP namespace / tools | `jarvis`, `plugin_jarvis`, `mcp__jarvis__*`, `jarvis_settings` | `persona`, `plugin_persona`, `mcp__persona__*`, `persona_settings` | 名称归一，保留权限语义 | 旧 manager 的调用走旧 tool alias |
+| MCP namespace / tools | `jarvis`, `plugin_jarvis`, `mcp__jarvis__*`, `jarvis_settings` | `persona`, `plugin_persona`, `mcp__persona__*`, `persona_settings` | Normalize names without changing permission semantics; always read both transcript namespaces | New assistant sessions register only `persona` after the hub announces `persona_contracts_v1`; old or unknown hubs and resumed sessions retain both namespaces (details below) |
 | voice delegation | `ask_jarvis` | `ask_persona` | 双读 | 无协商时旧默认 |
 | context/file XML | `jarvis-context`, `jarvis-file` | `persona-context`, `persona-file` | 解析两种，不替换任意用户内容 | 无协商时旧默认，双读 |
 | launcher 来源 | `jarvis` | `persona` | managed launcher 的 typed DTO 双读来源枚举；不修改无关的 `herdr_focus.source` | managed launcher 输出稳定旧枚举；新 reader 精确归一 |
@@ -50,6 +50,41 @@
 | runtime 包名 | `jarvis-{dsh,pi,paseo,agent-sdk}-runtime` | `persona-…` | 同一包内容接受旧 ID | 查询旧 node 时用旧 ID |
 
 基线的 `/api/v1/…` 入口、普通 WebSocket `type` 与 node／manager RPC 方法不因产品名切换而整体改名；新增业务能力仍按各自协商规则处理。协议版本没有因本兼容层提高。注册 Bundle ID、系统 controls／Intent 等原生身份由 #6152／#6192 记录，本清单不以服务端测试代替其系统升级证据。
+
+### MCP namespace / tools
+
+The hub sends its feature list in `devices.connected`, matching the capabilities advertised in `hello.features`.
+The devices manager forwards it as `node.configure.hub_features`; the node snapshots that list when starting an
+assistant process. A new Claude assistant, Agent SDK assistant or guest conversation registers the built-in MCP
+handler only as `persona` when the hub announces
+`persona_contracts_v1`. Its automatic tool permissions use the same namespace selection, so each built-in tool is
+offered once and only one built-in MCP process is needed. An old hub, an absent feature list or a connection that has
+not received its hub capabilities keeps both `persona` and `jarvis`. On a hub reconnect, `rehook` forwards the new
+announcement through `configureNode`; a successful reply without `hub_features` sends an empty list. Until that
+`hubConnected` call returns successfully, or if it fails, a retained node connection keeps the previous hub's
+capabilities. A new conversation in this window can therefore still register only `persona` after a hub downgrade.
+The manager handshake does not wait for capability resets or disconnect nodes over them. A decision for one process
+is not changed halfway through its startup. An unused warm process whose namespace policy
+no longer matches is replaced before reuse. No user configuration is required.
+
+Resumed assistant sessions retain both namespaces, even with a capable hub. This conservative fallback also applies
+after an idle process restart: removing a namespace that occurs in historical `tool_use` blocks has not been verified
+against a live model. The [Agent SDK session documentation](https://code.claude.com/docs/en/agent-sdk/sessions) describes
+restoring tool-call history, and [Claude Code's MCP documentation](https://code.claude.com/docs/en/mcp#dynamic-tool-updates)
+describes refreshing tool lists, but neither establishes that this particular rename is safe on resume. The
+[Messages API tool-call guide](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) documents
+tool-call/result pairing, not compatibility with removing a previously used MCP namespace. Existing cache measurements
+in [assistant.md](../assistant/assistant.md) ("Live snapshots and prefix caching") cover removing a tool, but do not
+establish that it was present in historical calls.
+
+The shared `mcp.json` generated at node startup and checked or repaired by doctor also retains both namespaces.
+It is created before the hub handshake, and ordinary Agent launches and resumes reuse it without a per-session
+namespace decision. Doctor cannot safely narrow that file from the connected hub's capabilities alone. This
+optimization therefore applies to the per-process assistant, Agent SDK assistant and guest configurations.
+
+Registration and historical recognition are separate: transcript readers, task completion and supervision folding
+continue accepting `mcp__persona__*` and `mcp__jarvis__*` forever. Extension namespaces and their permission rules are
+unchanged. Guest allow lists remain restricted to their configured tools; namespace selection grants no extra tools.
 
 ## 配置、目录、服务与升级渠道
 

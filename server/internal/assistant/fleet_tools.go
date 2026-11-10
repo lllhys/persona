@@ -89,6 +89,9 @@ func (s *Service) guestRefuses(ctx context.Context, machine, session, name strin
 // mcpCall runs one: a connector's, Cua's or ego's at the hub (it says whether it is one of them), else the
 // assistant's own (for its conversations), else the phone's.
 func (s *Service) mcpCall(ctx context.Context, machine, session, name string, args json.RawMessage, assistant bool) proto.ToolResult {
+	if res, refused := s.meetingRefuses(ctx, machine, session, name, assistant); refused {
+		return res // a meeting's batch started this turn: only reading tools (meeting_turns.go)
+	}
 	if s.isWorkMachine(machine) {
 		if isAgentTool(name) {
 			return s.agentTool(ctx, machine, session, name, args)
@@ -150,7 +153,11 @@ func (s *Service) mailAttachment(ctx context.Context, machine string, req proto.
 	if req.Assistant && !s.assistantCaller(ctx, machine, req.SessionID) {
 		return proto.MailAttachment{}, errors.New(i18n.T(s.lang(ctx), "assistant-privacy.assistant_denied"))
 	}
-	if res, refused := s.guestRefuses(ctx, machine, req.SessionID, saveAttachmentTool, req.Guest); refused {
+	res, refused := s.guestRefuses(ctx, machine, req.SessionID, saveAttachmentTool, req.Guest)
+	if !refused {
+		res, refused = s.meetingRefuses(ctx, machine, req.SessionID, saveAttachmentTool, req.Assistant)
+	}
+	if refused {
 		var why strings.Builder
 		for _, c := range res.Content {
 			why.WriteString(c.Text)

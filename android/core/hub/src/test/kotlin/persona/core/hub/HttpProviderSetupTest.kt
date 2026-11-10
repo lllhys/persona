@@ -2,6 +2,9 @@ package persona.core.hub
 
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.api.NewProvider
+import persona.core.contracts.api.PresetModel
+import persona.core.contracts.api.ProviderProbe
+import persona.core.contracts.api.ProviderUpdate
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -80,5 +83,57 @@ class HttpProviderSetupTest {
             assertEquals(mapOf("POST /api/v1/launchers/jv_team/check" to 110L, "GET /api/v1/launchers/import" to 45L,
                 "POST /api/v1/launchers/import" to 45L, "GET /api/v1/launchers" to null), timeouts)
         }
+    }
+
+    // Editing (docs/integrations/launchers.md "API"): PUT carries the base fields even when empty (the hub replaces them) and
+    // leaves out what did not change, so the stored key, headers and scope stay.
+    @Test fun anEditSendsTheBaseFieldsAndOnlyWhatChanged() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"launcher":{"name":"jv_gw"}}"""))
+        providers.update("jv_gw", ProviderUpdate("jv_gw", "launcher", "messages", "https://gateway.example.com", "gw-pro", "", "", "", "", "",
+            emptyList(), auth = "bearer", sonnetModel = "gw-mid", headers = "", delivery = "push", machineKeys = mapOf("mac" to "")))
+        val request = server.takeRequest()
+        assertEquals("PUT", request.method)
+        assertEquals("/api/v1/launchers/jv_gw", request.path)
+        val body = JsonCodec.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals(setOf("name", "kind", "api", "base_url", "model", "small_model", "subagent_model", "custom_model", "custom_model_name",
+            "custom_model_description", "args", "auth", "sonnet_model", "headers", "delivery", "machine_keys"), body.keys)
+        assertEquals("", body["small_model"]!!.jsonPrimitive.content)
+        assertEquals("", body["headers"]!!.jsonPrimitive.content)
+        assertEquals("", body["machine_keys"]!!.jsonObject["mac"]!!.jsonPrimitive.content)
+        assertFalse("the key is kept", "api_key" in body)
+
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"这台电脑不在范围内","code":"launcher_out_of_scope"}"""))
+        val refused = runCatching { providers.update("jv_gw", ProviderUpdate("jv_gw", "launcher", "messages", "", "m", "", "", "", "", "", emptyList())) }
+            .exceptionOrNull() as HubFailure
+        assertEquals(409, refused.status)
+        assertEquals("launcher_out_of_scope", refused.code)
+    }
+
+    @Test fun aManagedProvidersScopeAndParametersAreRead() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"launchers":[{"name":"jv_gw","source":"persona","agent":"codex","base_url":"https://gw.example.com",
+            "model":"gw-pro","models":[{"id":"gw-pro","context_window":1000000,"efforts":["high"],"default_effort":"high"}],"opus_model":"gw-max",
+            "proxy":"http://127.0.0.1:7890","timeout_ms":600000,"has_env":true,"share":"selected","scope_machines":["mac"],"delivery":"push",
+            "own_service":"use","key_machines":["mac"],"legacy_scope":true}]}"""))
+        val l = providers.launchers().single()
+        assertEquals("codex", l.harness)
+        assertTrue(l.hasScope)
+        assertEquals(listOf("mac"), l.scopeMachines)
+        assertEquals("push", l.delivery)
+        assertEquals("use", l.ownService)
+        assertEquals(listOf("mac"), l.keyMachines)
+        assertTrue(l.legacyScope)
+        assertEquals(PresetModel("gw-pro", contextWindow = 1000000, efforts = listOf("high"), defaultEffort = "high"), l.models.single())
+        assertEquals(600000, l.timeoutMs)
+        assertEquals("http://127.0.0.1:7890", l.proxy)
+    }
+
+    @Test fun aProbeOfAStoredProviderGoesByName() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"ok":true,"ms":12}"""))
+        providers.test(ProviderProbe(baseUrl = "https://gw.example.com", auth = "bearer", model = "m", name = "jv_gw", headers = ""))
+        val body = JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("jv_gw", body["name"]!!.jsonPrimitive.content)
+        // "" sends no headers for this request, over the stored ones.
+        assertEquals("", body["headers"]!!.jsonPrimitive.content)
+        assertFalse("api_key" in body)
     }
 }

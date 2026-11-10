@@ -204,6 +204,16 @@ func TestSupervisorAcceptedLeavesABigFeatureToTheOwner(t *testing.T) {
 	if n := waitingForOwner(s); n != 1 {
 		t.Fatalf("%d waiting for the owner", n)
 	}
+	ctx := context.Background()
+	if got := s.todoStages(ctx)[todo.ID]; got.Stage != "deploy" || got.Verified {
+		t.Fatalf("waiting for owner: %+v", got)
+	}
+	if ok, err := s.acceptTry(ctx, todo.ID, ""); err != nil || !ok {
+		t.Fatalf("owner acceptance: %v %v", ok, err)
+	}
+	if got := s.todoStages(ctx)[todo.ID]; got.Stage != "verify" || !got.Verified {
+		t.Fatalf("accepted by owner: %+v", got)
+	}
 }
 
 // A task with no supervisor keeps asking the owner: closed by the auto judge, its "Please verify" waits for their "Pass".
@@ -229,5 +239,62 @@ func TestUnsupervisedTaskStillAsksTheOwner(t *testing.T) {
 	}
 	if n := countAcceptCards(posts()); n != 1 {
 		t.Fatalf("%d 请验收 cards", n)
+	}
+}
+
+// judgeClosed has conclusionService's task pass the done judge's spot check (nothing sampled, every criterion met, live)
+// until the judge closes it and what it tells the owner is kept.
+func judgeClosed(t *testing.T, s *Service, f *fakeHub, todo string) {
+	t.Helper()
+	sampleAt(t, s, 0)
+	// The judge says it is live; the reply itself does not, so no deployed "Please verify" stands in for the conclusion.
+	f.mu.Lock()
+	f.judge = judgeWithChecks("live", true, true)
+	f.mu.Unlock()
+	agentTurn(s, f, proto.StatusWorking, "", 0)
+	agentTurn(s, f, proto.StatusDone, "做完了，两条都核对过，结论见上面的报告", 0)
+	waitFor(t, "closed by the judge", func() bool { return todoNow(s, todo).DoneAt != nil })
+	waitFor(t, "its ask", func() bool { a := askOf(s, todo); return a != nil && !a.AskedAt.IsZero() })
+}
+
+// A task the done judge closed after its spot check is checked: its conclusion card tells the owner, already marked
+// checked, with nothing to press, and nothing waits for them (#3356).
+func TestJudgeClosedTaskWaitsForNobody(t *testing.T) {
+	s, f, todo, posts, _ := conclusionService(t, false)
+	judgeClosed(t, s, f, todo.ID)
+	a := askOf(s, todo.ID)
+	if !a.Conclusion || a.AcceptedAt.IsZero() || !a.BySupervisor {
+		t.Fatalf("ask %+v", a)
+	}
+	if n := waitingForOwner(s); n != 0 {
+		t.Fatalf("%d waiting for the owner", n)
+	}
+	if ask := listedAsk(t, s, todo.ID); ask != nil {
+		t.Fatalf("still on the to-do: %v", ask)
+	}
+	for _, c := range posts() {
+		if strings.Contains(c, `"a":"accept"`) {
+			t.Fatalf("a card still asks the owner:\n%s", c)
+		}
+	}
+	s.verifySupervisedAsks(context.Background())
+	if n := waitingForOwner(s); n != 0 {
+		t.Fatalf("%d waiting after the sweep", n)
+	}
+}
+
+// A big feature (high priority, #3205) the judge closed is still the owner's to look at.
+func TestJudgeClosedBigFeatureWaitsForTheOwner(t *testing.T) {
+	s, f, todo, _, _ := conclusionService(t, false)
+	s.todos.mu.Lock()
+	s.todos.todos[todo.ID].Priority = "high"
+	s.todos.mu.Unlock()
+	judgeClosed(t, s, f, todo.ID)
+	s.verifySupervisedAsks(context.Background())
+	if a := askOf(s, todo.ID); !a.Conclusion || !a.AcceptedAt.IsZero() {
+		t.Fatalf("ask %+v", a)
+	}
+	if n := waitingForOwner(s); n != 1 {
+		t.Fatalf("%d waiting for the owner", n)
 	}
 }

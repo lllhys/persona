@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="settings_managers_title">Managers</string>
-    <string name="settings_managers_hint">Each manager is a whole assistant, running wherever you choose</string>
-    <string name="settings_managers_unsupported">This hub\'s version doesn\'t support managers yet. Update the hub and come back</string>
-    <string name="settings_managers_demo">There are no managers in demo mode. Connect your own hub first</string>
+    <string name="settings_managers_title">Assistants</string>
+    <string name="settings_managers_hint">Each assistant has its own chats, inbox and computers, and runs wherever you choose</string>
+    <string name="settings_managers_unsupported">This hub\'s version doesn\'t support assistants yet. Update the hub and come back</string>
+    <string name="settings_managers_demo">There are no assistants in demo mode. Connect your own hub first</string>
     <string name="settings_managers_default">Default</string>
     <string name="settings_managers_online">Online</string>
     <string name="settings_managers_offline">Offline</string>
@@ -22,16 +22,16 @@
     <string name="settings_managers_save">Save</string>
     <string name="settings_managers_make_default">Make default</string>
     <string name="settings_managers_move">Install elsewhere</string>
-    <string name="settings_managers_move_confirm">Installing elsewhere gives you a new install code. Once it\'s installed with that code, the manager where it ran before stops working right away.</string>
+    <string name="settings_managers_move_confirm">Installing elsewhere gives you a new install code. Once it\'s installed with that code, the assistant where it ran before stops working right away.</string>
     <string name="settings_managers_new_code">New install code</string>
     <string name="settings_managers_delete">Delete</string>
     <string name="settings_managers_delete_confirm">Delete “%1$s”? Its token stops working right away and its connections are closed.</string>
     <string name="settings_managers_cancel_install">Cancel install</string>
     <string name="settings_managers_cancel_install_confirm">Cancel installing “%1$s”? Its install code will stop working.</string>
     <string name="settings_managers_keep">Keep</string>
-    <string name="settings_managers_delete_builtin">The manager the hub runs itself can\'t be deleted</string>
-    <string name="settings_managers_delete_default">The default manager can\'t be deleted. Make another one the default first</string>
-    <string name="settings_managers_new">New manager</string>
+    <string name="settings_managers_delete_builtin">The assistant the hub runs itself can\'t be deleted</string>
+    <string name="settings_managers_delete_default">The default assistant can\'t be deleted. Make another one the default first</string>
+    <string name="settings_managers_new">New assistant</string>
     <string name="settings_managers_create">Create</string>
     <string name="settings_managers_code_title">Install code</string>
     <string name="settings_managers_copy">Copy</string>
@@ -39,11 +39,11 @@
     <string name="settings_managers_expired">Expired</string>
     <string name="settings_managers_install_service">As a service</string>
     <string name="settings_managers_install_docker">With Docker</string>
-    <string name="settings_managers_code_note">Install the manager with this code on the computer that will run it. Once installed, it shows up in the list.</string>
+    <string name="settings_managers_code_note">Install the assistant with this code on the computer that will run it. Once installed, it shows up in the list.</string>
     <string name="settings_managers_done">Done</string>
-    <string name="settings_managers_err_default">This is the default manager. Make another one the default before deleting it</string>
-    <string name="settings_managers_err_builtin">The hub runs this manager itself. It can\'t be deleted or installed elsewhere</string>
-    <string name="settings_managers_err_gone">This manager is no longer there</string>
+    <string name="settings_managers_err_default">This is the default assistant. Make another one the default before deleting it</string>
+    <string name="settings_managers_err_builtin">The hub runs this assistant itself. It can\'t be deleted or installed elsewhere</string>
+    <string name="settings_managers_err_gone">This assistant is no longer there</string>
     <string name="settings_managers_err_installing">It isn\'t installed yet. Rename it or make it the default once it is</string>
     <string name="settings_managers_err_name">Names are 1 to 40 characters</string>
     <string name="settings_managers_err_forbidden">This device isn\'t allowed to make changes</string>
@@ -52,13 +52,16 @@
         <item quantity="other">Installing · code expires in %1$d minutes</item>
     </plurals>
     <string name="settings_managers_push">Push notifications</string>
-    <string name="settings_managers_push_note">When off, this device no longer gets this manager\'s notifications</string>
+    <string name="settings_managers_push_note">When off, this device no longer gets this assistant\'s notifications</string>
     <string name="settings_managers_push_failed">Push notifications not changed: %1$s</string>
     <plurals name="settings_managers_delete_machines">
-        <item quantity="one">Its %1$d computer goes back to the hub\'s own manager.</item>
-        <item quantity="other">Its %1$d computers go back to the hub\'s own manager.</item>
+        <item quantity="one">Its %1$d computer goes back to the hub\'s own assistant.</item>
+        <item quantity="other">Its %1$d computers go back to the hub\'s own assistant.</item>
     </plurals>
-    <string name="settings_managers_delete_sources">Its sources (mail accounts, for example) are kept in its own database: unless you move them to another manager first, they are deleted with it.</string>
+    <string name="settings_managers_delete_sources">Its sources (mail accounts, for example) are kept in its own database: unless you move them to another assistant first, they are deleted with it.</string>
     <string name="settings_managers_needs_update">Needs update</string>
     <string name="settings_managers_needs_update_note">Its personad is older and doesn\'t read settings of its own (manager.json) yet, so it runs on built-in defaults. Update personad on the computer it runs on.</string>
+    <string name="settings_switcher_line">%1$s · %2$s</string>
+    <string name="settings_switcher_switched">Switched to %1$s</string>
+    <string name="settings_switcher_manage">Manage assistants…</string>
 </resources>

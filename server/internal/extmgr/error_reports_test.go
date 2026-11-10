@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/sdk/go/wire"
+	"github.com/nwverse/persona/server/internal/errreport"
 	"github.com/nwverse/persona/server/internal/extension"
 	pserve "github.com/nwverse/persona/server/internal/extension/serve"
 	"github.com/nwverse/persona/server/internal/extwire"
@@ -153,6 +155,33 @@ func TestErrorReports(t *testing.T) {
 		if x.ID == "h1" && (strings.Contains(x.Message, "198.51.100") || x.Source != "hub") {
 			t.Fatalf("the hub's report, scrubbed: %+v", x)
 		}
+	}
+}
+
+// A report the gate let on that finds the queue full is not lost from the counts: the next one of its problem is
+// not folded into it and carries it.
+func TestErrorReportsFullQueueKeepsTheFold(t *testing.T) {
+	h := &Manager{}
+	now := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	h.errReports.once.Do(func() {
+		h.errReports.gate = errreport.NewGate(func() time.Time { return now })
+		h.errReports.queue = make(chan wire.ErrorReport, 1)
+	})
+	h.errReports.queue <- wire.ErrorReport{ID: "filler"}
+	mk := func(id string) wire.ErrorReport {
+		return wire.ErrorReport{ID: id, Source: wire.ErrorSourceHub, Kind: "log", Message: "inbox: round failed"}
+	}
+	hub := []string{wire.ErrorSourceHub}
+	if h.takeErrorReport(mk("a"), "hub", hub, nil) {
+		t.Fatal("no room: not taken")
+	}
+	<-h.errReports.queue
+	now = now.Add(time.Second)
+	if !h.takeErrorReport(mk("b"), "hub", hub, nil) {
+		t.Fatal("the next one of the problem is not folded into one never delivered")
+	}
+	if r := <-h.errReports.queue; r.ID != "b" || r.Count != 2 {
+		t.Fatalf("it carries the dropped one: %s %d", r.ID, r.Count)
 	}
 }
 

@@ -12,7 +12,7 @@ import { openFolderDialog, useFoldersShown } from "./InboxFolders";
 import { openPolicyDialog } from "./PolicyDialog";
 import { useInboxItemPlace } from "../../lib/extension-slots";
 import { PHONE, useMedia } from "../../lib/viewport";
-import { navigate } from "../../lib/router";
+import { backToInboxList } from "../../lib/inbox-nav";
 import { hubTranslation, useTranslatePrefs } from "../../lib/translate";
 import { t } from "../../i18n";
 import { Button, cx, IconButton, Loading, Menu, useMenu, type MenuItem } from "../../ui/atoms";
@@ -141,7 +141,7 @@ function ItemDetail({ item, loaded }: { item?: InboxItem; loaded: boolean }) {
                   onClick={() => {
                     // the page leaves the item at once, so say so with "Undo" on any screen (#4162), as a row does on touch
                     void markFromRow(item, true, true);
-                    navigate({ name: "inbox" });
+                    backToInboxList();
                   }}
                 >
                   {t("inbox-inboxdetail.done")}

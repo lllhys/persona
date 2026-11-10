@@ -221,6 +221,8 @@ class InboxConversationSwipeTest {
         }
     }
 
+    @After fun resetChoice() = AssistantManagerChoice.reset()
+
     @Test fun expandedNeedsYouReadsOnlyUnreadConversationsAndLeavesOtherAssistantUntouched() {
         val inbox = FakeInbox(listOf(record("a").copy(read = false),
             record("already-read").copy(feedId = "read-room"),
@@ -232,7 +234,8 @@ class InboxConversationSwipeTest {
             CompositionLocalProvider(LocalManagerRoster provides roster) { InboxScreen(inbox, navigator) }
         } }
         rule.waitForIdle()
-        rule.onAllNodesWithText("Mark all as read").assertCountEquals(2)
+        // Only the current (default) assistant's section is listed: the other assistant's unread conversation is not on this page.
+        rule.onAllNodesWithText("Mark all as read").assertCountEquals(1)
         rule.onAllNodesWithText("Mark all as read")[0].performClick()
         rule.waitForIdle()
         rule.runOnIdle {
@@ -243,6 +246,10 @@ class InboxConversationSwipeTest {
             assertTrue(inbox.snapshot.value.records.none { it.item.isDone })
             assertTrue(inbox.calls.isEmpty())
         }
+        rule.onAllNodesWithText("Mark all as read").assertCountEquals(0)
+        // The other assistant's page still has its unread conversation, untouched.
+        rule.runOnIdle { AssistantManagerChoice.pick("other-assistant") }
+        rule.waitForIdle()
         rule.onAllNodesWithText("Mark all as read").assertCountEquals(1)
     }
 

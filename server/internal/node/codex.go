@@ -389,6 +389,9 @@ func dirStamp(dir string) int64 {
 // codexSession picks the rollout of a Codex pane herdr could not identify: the newest conversation in its directory
 // not taken (a subagent's rollout there is newer than its conversation's, but never what the pane runs).
 func (n *Node) codexSession(a host.Agent, taken map[string]host.Agent) string {
+	if strings.LastIndex(a.Title, " | ") > 0 {
+		return "" // a named thread could not be identified: never substitute another conversation from its directory
+	}
 	cwd := a.ForegroundCwd
 	if cwd == "" {
 		cwd = a.Cwd
@@ -412,6 +415,9 @@ func (n *Node) codexByTitle(a host.Agent, prefer string, taken map[string]host.A
 		return ""
 	}
 	name := strings.TrimSpace(a.Title[:i])
+	// Codex adds this state prefix while a question is open; it is not part of the thread's name.
+	name = strings.TrimPrefix(name, "[ . ] Action Required | ")
+	name = strings.TrimPrefix(name, "[ ! ] Action Required | ")
 	cut := strings.TrimSuffix(strings.TrimSuffix(name, "..."), "…")
 	home := n.codexPaneHome(a.PaneID)
 	var best string

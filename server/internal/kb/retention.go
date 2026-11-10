@@ -305,7 +305,7 @@ func (s *Store) pruneChatLocked(id string, sel *Selection, ret Retention, cut fu
 				continue
 			}
 		default:
-			if writeFile(p, []byte(out)) != nil {
+			if archiveWrite(p, []byte(out)) != nil {
 				continue
 			}
 		}

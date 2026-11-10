@@ -12,5 +12,5 @@
   "load_failed": "加载已归档的 Agent 失败",
   "retry": "重试",
   "unsupported_title": "还不能归档",
-  "unsupported_body": "请更新 hub 和它的管理器才能归档 Agent。"
+  "unsupported_body": "请更新 hub 和它的助手才能归档 Agent。"
 }

@@ -4,6 +4,7 @@
 // full one that need no browser: the acknowledgements, the answers to a TUI's colour queries and how a view ends.
 // Pure, so it is tested without a DOM.
 import { t } from "../i18n";
+import { paneHost } from "./agent-groups";
 import { decodeBase64 } from "./terminal";
 
 export type TerminalMode = "pane" | "full";
@@ -48,6 +49,15 @@ export function pickMode(a: { own?: TerminalMode; supported: boolean; noFull: bo
   if (a.own) return a.own;
   if (a.noFull) return "pane";
   return startMode(a.pref, a.last, true);
+}
+
+/**
+ * "Full view" is herdr's own client, so a terminal of another host (a botmux session, in botmux's own tmux) is never in it:
+ * opening one would only show herdr as it happens to be. `id` is what the terminal opens by, `paneId` its session's pane.
+ */
+export function inHerdrClient(id: string, paneId: string | undefined): boolean {
+  const host = paneHost(paneId || (id.startsWith("pane:") ? id.slice("pane:".length) : ""));
+  return !host || host === "herdr";
 }
 
 export const otherMode = (m: TerminalMode): TerminalMode => (m === "pane" ? "full" : "pane");

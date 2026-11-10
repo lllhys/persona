@@ -448,6 +448,8 @@ POST /api/v1/assistant/readiness/dismiss   {"dismissed": true}  →  {"ok": true
 
 `POST /api/v1/assistant/warm` keeps returning `{"ok": true}` and adds `readiness` (same structure, no probe). Clients refetch on entering the Persona tab, successful pairing, adding / confirming a computer, saving a provider, and receiving a `machines` change. No new push event in the first version.
 
+The Apple clients also ask again when the app comes back to the front (iOS and visionOS: the scene becomes active; Mac: the app is activated), and while a page that shows readiness is in front and one of computer / Claude Code / model is `todo` or `problem`, or any step is `checking`, they poll at 5, 10 and 20 seconds, then every 30 seconds, starting over when the open steps change (`ReadinessPoll`, #1893). Installing Claude Code, signing in to it or waking a computer happen on that computer and change nothing in the app; the hub keeps a negative Claude Code answer for a minute, so the 30-second cap finds the change within about a minute and a half. `first_message` and `unknown` steps are not polled: only the user's own try moves them.
+
 On old hubs, this endpoint returns 404: clients fall back to current behavior (no first-screen card; failures show cards by `code`).
 
 Implementation (#3710, `server/internal/assistant/readiness.go`; endpoint details are authoritative in `docs/protocol/protocol.md`, "Main chat readiness") differs from or adds to the design:

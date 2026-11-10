@@ -43,12 +43,13 @@ internal val LocalChatJumpToCall = staticCompositionLocalOf<((toolUseId: String,
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TaskNoteLine(item: LineItem, last: Boolean = false) {
+internal fun TaskNoteLine(item: LineItem, last: Boolean = false, onFullText: ((persona.core.contracts.Item) -> Unit)? = null) {
     val note = item.task ?: return
     val index = LocalChatTaskIndex.current
     val text = remember(item, index) { index.note(item) }
     val jump = LocalChatJumpToCall.current
     val openPath = LocalChatRowActions.current?.openPath
+    val body = if (item.kind == "tool_result") item.text?.takeIf(String::isNotBlank) ?: note.detail else note.detail
     var open by rememberSaveable(item.id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         TimelineStep(taskNoteIcon(note), text.subject,
@@ -56,6 +57,7 @@ internal fun TaskNoteLine(item: LineItem, last: Boolean = false) {
             state = when {
                 note.failed -> WorkState.Failed
                 note.status == "waiting" -> WorkState.Waiting
+                note.kind == "agent" && !note.terminal -> WorkState.Running
                 else -> WorkState.Done
             },
             last = last, onClick = { open = !open })
@@ -63,8 +65,11 @@ internal fun TaskNoteLine(item: LineItem, last: Boolean = false) {
             verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
             when (note.kind) {
                 "shell" -> CodeText("$ " + (note.detail ?: note.title))
-                "agent" -> note.detail?.let { Text(it, style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2) }
+                "agent" -> body?.let { Text(it, style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2) }
                 else -> note.detail?.let { CodeText(it) }
+            }
+            if (note.kind == "agent" && body != null) {
+                ToolReaderActions(null, body, onFullText?.takeIf { item.item.fullSize != null }?.let { read -> { read(item.item) } })
             }
             if (note.kind == "monitor" && (note.status == "event" || note.detail == null) && note.title != text.subject) {
                 Text(note.title, style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 2)

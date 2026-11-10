@@ -104,5 +104,13 @@
   "read_only_claude_inbox": "このClaudeのメッセージ経路はPersonaで使えません（不明なバージョンかキーがない）：ここでは表示のみ。返信はコンピューターで",
   "attention_claude_computer": "コンピューターでしか答えられない質問または権限の確認を待っています",
   "model_refusal": "Claude Code の拒否通知（{subtype}）。元の記録：",
-  "model_refusal_fallback": "上流サービスがリクエストを拒否したため、Claude Code は {original} から {fallback} に切り替えました。カテゴリ：{category}。範囲：{scope}。代替モデルが利用できない場合は、新しい会話を開始するか、Claude Code のターミナルで /model を使って設定済みのモデルを選択してください。リクエストが再び拒否される可能性があります。元の記録："
+  "model_refusal_fallback": "上流サービスがリクエストを拒否したため、Claude Code は {original} から {fallback} に切り替えました。カテゴリ：{category}。範囲：{scope}。代替モデルが利用できない場合は、新しい会話を開始するか、Claude Code のターミナルで /model を使って設定済みのモデルを選択してください。リクエストが再び拒否される可能性があります。元の記録：",
+  "card_remaining": "残り",
+  "card_total": "合計",
+  "card_done": "実績",
+  "card_eaten": "摂取",
+  "card_progress": "進捗",
+  "card_of_goal": "{done} {value} / 目標 {goal}",
+  "card_over": "超過",
+  "card_other": "その他"
 }

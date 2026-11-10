@@ -74,7 +74,13 @@ export interface TaskProgress {
   kind: ReportKind;
   step?: number;
   steps?: number;
+  /** The agent's own words, in one line. */
   text: string;
+  /** The report paraphrased in one sentence in the user's language (#3181); absent until the hub's model wrote it, with
+   *  no model, or on an older hub. */
+  line?: string;
+  /** The report as the agent wrote it (Markdown); absent when it is `text`, or on an older hub. */
+  detail?: string;
   at?: string;
 }
 
@@ -156,11 +162,19 @@ export function checkCount(sup: Supervision | undefined): string {
   return `${list.filter((c) => c.mark === "met").length}/${list.length}`;
 }
 
-/** "Step 3/5 · …", "Asked Persona: …": the agent's latest report in a line for a card; undefined when it has none. */
+/** "Step 3/5 · …", "Asked Persona: …": the agent's latest report in a line for a card, in the hub's paraphrase when it
+ *  has one (#3181), else in the agent's words; undefined when it has none. */
 export function progressLine(sup: Supervision | undefined): string | undefined {
   const p = sup?.progress;
-  if (!p || !p.text) return undefined;
-  return reportLine(p.kind, p.text, p.step, p.steps);
+  const text = p?.line?.trim() || p?.text;
+  if (!p || !text) return undefined;
+  return reportLine(p.kind, text, p.step, p.steps);
+}
+
+/** The agent's latest report as it wrote it, for the task's details (Markdown); undefined when it has none. */
+export function reportText(sup: Supervision | undefined): string | undefined {
+  const p = sup?.progress;
+  return p?.detail?.trim() || p?.text?.trim() || undefined;
 }
 
 /** A report (on a card, or a feed item of kind "report") in a line. */

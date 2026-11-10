@@ -18,6 +18,115 @@ import org.junit.rules.TemporaryFolder
 class ChatRepositoriesTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun unobservedSessionRevisionsNeverReadBodiesAndReopeningStillVerifiesTheLatestPage() = runTest {
+        val sessions = FakeSessions()
+        val connection = FakeConnection()
+        var requests = 0
+        var cacheLoads = 0
+        val cache = object : ChatItemsCache {
+            override suspend fun load(session: SessionKey) = CachedChat().also { cacheLoads++ }
+            override suspend fun save(session: SessionKey, snapshot: CachedChat) = Unit
+        }
+        val transport = FakeChatTransport().apply { fetch = {
+            requests++
+            ItemsResponse(listOf(item(1)), history = "h", toSeq = 1)
+        } }
+        val repository = HubChatRepository(transport, connection, cache, sessions, backgroundScope)
+        sessions.sessions.value = (1..40).map { Session(key.machineId, "unwatched-$it", status = "working", rev = 1) }
+        runCurrent()
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(0, requests)
+        assertEquals(0, cacheLoads)
+        var snapshot = ChatSnapshot()
+        val watching = backgroundScope.launch { repository.observe(key).collect { snapshot = it } }
+        runCurrent()
+        assertTrue(snapshot.verified)
+        val opened = requests
+        watching.cancelAndJoin()
+        connection.events.emit(RevsEvent(key.machineId, mapOf(key.sessionId to 2L)))
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(opened, requests)
+        backgroundScope.launch { repository.observe(key).collect { snapshot = it } }
+        runCurrent()
+        assertTrue(requests > opened)
+        assertTrue(snapshot.verified)
+        assertEquals(listOf(item(1)), snapshot.items)
+    }
+
+    @Test fun aChatReopenedWithinItsReleaseStaysSubscribedAndSkipsTheColdOpen() = runTest {
+        val connection = FakeConnection()
+        var requests = 0
+        val transport = FakeChatTransport().apply { fetch = {
+            requests++
+            ItemsResponse(listOf(item(1)), history = "h", toSeq = 1)
+        } }
+        val repository = HubChatRepository(transport, connection, FakeItemsCache(CachedChat()), FakeSessions(), backgroundScope,
+            releaseAfterMillis = 60_000)
+        fun unsubscribes() = connection.sent.count { it["type"]?.jsonPrimitive?.content == "unsubscribe" }
+        val first = backgroundScope.launch { repository.observe(key).collect() }
+        runCurrent()
+        val opened = requests
+        first.cancelAndJoin()
+        advanceTimeBy(30_000); runCurrent()
+        assertEquals(0, unsubscribes())
+        var snapshot = ChatSnapshot()
+        val again = backgroundScope.launch { repository.observe(key).collect { snapshot = it } }
+        runCurrent()
+        assertEquals("a warm reopen fetches nothing", opened, requests)
+        assertTrue(snapshot.verified)
+        again.cancelAndJoin()
+        advanceTimeBy(60_001); runCurrent()
+        assertEquals(1, unsubscribes())
+    }
+
+    @Test fun aClosedChatAwaitingItsSentMessageKeepsSyncingUntilItIsSeen() = runTest {
+        val connection = FakeConnection()
+        val awaiting = MutableStateFlow(emptySet<SessionKey>())
+        var requests = 0
+        val seen = mutableListOf<List<Item>>()
+        val transport = FakeChatTransport().apply { fetch = {
+            requests++
+            ItemsResponse(listOf(item(1)), history = "h", toSeq = 1)
+        } }
+        val repository = HubChatRepository(transport, connection, FakeItemsCache(CachedChat()), FakeSessions(), backgroundScope,
+            transcript = { _, items -> seen += items }, awaitingTranscript = awaiting)
+        awaiting.value = setOf(key)
+        runCurrent()
+        connection.events.emit(RevsEvent(key.machineId, mapOf(key.sessionId to 2L)))
+        advanceTimeBy(2_000); runCurrent()
+        assertTrue(requests > 0)
+        assertEquals(listOf(item(1)), seen.last())
+        awaiting.value = emptySet()
+        runCurrent()
+        val settled = requests
+        connection.events.emit(RevsEvent(key.machineId, mapOf(key.sessionId to 3L)))
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(settled, requests)
+    }
+
+    @Test fun theMostRecentlyClosedChatOutlivesIdleChatsTouchedByRevisions() = runTest {
+        val connection = FakeConnection()
+        val loads = mutableMapOf<SessionKey, Int>()
+        val cache = object : ChatItemsCache {
+            override suspend fun load(session: SessionKey) = CachedChat().also { loads.merge(session, 1, Int::plus) }
+            override suspend fun save(session: SessionKey, snapshot: CachedChat) = Unit
+        }
+        val transport = FakeChatTransport().apply { fetch = { ItemsResponse(listOf(item(1)), history = "h", toSeq = 1) } }
+        val repository = HubChatRepository(transport, connection, cache, FakeSessions(), backgroundScope)
+        val open = backgroundScope.launch { repository.observe(key).collect() }
+        runCurrent()
+        val others = (1..4).map { SessionKey(key.machineId, "other-$it") }
+        others.forEach { other ->
+            backgroundScope.launch { repository.observe(other).collect() }.also { runCurrent() }.cancelAndJoin()
+        }
+        connection.events.emit(RevsEvent(key.machineId, others.associate { it.sessionId to 2L }))
+        runCurrent()
+        open.cancelAndJoin()
+        backgroundScope.launch { repository.observe(key).collect() }
+        runCurrent()
+        assertEquals("the chat just closed is still retained", 1, loads[key])
+    }
+
     @Test fun olderPagesNotifyTranscriptWithoutChangingTheLastItem() = runTest {
         val recent = listOf(item(3).copy(role = "user"), item(4))
         val older = listOf(item(1).copy(role = "user"), item(2))
@@ -199,6 +308,44 @@ class ChatRepositoriesTest {
         second.cancelAndJoin()
         assertEquals(1, connection.sent.count { it.type() == "unsubscribe" })
         assertEquals(2, queries.count { it == ItemsQuery() })
+    }
+
+    // #3601: a read covers the rev moves heard when it was sent. Lines 4 and 5 lose their push and the rev moves; while
+    // the catch-up read for them is out, line 6 is written (its push lost too) and the rev moves again. The read comes
+    // back with 4 and 5 only, as the node read the file before line 6: the chat reads once more and gets it.
+    @Test fun aRevMoveWhileTheCatchUpReadIsOutReadsAgain() = runTest {
+        val connection = FakeConnection()
+        val transport = FakeChatTransport()
+        val held = CompletableDeferred<ItemsResponse>()
+        val queries = mutableListOf<ItemsQuery>()
+        transport.fetch = { query ->
+            queries += query
+            when (query.afterSeq) {
+                null -> ItemsResponse(listOf(item(1), item(2), item(3)), history = "h", toSeq = 3)
+                3 -> held.await()
+                5 -> ItemsResponse(listOf(item(6)), history = "h", fromSeq = 5, toSeq = 6)
+                else -> ItemsResponse(emptyList(), history = "h", fromSeq = query.afterSeq, toSeq = query.afterSeq)
+            }
+        }
+        val repository = HubChatRepository(transport, connection, FakeItemsCache(CachedChat(emptyList(), null, 0, null)),
+            FakeSessions(), backgroundScope)
+        var snapshot = ChatSnapshot()
+        backgroundScope.launch { repository.observe(key).collect { snapshot = it } }
+        runCurrent()
+        assertEquals(listOf(1, 2, 3), snapshot.items.map { it.seq })
+
+        connection.events.emit(RevsEvent(key.machineId, mapOf(key.sessionId to 5L)))
+        advanceTimeBy(1500)
+        runCurrent()
+        assertEquals(listOf(3), queries.mapNotNull { it.afterSeq })
+        connection.events.emit(RevsEvent(key.machineId, mapOf(key.sessionId to 6L))) // while the read is out
+        runCurrent()
+        held.complete(ItemsResponse(listOf(item(4), item(5)), history = "h", fromSeq = 3, toSeq = 5))
+        advanceTimeBy(5000)
+        runCurrent()
+        assertEquals(listOf(1, 2, 3, 4, 5, 6), snapshot.items.map { it.seq })
+        assertEquals(listOf(3, 5), queries.mapNotNull { it.afterSeq }.take(2))
+        assertTrue(snapshot.verified)
     }
 
     @Test fun aBurstOfItemsEventsSavesOnceMoreWithTheLatestState() = runTest {

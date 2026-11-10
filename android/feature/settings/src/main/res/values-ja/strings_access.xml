@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_access_title">Cloudflare Access</string>
+    <string name="settings_access_of">Cloudflare Access · %1$s</string>
+    <string name="settings_access_on">オン</string>
+    <string name="settings_access_off">オフ</string>
+    <string name="settings_access_client_id">Client ID</string>
+    <string name="settings_access_client_secret">Client Secret</string>
+    <string name="settings_access_caption">Cloudflare Access の内側で公開しているハブ用です。Cloudflare Zero Trust でサービストークンを作成し、ハブのアプリケーションの Service Auth ポリシーに追加してください。このハブへのリクエストだけがこれを送ります。</string>
+    <string name="settings_access_pairing_caption">ハブが Cloudflare Access の内側にある場合だけ必要です。接続する前にサービストークンを入力してください。入力しないと最初のリクエストから拒否されます。</string>
+    <string name="settings_access_save">保存</string>
+    <string name="settings_access_saved">サービストークンを保存しました</string>
+    <string name="settings_access_clear">サービストークンを削除</string>
+    <string name="settings_access_cleared">サービストークンを削除しました</string>
+    <string name="settings_access_failed">サービストークンを保存できませんでした。もう一度お試しください。</string>
+    <string name="settings_pairing_failure_access_required">このハブは Cloudflare Access の内側にあり、サービストークンが必要です。Cloudflare Access に Client ID と Client Secret を入力してから、もう一度接続してください。</string>
+    <string name="settings_pairing_failure_access_rejected">Cloudflare Access がサービストークンを拒否しました。Client ID と Client Secret、およびハブの Access ポリシーにこのトークンが含まれているか確認してください。</string>
+    <string name="settings_pairing_recovery_access">サービストークンを入力</string>
+</resources>

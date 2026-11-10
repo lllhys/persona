@@ -36,6 +36,8 @@ interface InboxRepository : persona.core.contracts.api.InboxRepository {
     val personaOutbox: StateFlow<List<OutboxMessage>> get() = emptyPersonaOutbox
     val connectionState: Flow<ConnectionState> get() = flowOf(ConnectionState.Connecting)
     val preferences: Flow<InboxPreferences> get() = flowOf(InboxPreferences())
+    /** Whether the hub shows source subscriptions (#2041, `source_subscriptions`): their entry joins the Inbox's other settings. */
+    val subscriptionsShown: Flow<Boolean> get() = flowOf(false)
     suspend fun savePreferences(value: InboxPreferences) = Unit
     /** Where Hand to AI last sent each source's items (#2121, [InboxHandOffMemory]): the group's own, latest first. */
     val handOffMemory: Flow<List<HandOffMemoryEntry>> get() = flowOf(emptyList())

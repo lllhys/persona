@@ -1,0 +1,578 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "cards_of_one_session_are_one_row",
+      "description": "A session with a plan, a question and a permission waiting is one row; its cards sit under it, oldest first.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "studio",
+            "session_id": "s1",
+            "title": "Support HEIC in the photo sync",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-plan",
+            "machine_id": "studio",
+            "session_id": "s1",
+            "kind": "plan",
+            "created_at": "2026-11-10T08:00:00Z",
+            "plan": "## Support HEIC\n- convert on export"
+          },
+          {
+            "id": "ix-question",
+            "machine_id": "studio",
+            "session_id": "s1",
+            "kind": "question",
+            "created_at": "2026-11-10T08:01:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "ix-permission",
+            "machine_id": "studio",
+            "session_id": "s1",
+            "kind": "permission",
+            "created_at": "2026-11-10T08:02:00Z",
+            "tool_name": "Bash",
+            "summary": "npm test"
+          }
+        ],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "agent:studio/s1",
+            "cards": [
+              "ix-plan",
+              "ix-question",
+              "ix-permission"
+            ]
+          }
+        ],
+        "badge": 1
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "a_session_waiting_in_its_terminal_is_a_row",
+      "description": "The hub says a session needs the user but no card was read (a prompt only its terminal shows): it is a row with no cards.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "macbook",
+            "session_id": "s2",
+            "title": "Login form",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "agent:macbook/s2",
+            "cards": []
+          }
+        ],
+        "badge": 1
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "rows_go_oldest_first",
+      "description": "Rows go by their oldest card or, with none, by when the session started waiting.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "studio",
+            "session_id": "s1",
+            "title": "s1",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "s2",
+            "title": "s2",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:05:00Z",
+            "state_since": "2026-11-10T08:05:00Z"
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "s3",
+            "title": "s3",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:10:00Z",
+            "state_since": "2026-11-10T08:10:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-3",
+            "machine_id": "macbook",
+            "session_id": "s3",
+            "kind": "question",
+            "created_at": "2026-11-10T08:10:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "ix-1",
+            "machine_id": "studio",
+            "session_id": "s1",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "agent:studio/s1",
+            "cards": [
+              "ix-1"
+            ]
+          },
+          {
+            "id": "agent:macbook/s2",
+            "cards": []
+          },
+          {
+            "id": "agent:macbook/s3",
+            "cards": [
+              "ix-3"
+            ]
+          }
+        ],
+        "badge": 3
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "a_card_with_no_session_is_its_own_row",
+      "description": "Cards that belong to no session (personad ask outside herdr) are a row each, even on the same computer.",
+      "input": {
+        "sessions": [],
+        "interactions": [
+          {
+            "id": "ix-a",
+            "machine_id": "mac",
+            "session_id": "",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ],
+            "session_title": "backup.sh"
+          },
+          {
+            "id": "ix-b",
+            "machine_id": "mac",
+            "session_id": "",
+            "kind": "question",
+            "created_at": "2026-11-10T08:01:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ],
+            "session_title": "deploy.sh"
+          }
+        ],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "card:ix-a",
+            "cards": [
+              "ix-a"
+            ]
+          },
+          {
+            "id": "card:ix-b",
+            "cards": [
+              "ix-b"
+            ]
+          }
+        ],
+        "badge": 2
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "a_card_makes_its_session_wait_whatever_its_state",
+      "description": "A pending card puts its session in Needs you even while the session's state still says working.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "studio",
+            "session_id": "s1",
+            "title": "s1",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-1",
+            "machine_id": "studio",
+            "session_id": "s1",
+            "kind": "permission",
+            "created_at": "2026-11-10T08:00:00Z",
+            "tool_name": "Bash",
+            "summary": "npm test"
+          }
+        ],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "agent:studio/s1",
+            "cards": [
+              "ix-1"
+            ]
+          }
+        ],
+        "badge": 1
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "persona_conversations_are_not_agents",
+      "description": "The assistant's own conversations and their cards belong to the Persona tab: never a row here.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "server",
+            "session_id": "chat",
+            "title": "Persona",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "assistant": true
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-chat",
+            "machine_id": "server",
+            "session_id": "chat",
+            "kind": "question",
+            "created_at": "2026-11-10T08:00:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [],
+        "badge": 0
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "muted_and_quiet_agents_are_rows_but_not_on_the_badge",
+      "description": "A muted agent, an agent in a muted space and a quiet task's agent still need the user and stay rows; the tab's badge leaves them out (the main conversation tells about a quiet task's agent).",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "studio",
+            "session_id": "s1",
+            "title": "s1",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "studio",
+            "session_id": "s2",
+            "title": "s2",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:01:00Z",
+            "state_since": "2026-11-10T08:01:00Z",
+            "space_name": "weather"
+          },
+          {
+            "machine_id": "studio",
+            "session_id": "s3",
+            "title": "s3",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:02:00Z",
+            "state_since": "2026-11-10T08:02:00Z",
+            "space_name": "weather"
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "s4",
+            "title": "s4",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:03:00Z",
+            "state_since": "2026-11-10T08:03:00Z"
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "s5",
+            "title": "s5",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "updated_at": "2026-11-10T08:04:00Z",
+            "state_since": "2026-11-10T08:04:00Z"
+          }
+        ],
+        "interactions": [],
+        "mutes": {
+          "sessions": [
+            "studio/s1"
+          ],
+          "spaces": [
+            "studio/weather"
+          ],
+          "allowed": [
+            "studio/s3"
+          ]
+        },
+        "quiet": [
+          "macbook/s4"
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "agent:studio/s1",
+            "cards": []
+          },
+          {
+            "id": "agent:studio/s2",
+            "cards": []
+          },
+          {
+            "id": "agent:studio/s3",
+            "cards": []
+          },
+          {
+            "id": "agent:macbook/s4",
+            "cards": []
+          },
+          {
+            "id": "agent:macbook/s5",
+            "cards": []
+          }
+        ],
+        "badge": 2
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    },
+    {
+      "name": "other_states_do_not_need_the_user",
+      "description": "Working, unread (finished, including one awaiting a reply), idle and offline sessions without a card are not rows.",
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "studio",
+            "session_id": "w",
+            "title": "w",
+            "cwd": "/home/user/project",
+            "state": "working",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "studio",
+            "session_id": "u",
+            "title": "u",
+            "cwd": "/home/user/project",
+            "state": "unread",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "studio",
+            "session_id": "r",
+            "title": "r",
+            "cwd": "/home/user/project",
+            "state": "unread",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "awaits_reply": true
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "i",
+            "title": "i",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "macbook",
+            "session_id": "o",
+            "title": "o",
+            "cwd": "/home/user/project",
+            "state": "offline",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "mutes": {
+          "sessions": [],
+          "spaces": [],
+          "allowed": []
+        },
+        "quiet": []
+      },
+      "expected": {
+        "rows": [],
+        "badge": 0
+      },
+      "source": [
+        "apple/Persona/Views/Chats/AgentsNeedsYouRows.swift AgentsNeedsYou.rows",
+        "issue #3580"
+      ]
+    }
+  ]
+}

@@ -62,6 +62,8 @@ type pending struct {
 	// once tell rings them. A hook claiming its card again in the same manager resumes this pending, and keeps it.
 	// Persona Link's summary notifies by it (fleet_attention.go).
 	told bool
+	// route: on its way up to the user through its task's supervisors (ask_route.go); nil once it is the user's.
+	route *askRoute
 }
 
 // resumeGrace is how long a resumable interaction outlives its node: a little longer than hooks keep reconnecting
@@ -96,9 +98,13 @@ func (s *Service) elicitationReachable(ix proto.Interaction) bool {
 
 // ---- telling ----
 
-// announce puts a new card on the apps (through the hub), pushes it, and gives it to the channels. A question the
-// assistant may answer for the user goes to it first (fleet_delegate.go).
+// announce puts a new card on the apps (through the hub), pushes it, and gives it to the channels. A supervised task's
+// card goes to its supervisor first when leaders are configured (ask_route.go); a question the assistant may answer for
+// the user goes to it first (fleet_delegate.go).
 func (s *Service) announce(ix proto.Interaction) {
+	if s.routeAsk(ix) {
+		return
+	}
 	if forget := s.delegable(ix); forget != nil {
 		s.delegate(ix, forget)
 		return
@@ -109,17 +115,30 @@ func (s *Service) announce(ix proto.Interaction) {
 // tell is announce once nothing is in the way: the card on the apps, the push, the channels, or the main conversation
 // for a quiet task.
 func (s *Service) tell(ix proto.Interaction) {
-	ix = s.withTask(ix)
-	s.markTold(ix)
-	s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: ix})
-	s.publishSessions(ix.MachineID)
-	s.liveChanged(false) // whether it is told counts for Persona Link's summary, not for the list
+	ix = s.tellApps(ix)
 	if s.quietSession(ix.MachineID, ix.SessionID) {
 		// A quiet task's question is no push, bot card or channel message: the main conversation is told (#1731).
 		go s.InteractionRaised(context.Background(), InteractionRaised{Interaction: ix})
 		return
 	}
-	if !s.muted(ix.MachineID, ix.SessionID) {
+	s.tellUser(ix, true)
+}
+
+// tellApps makes card ix the user's on the apps (pending.told), named with its task; the card as told.
+func (s *Service) tellApps(ix proto.Interaction) proto.Interaction {
+	s.taskPlanApproval()
+	ix = s.withTask(ix)
+	s.markTold(ix)
+	s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: ix})
+	s.publishSessions(ix.MachineID)
+	s.liveChanged(false) // whether it is told counts for Persona Link's summary, not for the list
+	return ix
+}
+
+// tellUser rings card ix, already on the apps: the push (push false: one of several going out as one push, ask_route.go)
+// and the topic of the agent's todo unless the agent is muted, and the Feishu bot and the channels.
+func (s *Service) tellUser(ix proto.Interaction, push bool) {
+	if push && !s.muted(ix.MachineID, ix.SessionID) {
 		s.notifyInteraction(ix, s.machineName(ix.MachineID), s.linkCovers(ix))
 		go s.threadAgentAsks(ix) // and the topic of the todo this agent works on, if it has one
 	}
@@ -130,6 +149,7 @@ func (s *Service) tell(ix proto.Interaction) {
 // user's yet (the assistant decides on it; a screen card whose dialog was not read, #4450). It never makes a card the
 // user's (pending.told): only tell does.
 func (s *Service) show(ix proto.Interaction) {
+	s.taskPlanApproval()
 	s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: s.withTask(ix)})
 	s.publishSessions(ix.MachineID)
 	s.liveChanged(false) // the card, and whether the assistant decides on it, count for Persona Link's summary
@@ -641,6 +661,7 @@ func (s *Service) finishInteraction(id string) {
 
 // finished tells everyone an interaction, already out of the pending set, is over.
 func (s *Service) finished(p *pending) {
+	s.taskPlanApproval()
 	s.fleet.mu.Lock()
 	done := assistantwire.FleetResolved{ID: p.ix.ID, AnsweredBy: p.answeredBy}
 	if done.AnsweredBy != "" {

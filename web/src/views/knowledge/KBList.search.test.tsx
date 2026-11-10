@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KBEntry, KBResult } from "../../lib/kb";
-import { lists, SEARCHES_KEPT, searches } from "./cache";
+import { lists, searches, SEARCHES_KEPT, searchKey } from "./cache";
 import { ListPane } from "./KBList";
 
 type Request = { path: string; resolve: (value: unknown) => void; reject: (error: Error) => void };
@@ -56,7 +56,7 @@ afterEach(async () => {
 
 describe("a cached knowledge search", () => {
   it("shows the cached results at once, asks the hub again and shows what it answers", async () => {
-    searches.set("ab", [hit(oldEntry)]);
+    searches.set(searchKey("ab"), [hit(oldEntry)]);
     render();
     search("ab");
     expect(host.textContent).toContain(oldEntry.name);
@@ -67,18 +67,18 @@ describe("a cached knowledge search", () => {
     await act(async () => searchRequests()[0].resolve({ results: [hit(oldEntry), hit(newEntry)] }));
     expect(host.textContent).toContain(oldEntry.name);
     expect(host.textContent).toContain(newEntry.name);
-    expect(searches.get("ab")?.map((r) => r.entry.id)).toEqual(["old", "new"]);
+    expect(searches.get(searchKey("ab"))?.map((r) => r.entry.id)).toEqual(["old", "new"]);
   });
 
   it("keeps the cached results without an error when the refresh fails", async () => {
-    searches.set("ab", [hit(oldEntry)]);
+    searches.set(searchKey("ab"), [hit(oldEntry)]);
     render();
     search("ab");
     await typed();
     await act(async () => searchRequests()[0].reject(new TypeError("Failed to fetch")));
     expect(host.textContent).toContain(oldEntry.name);
     expect(host.textContent).not.toContain("连不上 hub");
-    expect(searches.get("ab")?.map((r) => r.entry.id)).toEqual(["old"]);
+    expect(searches.get(searchKey("ab"))?.map((r) => r.entry.id)).toEqual(["old"]);
   });
 
   it("paints a cached search without the loading label after a remount", async () => {

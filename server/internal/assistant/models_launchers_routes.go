@@ -28,7 +28,7 @@ func (s *Service) launcherRoutes() {
 		defer cancel()
 		// A launcher just added to an rc file shows up (the node caches a minute).
 		zshrc := s.zshrcLaunchers(ctx, true)
-		views := s.launcherViewsOf(ctx, zshrc)
+		views := s.withKeyMachines(ctx, s.launcherViewsOf(ctx, zshrc))
 		if b, ok := s.builtinClaude(ctx, zshrc); ok {
 			views = append(views, b)
 		}
@@ -42,7 +42,7 @@ func (s *Service) launcherRoutes() {
 			apierr.WriteJSON(w, map[string]any{"launcher": b})
 			return
 		}
-		for _, v := range s.launcherViews(ctx) {
+		for _, v := range s.withKeyMachines(ctx, s.launcherViews(ctx)) {
 			if v.Name != name {
 				continue
 			}
@@ -143,6 +143,10 @@ func (s *Service) launcherRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		if err := s.checkScope(ctx, in.scopeInput); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		if taken(in.Name) {
 			apierr.Write(w, http.StatusConflict, i18n.Err("assistant-models_launchers.err_name_taken", i18n.Args{"name": in.Name}))
 			return
@@ -150,13 +154,13 @@ func (s *Service) launcherRoutes() {
 		l, err := s.saveLauncher(ctx, in, nil)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, errAPITransport) || errors.Is(err, errChatTransport) || errors.Is(err, errChatLaunchSettings) {
+			if errors.Is(err, errAPITransport) || errors.Is(err, errChatTransport) || errors.Is(err, errChatLaunchSettings) || errors.Is(err, errScopeEmpty) {
 				status = http.StatusBadRequest
 			}
 			apierr.Write(w, status, err)
 			return
 		}
-		out := map[string]any{"launcher": launcherView(l)}
+		out := map[string]any{"launcher": s.withKeyMachines(ctx, []LauncherView{launcherView(l)})[0]}
 		if in.Assign != nil {
 			assigned, kept := s.assignIfDefault(ctx, launcherProvider(l.Name), in.Assign)
 			out["assigned"], out["kept"] = assigned, kept
@@ -194,10 +198,14 @@ func (s *Service) launcherRoutes() {
 			apierr.Write(w, http.StatusNotFound, i18n.Err("assistant-models_launchers.err_not_managed"))
 			return
 		}
+		if err := s.checkScope(r.Context(), in.scopeInput); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		saved, err := s.saveLauncher(r.Context(), in, old)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, errChatProtocolChange) || errors.Is(err, errAPITransport) || errors.Is(err, errChatTransport) || errors.Is(err, errChatLaunchSettings) {
+			if errors.Is(err, errChatProtocolChange) || errors.Is(err, errAPITransport) || errors.Is(err, errChatTransport) || errors.Is(err, errChatLaunchSettings) || errors.Is(err, errScopeEmpty) {
 				status = http.StatusBadRequest
 			}
 			apierr.Write(w, status, err)
@@ -206,7 +214,7 @@ func (s *Service) launcherRoutes() {
 		if launcherSetupChanged(*old, saved) {
 			s.forgetLauncherFailures(r.Context(), saved.Name)
 		}
-		apierr.WriteJSON(w, map[string]any{"launcher": launcherView(saved)})
+		apierr.WriteJSON(w, map[string]any{"launcher": s.withKeyMachines(r.Context(), []LauncherView{launcherView(saved)})[0]})
 	})
 	s.handle("DELETE /api/v1/launchers/{name}", func(w http.ResponseWriter, r *http.Request) {
 		ctx, name := r.Context(), r.PathValue("name")
@@ -277,6 +285,10 @@ func (s *Service) launcherRoutes() {
 		}
 		if _, ok := s.device(ctx, machine); !ok {
 			apierr.Write(w, http.StatusBadRequest, errors.New("no machine to test on"))
+			return
+		}
+		if err := s.launcherScopeErr(ctx, machine, r.PathValue("name")); err != nil { // out of that computer's scope
+			apierr.Call(w, err)
 			return
 		}
 		var res proto.LauncherCheck
@@ -380,16 +392,23 @@ func (s *Service) machineLauncherRoutes() {
 			apierr.Write(w, http.StatusNotFound, errUnknownMachine)
 			return
 		}
-		ls, err := s.machineLaunchers(ctx, mid)
+		var list []ConfiguredLauncher
+		var err error
+		if r.URL.Query().Get("purpose") == "assistant" {
+			list, err = s.assistantLaunchers(ctx, mid)
+		} else {
+			var ls []proto.Launcher
+			ls, err = s.machineLaunchers(ctx, mid)
+			discovered := make([]ConfiguredLauncher, 0, len(ls))
+			for _, l := range ls {
+				discovered = append(discovered, ConfiguredLauncher{Launcher: l})
+			}
+			list = sessionLaunchers(discovered, s.hello(ctx).Models.Launchers[mid])
+		}
 		if err != nil {
 			apierr.Call(w, err)
 			return
 		}
-		discovered := make([]ConfiguredLauncher, 0, len(ls))
-		for _, l := range ls {
-			discovered = append(discovered, ConfiguredLauncher{Launcher: l})
-		}
-		list := sessionLaunchers(discovered, s.hello(ctx).Models.Launchers[mid])
 		out := map[string]any{"launchers": s.withHealth(ctx, mid, list), "default": s.pickerDefault(ctx, r)}
 		if purpose := r.URL.Query().Get("purpose"); purpose == "" || purpose == "agent.new" {
 			if p, tiers := s.pickerTiers(ctx, list); len(tiers) > 0 {
@@ -465,7 +484,17 @@ func (s *Service) providerModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		found = true
-		everywhere = everywhere || compat.Source(v.Source) == "persona" || len(v.Machines) == 0 // personad launch runs on every machine
+		if compat.Source(v.Source) == "persona" { // personad launch runs on every computer in the provider's scope
+			if l, ok := s.managedNamed(ctx, name); ok {
+				for _, d := range s.devices(ctx) {
+					if s.scopeReason(l, d.ID) == "" {
+						has = append(has, d.ID)
+					}
+				}
+				continue
+			}
+		}
+		everywhere = everywhere || len(v.Machines) == 0
 		has = append(has, v.Machines...)
 	}
 	if !found {

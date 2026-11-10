@@ -33,6 +33,7 @@ extension TaskState {
         case .needsYou: StateName.needsYou.text
         case .working: StateName.working.text
         case .unread: StateName.unread.text
+        case .waiting: StateName.taskWaiting.text
         case .followup: StateName.followUp.text
         case .notStarted: String(localized: "Starting [Task Views d14c3a]")
         case .done: StateName.done.text
@@ -989,112 +990,8 @@ struct TaskQuestions: View {
     }
 }
 
-/// The dock: All for the board, held at the leading edge so it never scrolls out of reach, then a pill for each task
-/// going on (waiting for the user first), scrolling sideways beside it. In the main conversation the agents going on
-/// that no task stands for (opened on the Agents page, #1113) follow the tasks, marked as agents.
-struct TaskDock: View {
-    var conversation: String
-    /// The conversation's model operating a Mac (#1343): a pill of its own, first.
-    var computer: ComputerActivity? = nil
-    @State private var removing: TodoItem?
-    private var store: TasksStore { .shared }
-
-    var body: some View {
-        let dock = store.dock(conversation)
-        let all = store.tasks(of: conversation)
-        let agents = store.agents(of: conversation)
-        let operating = ComputerActivityPill.shows(computer)
-        if !all.isEmpty || !agents.isEmpty || operating {
-            HStack(spacing: Theme.Space.s) {
-                if !all.isEmpty || !agents.isEmpty { board(all.count + agents.count) }
-                if !dock.isEmpty || !agents.isEmpty || operating {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: Theme.Space.s) {
-                            if operating { ComputerActivityPill(activity: computer) }
-                            ForEach(dock) { todo in pill(todo) }
-                            ForEach(agents) { agent in pill(agent) }
-                        }
-                    }
-                    .scrollIndicators(.hidden)
-                    #if os(macOS)
-                    // The pills fade out at the trailing edge instead of being cut off by it (#1224 B6): a window
-                    // narrower than the dock showed half a pill with its words cut.
-                    .mask {
-                        Color.black
-                            .padding(.trailing, Theme.Size.macRowFade)
-                            .overlay(alignment: .trailing) {
-                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                                    .frame(width: Theme.Size.macRowFade)
-                            }
-                    }
-                    #else
-                    // A pill cut by the screen's edge mid-word reads as broken: the pills fade out at an end with more.
-                    .edgeFade()
-                    #endif
-                    .animation(Theme.Motion.layout, value: dock.map(\.id) + agents.map(\.key.path))
-                }
-            }
-            .padding(.horizontal, Theme.Space.xs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            #if !os(macOS)
-            .padding(.top, Theme.Space.s)
-            .dockChatFade()
-            // Drawn under the question and the @ list over it in the footer, so the fade reaches only the chat.
-            .zIndex(-1)
-            #endif
-            .confirmTaskRemoval($removing)
-        }
-    }
-
-    private func board(_ count: Int) -> some View {
-        Button {
-            store.showBoard = true
-        } label: {
-            Text("All \(count) [Task Views b479ca]")
-                .dockCapsule()
-                .fixedSize() // the pills give way, All does not
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("task-dock.board")
-    }
-
-    private func pill(_ todo: TodoItem) -> some View {
-        let state = store.state(todo)
-        return Button {
-            store.detailTask = todo.id
-        } label: {
-            DockPillLabel(title: todo.title, state: state.agentState, waiting: state == .needsYou) {
-                TaskMark(state: state, size: Theme.Size.dot)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("task-dock.pill")
-        .menuPreviewShape(.capsule)
-        .contextMenu { TaskRemoveMenuItem(todo: todo, state: state, pending: $removing) }
-        .transition(.scale.combined(with: .opacity))
-    }
-
-    /// An agent no task stands for: its state's dot and the Agents mark, opening its page in the task's sheet.
-    private func pill(_ agent: DockAgent) -> some View {
-        Button {
-            store.detailAgent = agent.key
-        } label: {
-            DockPillLabel(title: agent.title, state: agent.state, waiting: agent.isWaiting) {
-                StatusDot(state: agent.state, size: Theme.Size.dot)
-                ThemedIcon(Theme.Icon.agents).font(Theme.Font.label)
-                    .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.state.tone.text) : AnyShapeStyle(.secondary))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Agent \(agent.title), \(agent.isWaiting ? StateName.needsYou.text : StateName.working.text)")
-        .accessibilityIdentifier("task-dock.agent")
-        .transition(.scale.combined(with: .opacity))
-    }
-}
-
-/// The capsule the row above the assistant's composer draws an entry in: the dock's All (#1094) and, on the phone, the
-/// action bar's Pending / Progress / Agents (#2879). One look for both, so the bar is exactly as low as the dock was:
+/// The capsule the row above the assistant's composer draws an entry in: the action bar's Needs You / In Progress (#3393)
+/// and its trays' All, the look the dock's All had (#1094), so the bar is exactly as low as the dock was:
 /// caption medium (13 pt at the default text size; it follows Dynamic Type), 12 pt sideways and 6 pt up and down
 /// (`Theme.Space.m` / `.sm`), a capsule, `Theme.Fill.chip` behind secondary words: 28 pt tall at the default text size.
 /// `.selected` (its tray is open) is the filter chip's on look in the same size (`FilterChip`: the accent behind white,

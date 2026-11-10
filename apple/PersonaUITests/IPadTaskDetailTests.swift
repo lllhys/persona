@@ -41,14 +41,14 @@ final class IPadTaskDetailTests: XCTestCase {
         }
         let app = XCUIApplication()
         let url = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", url]
+        app.launchArguments = ["-pairURL", url, "-tab", "assistant", "-dev.openChat", "",
+                               "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001"]
         app.launchPinned()
 
-        // The action bar's trays list them (#2879): Progress the tasks, Agents the agents.
-        let progress = app.openActionTray("progress")
+        // The action bar's In Progress tray lists them (#3393): the tasks going on, an agent opened by hand as its to-do's row.
+        let progress = app.openActionTray("running")
         let tasks = app.trayTasks
-        let agents = app.trayAgents
-        XCTAssertTrue(tasks.firstMatch.waitForExistence(timeout: 20), "no task in Progress:\n\(app.debugDescription)")
+        XCTAssertTrue(tasks.firstMatch.waitForExistence(timeout: 20), "no task in In Progress:\n\(app.debugDescription)")
         sleep(2) // the conversation settles
         try shot(app, "conversation")
 
@@ -66,10 +66,12 @@ final class IPadTaskDetailTests: XCTestCase {
         XCTAssertTrue(progress.isHittable, "back did not come back to the conversation")
         sleep(1)
 
-        // An agent of its own: the same page, under its own title (its chat's header, #3255).
-        app.openActionTray("agents")
-        app.waitForRows(agents, atLeast: 1)
-        let agent = agents.firstMatch
+        // The agent opened by hand (/orders, linked to a hand-made to-do): its to-do's row, the same page, under its own
+        // title (its chat's header, #3255).
+        app.openActionTray("running")
+        let orders = tasks.matching(NSPredicate(format: "label CONTAINS %@", "/orders"))
+        app.waitForRows(orders, atLeast: 1)
+        let agent = orders.firstMatch
         XCTAssertTrue(agent.waitForExistence(timeout: 5), app.debugDescription)
         agent.tap()
         XCTAssertTrue(app.buttons.matching(identifier: "chat.title").firstMatch.waitForExistence(timeout: 5), app.debugDescription)

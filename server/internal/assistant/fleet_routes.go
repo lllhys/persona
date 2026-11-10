@@ -202,6 +202,7 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 		SessionID     string            `json:"session_id"`
 		InteractionID string            `json:"interaction_id"`
 		Answers       map[string]string `json:"answers"`
+		Reason        string            `json:"reason"` // interactions.answer: why the assistant answered so (interaction_answer)
 		Resolution    proto.Resolution  `json:"resolution"`
 		Action        string            `json:"action"`
 		Channel       string            `json:"channel"`
@@ -218,7 +219,7 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 			out = map[string]any{"ok": false, "status": s.interactionOutcome(ctx, a.InteractionID)}
 		}
 	case assistantwire.InteractionsAnswer:
-		ok, err := s.answerQuestion(a.MachineID, a.SessionID, a.InteractionID, a.Answers, "")
+		ok, err := s.answerQuestion(a.MachineID, a.SessionID, a.InteractionID, a.Answers, a.Reason)
 		if err != nil {
 			return nil, true, err
 		}

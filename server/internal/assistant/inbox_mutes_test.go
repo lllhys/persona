@@ -16,7 +16,10 @@ import (
 func muteHub(t *testing.T) *inboxHub {
 	t.Helper()
 	h := newInboxHub(t)
-	h.inboxReady(context.Background())
+	if err := h.inboxReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitNeedsYouIdle(t, h.Service) // fixture writes start after the initial asynchronous read finishes
 	return h
 }
 

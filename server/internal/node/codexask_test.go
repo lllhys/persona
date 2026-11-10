@@ -181,6 +181,24 @@ func TestCodexAnswerAsync(t *testing.T) {
 	}
 }
 
+func TestCodexAnswerAsyncWithSingleRowFooter(t *testing.T) {
+	for _, answer := range []string{"Blue", "Use a custom color"} {
+		t.Run(answer, func(t *testing.T) {
+			n, f, path := codexNode(t, proto.StatusIdle, cxAsyncCall, cxAsyncOut)
+			f.setScreen(cxPane, "• Done.\n\n› Ask Codex to do anything\n  GPT-6-Astra high Fast · ~/project · Review project    ⚠ 1 warning · f2 to view\n")
+			sent := codexTUI(t, f, path)
+			err := n.codexAnswer(t.Context(), cxID, onlyCard(t, n).ix.ID, proto.Resolution{Answers: map[string]string{"Which color should the banner be?": answer}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := transcript.CodexReplyMessage([]transcript.CodexReply{{QuestionItemID: transcript.QuestionItemID("call_a1", 0), Question: "Which color should the banner be?", Answer: answer}})
+			if len(*sent) != 1 || (*sent)[0] != want || len(n.codexCardsNow(t.Context(), "")) != 0 {
+				t.Fatalf("answer was not taken once by its conversation: %q", *sent)
+			}
+		})
+	}
+}
+
 // The reply's JSON escapes C0 controls but not DEL or C1 ones, and U+009B alone is a CSI to some terminals.
 func TestCodexAnswerAsyncControls(t *testing.T) {
 	n, f, path := codexNode(t, proto.StatusIdle, cxAsyncCall, cxAsyncOut)

@@ -37,7 +37,10 @@ fun EntryProviderScope<NavKey>.knowledgeEntries(
     onNewAgent: ((KnowledgeAgentStart) -> Unit)? = null,
 ) {
     entry<KnowledgeRoute> {
-        val model = viewModel { KnowledgeViewModel(connection) }
+        // The current assistant's knowledge base (docs/assistant/managers.md "Clients": the hub client names it on `kb…`):
+        // a model per assistant, so switching reads the other one's and nothing of the last one's stays.
+        val assistant = persona.core.designsystem.currentAssistant().id
+        val model = viewModel(key = "knowledge:$assistant") { KnowledgeViewModel(connection) }
         KnowledgeScreen(model, navigator)
     }
     entry<KnowledgeDetailRoute> { route ->

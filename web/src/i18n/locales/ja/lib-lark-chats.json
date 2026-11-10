@@ -2,7 +2,7 @@
   "preview_mine": "自分：{text}",
   "preview_sender": "{sender}：{text}",
   "not_logged_in": "ハブに接続されたLark ゲートウェイがLarkにログインしていません。ハブのマシンでログインしてから、もう一度お試しください。",
-  "not_configured": "ハブはまだLarkに接続されていません。ハブのマシンでLark ゲートウェイを起動し、マネージャーのmanager.jsonのlarkに設定してください。",
+  "not_configured": "ハブはまだLarkに接続されていません。ハブのマシンでLark ゲートウェイを起動し、アシスタントのmanager.jsonのlarkに設定してください。",
   "load_failed": "Larkのチャットを読み込めません：{error}",
   "account_changed": "Larkアカウントが切り替わりました"
 }

@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "keys_ignore_case_and_punctuation",
+      "description": "关联键忽略大小写、空格、标点和 PR 链接末尾的斜杠。",
+      "source": [
+        "web/src/lib/todo-triage.ts relatedKeys"
+      ],
+      "from_test": "web/src/lib/todo-triage.test.ts > triageTodos > related keys ignore case, spaces, punctuation and a PR link's trailing slash",
+      "input": {
+        "todo": {
+          "id": "a",
+          "title": "Fix: the  Widget!",
+          "created_at": "2026-10-29T00:00:00.000Z",
+          "updated_at": "2026-11-10T11:00:00.000Z",
+          "done_at": null,
+          "agents": [],
+          "origin": "conv",
+          "pr_url": "https://Example.com/pull/3/"
+        }
+      },
+      "expected": {
+        "keys": [
+          "pr:https://example.com/pull/3",
+          "title:fixthewidget"
+        ]
+      }
+    },
+    {
+      "name": "keys_issue_and_plan",
+      "description": "标题里的 issue 号和计划 id 也是关联键；太短的标题不算。",
+      "source": [
+        "web/src/lib/todo-triage.ts relatedKeys"
+      ],
+      "derived": true,
+      "input": {
+        "todo": {
+          "id": "b",
+          "title": "#42 x",
+          "created_at": "2026-10-29T00:00:00.000Z",
+          "updated_at": "2026-11-10T11:00:00.000Z",
+          "done_at": null,
+          "agents": [],
+          "origin": "conv",
+          "plan_id": "p1"
+        }
+      },
+      "expected": {
+        "keys": [
+          "issue:42",
+          "plan:p1"
+        ]
+      }
+    },
+    {
+      "name": "keys_unicode_title",
+      "description": "中文标题去掉标点后按字算长度。",
+      "source": [
+        "web/src/lib/todo-triage.ts relatedKeys"
+      ],
+      "derived": true,
+      "input": {
+        "todo": {
+          "id": "c",
+          "title": "修复：推送丢失问题！",
+          "created_at": "2026-10-29T00:00:00.000Z",
+          "updated_at": "2026-11-10T11:00:00.000Z",
+          "done_at": null,
+          "agents": [],
+          "origin": "conv"
+        }
+      },
+      "expected": {
+        "keys": [
+          "title:修复推送丢失问题"
+        ]
+      }
+    }
+  ]
+}

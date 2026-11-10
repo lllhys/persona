@@ -281,7 +281,7 @@ func (s *Service) homeCard(ctx context.Context, f FeishuFeatures) (card *feishub
 		}
 		day.WriteString("\n· " + wbT(l, "pair", i18n.Args{"a": feishubot.EscapeMarkdown(clip(wbSender(it), 10)), "b": feishubot.EscapeMarkdown(clip(wbGist(it), 40))}))
 	}
-	if cal := s.snapshotCalendar(ctx, now); cal != nil && len(cal.Events) > 0 {
+	if cal := snapshotCalendar(s.connectorSnapshots(ctx), now); cal != nil && len(cal.Events) > 0 {
 		e := cal.Events[0]
 		day.WriteString("\n📅 " + wbT(l, "home_next_meeting", i18n.Args{"time": e.Start.In(loc).Format("15:04"), "title": feishubot.EscapeMarkdown(clip(e.Title, 30))}))
 	}

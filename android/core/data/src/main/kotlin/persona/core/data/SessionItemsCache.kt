@@ -91,7 +91,27 @@ class SessionItemsCache(
         val ordered = snapshot.items.distinctBy { it.id }.sortedWith(compareBy<Item> { it.seq }.thenBy { part(it) })
         val turns = chatTurns(ordered.map { it.lineItem() })
         val first = turns.takeLast(2).firstOrNull()?.users?.firstOrNull()?.item
-        val start = first?.let { item -> ordered.indexOfFirst { it.id == item.id }.coerceAtLeast(0) } ?: 0
+        var start = first?.let { item -> ordered.indexOfFirst { it.id == item.id }.coerceAtLeast(0) } ?: 0
+        // A subagent can hand back after several user turns. Its reports cannot survive restart without the
+        // launching call: keep that exchange too, including earlier reports, rather than orphaning the result.
+        val taskCalls = persona.core.domain.lines.TaskIndex.build(ordered.map { it.lineItem() }).calls
+        val launches = ordered.withIndex().filter { it.value.kind == "tool_use" }
+            .mapNotNull { (index, item) -> item.toolUseId?.let { it to index } }.toMap()
+        var exchange = 0
+        val exchangeStarts = ordered.mapIndexed { index, item ->
+            if (item.kind == "text" && item.role == "user" && item.queued != true) exchange = index
+            exchange
+        }
+        // Walk backwards through the retained range. Lowering start also visits the newly kept reports, whose
+        // launching exchanges may precede this one: the reference closure is preserved in a single pass.
+        var inspect = ordered.lastIndex
+        while (inspect >= start) {
+            val item = ordered[inspect--]
+            if (item.task?.kind != "agent") continue
+            val call = item.toolUseId ?: item.task?.toolUseId ?: taskCalls[item.id] ?: continue
+            val launch = launches[call] ?: continue
+            if (launch < start) start = exchangeStarts[launch]
+        }
         val rows = ordered.drop(start).map { item ->
             // Inline originals belong to the display-sized image cache, not the items database.
             val cached = item.image?.let { item.copy(image = it.copy(data = "", lazy = true)) } ?: item

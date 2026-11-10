@@ -6,6 +6,7 @@
   "agent_no_command": "起動するコマンドがありません",
   "agent_no_data_dir": "データディレクトリが見つかりません",
   "agent_profile_refused": "sandbox-exec が今回のルールを受け付けません：{err}",
-  "agent_unsupported": "エージェント用サンドボックスは今のところ macOS のみ対応です。このシステム（{os}）ではまだ使えません",
+  "agent_too_many_args": "Linux エージェントコマンドの bwrap 引数が {count} 個で、上限 {limit} を超えています。データディレクトリの最上位項目または明示的な別名を減らしてください",
+  "agent_unsupported": "エージェント用サンドボックスは macOS と Linux に対応しています。このシステム（{os}）では使えません",
   "probe_tmp": "サンドボックスの確認用に一時ディレクトリを作成できません：{err}"
 }

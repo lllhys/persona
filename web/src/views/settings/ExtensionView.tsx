@@ -30,6 +30,7 @@ import { PageBoundary } from "../PageBoundary";
 import { otherManager, useLinkManager } from "../../lib/manager-choice";
 import type { UIRowControl } from "../../lib/extension-ui-v6";
 import { t } from "../../i18n";
+import { SUBSCRIPTIONS_UI } from "../../lib/subscriptions-ui";
 
 const inputClass =
   "h-8 w-full rounded-control bg-field px-2.5 text-[12.5px] text-ink shadow-inset-field outline-none placeholder:text-ink-3 focus:shadow-[inset_0_0_0_1px_var(--accent)] disabled:opacity-60";
@@ -93,6 +94,8 @@ function useInvalidate(extension: string, ui: string, draw: () => void) {
       if (id && id !== ui) return;
       now();
     });
+    // the subscription pages (#2041): a subscription saved, run or deleted anywhere draws them again
+    const offSubscription = extension === SUBSCRIPTIONS_UI ? onHubEvent("subscription", () => now()) : () => {};
     // a reconnect the hub could not resume: an invalidate missed meanwhile is not replayed (#4954)
     const offHello = onHubEvent("hello", (msg) => !isResumed(msg) && now());
     const shown = () => {
@@ -101,6 +104,7 @@ function useInvalidate(extension: string, ui: string, draw: () => void) {
     document.addEventListener("visibilitychange", shown);
     return () => {
       off();
+      offSubscription();
       offHello();
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", shown);
@@ -159,7 +163,8 @@ export function ExtensionUI(props: Parameters<typeof LegacyExtensionUI>[0]) {
   if (waitingHello && !legacyNegotiation) return <Loading />;
   // System/embedded slots remain full fitted snapshots. Old hubs keep the exact existing component.
   // Another manager's extension draws over HTTP, which names its manager on each request (docs/assistant/managers.md "Clients").
-  if (legacyNegotiation || !supported || props.embedded || props.compact || otherManager(props.manager)) return <LegacyExtensionUI {...props} />;
+  // The subscription pages (#2041) are the manager's, drawn over HTTP only.
+  if (legacyNegotiation || !supported || props.embedded || props.compact || otherManager(props.manager) || props.extension === SUBSCRIPTIONS_UI) return <LegacyExtensionUI {...props} />;
   return (
     <PageBoundary page={`extension:${props.extension}/${props.ui}`}>
       <Suspense fallback={<Loading />}>
@@ -629,7 +634,7 @@ export function LegacyExtensionUI({
             </>
           }
         >
-          <p className="text-[13px] leading-relaxed break-words text-ink-2">{confirming.action.confirm}</p>
+          <p className="text-[13px] leading-relaxed whitespace-pre-line break-words text-ink-2">{confirming.action.confirm}</p>
         </Dialog>
       )}
     </div>

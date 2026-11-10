@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -188,7 +189,7 @@ func TestTaskCompletionSideTurnNeedsFreshTaskReport(t *testing.T) {
 
 func TestTaskCompletionDoneReportFreshness(t *testing.T) {
 	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	for _, name := range []string{"current", "missing tool time", "missing turn boundary", "before side request", "before reopen", "before criteria update", "progress only", "untrusted tool namespace", "report is not a verdict"} {
+	for _, name := range []string{"current", "canonical tool namespace", "legacy tool namespace", "missing tool time", "missing turn boundary", "before side request", "before reopen", "before criteria update", "progress only", "untrusted tool namespace", "report is not a verdict"} {
 		t.Run(name, func(t *testing.T) {
 			work := at.Add(-time.Second)
 			todo := Todo{Title: "Fix login", CreatedAt: at.Add(-time.Hour), Supervision: &Supervision{
@@ -203,6 +204,12 @@ func TestTaskCompletionDoneReportFreshness(t *testing.T) {
 			want := false
 			switch name {
 			case "current":
+				want = true
+			case "canonical tool namespace":
+				items[1].ToolName = "mcp__persona__report_to_supervisor"
+				want = true
+			case "legacy tool namespace":
+				items[1].ToolName = "mcp__" + compat.MCPServer + "__report_to_supervisor"
 				want = true
 			case "missing tool time":
 				items[1].TS = time.Time{}

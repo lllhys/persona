@@ -7,6 +7,9 @@
         <item quantity="other">查了 %1$d 处</item>
     </plurals>
     <plurals name="chat_assistant_dispatched">
-        <item quantity="other">派出 %1$d 件 · 在「进度」里看</item>
+        <item quantity="other">派出 %1$d 件</item>
     </plurals>
+    <string name="chat_assistant_dispatched_one">派出 1 件：%1$s</string>
+    <string name="chat_assistant_dispatch_open">打开</string>
+    <string name="chat_assistant_dispatch_open_line">· %1$s</string>
 </resources>

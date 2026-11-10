@@ -124,8 +124,9 @@ class AssistantSwitchingShotsTest {
         }
         rule.waitForIdle()
     }
+    // The page draws no manager chips any more: the sidebar's switcher calls AssistantManagerChoice.pick(id), so this does the same.
     private fun pick(name: String) {
-        rule.onNode(hasText(name) and hasClickAction()).performClick()
+        AssistantManagerChoice.pick(mapOf("助手" to "assistant", "工作" to "work").getValue(name))
         rule.waitForIdle()
     }
     private fun capture(name: String) {
@@ -138,7 +139,7 @@ class AssistantSwitchingShotsTest {
     }
     private fun history(name: String) = rule.onNodeWithText("${name}历史：之前的消息已保留")
 
-    @Test fun topChipsRestoreIndependentHistoriesAndRunningStreamsInLightAndDark() {
+    @Test fun switchingRestoresIndependentHistoriesAndRunningStreamsInLightAndDark() {
         val hub = Hub()
         mount(hub)
         for (appStyle in AppStyle.entries) for (night in listOf(false, true)) {

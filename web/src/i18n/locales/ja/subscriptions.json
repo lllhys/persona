@@ -1,0 +1,9 @@
+{
+  "title": "購読",
+  "sidebar": "サイドバー",
+  "redraw": "再描画",
+  "row": "購読",
+  "counts_on": "{on} 件オン",
+  "counts_failing": "{on} 件オン · {failing} 件エラー",
+  "counts_none": "購読できます"
+}

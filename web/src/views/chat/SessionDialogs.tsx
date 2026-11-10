@@ -545,7 +545,8 @@ export function CloseAgentDialog({ open, onClose, onClosed, session, machineName
   }, [open]);
   const go = async () => {
     // the agent went away while the dialog was open: nothing left to close, so don't leave a button that does nothing
-    if (!sessionCan(getSession(session.machine_id, session.session_id), "terminal")) {
+    const current = getSession(session.machine_id, session.session_id);
+    if (!current || current.status === "offline" || !sessionCan(current, "close")) {
       onClose();
       return;
     }
@@ -580,7 +581,7 @@ export function CloseAgentDialog({ open, onClose, onClosed, session, machineName
       }
     >
       <p className="text-[13px] leading-relaxed text-ink-2">
-        {t("chat-chatview.close_agent_detail", { machine: machineName, where: [session.space_name, tabLabel(session)].filter(Boolean).join(" › ") || sessionTitle(session) })}
+        {t(session.source_kind === "runtime" ? "chat-chatview.close_runtime_detail" : "chat-chatview.close_agent_detail", { machine: machineName, title: sessionTitle(session), where: [session.space_name, tabLabel(session)].filter(Boolean).join(" › ") || sessionTitle(session) })}
       </p>
       {wt && <WorktreeCleanup st={wt} value={cleanup} onChange={setCleanup} />}
     </Dialog>

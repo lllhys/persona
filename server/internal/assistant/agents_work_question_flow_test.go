@@ -106,7 +106,7 @@ func TestWorkQuestionCancelAndPauseThroughPhoneLifecycle(t *testing.T) {
 				t.Fatal("restart replay reopened old question")
 			}
 			s.askOnPhone(nil)
-			c := stopped("s1", "Choose when to continue")
+			c := stopped("s1", "Continue now?")
 			c.UpdatedAt = time.Now().UTC()
 			f.setSessions("box", c)
 			triage(t, s, "s1")

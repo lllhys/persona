@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"maps"
 	"os"
 	"sync"
 
@@ -78,7 +79,11 @@ func (f *File) history() string {
 	if f.lines == 0 {
 		return "" // nothing read yet: no identity to compare
 	}
-	return fmt.Sprintf("%x.%08x.%d", f.ino, f.firstHash, f.gen) + f.branchToken()
+	version := ""
+	if !f.meta.Codex {
+		version = ".items2"
+	}
+	return fmt.Sprintf("%x.%08x.%d", f.ino, f.firstHash, f.gen) + version + f.branchToken()
 }
 
 // Refresh reads newly appended complete lines and returns the new items.
@@ -316,7 +321,8 @@ func (f *File) Full(id string) (proto.Item, error) {
 		}
 	}
 	ref, cut := f.cut[it.Seq]
-	scratch := Meta{Sidechain: f.meta.Sidechain, Codex: f.meta.Codex}
+	scratch := Meta{Sidechain: f.meta.Sidechain, Codex: f.meta.Codex,
+		agentCalls: maps.Clone(f.meta.agentCalls), taskCalls: maps.Clone(f.meta.taskCalls)}
 	f.mu.Unlock()
 	if !found {
 		return it, fmt.Errorf("no item %s", id)

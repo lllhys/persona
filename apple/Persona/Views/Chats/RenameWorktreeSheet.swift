@@ -62,13 +62,35 @@ struct RenameWorktreeSheet: View {
 }
 
 nonisolated enum SessionRenameForm {
-    /// Only the legacy herdr/Claude dialog edits both a tab and the conversation. Other runtimes expose one name.
+    /// Only a Claude in a host that renames its tabs (herdr, Tern: docs/integrations/engines.md) edits both a tab and
+    /// the conversation. Other runtimes expose one name.
     static func showsTab(_ session: Session) -> Bool {
-        session.paneID != nil && (session.hostKind ?? "herdr") == "herdr" && (session.agent ?? "claude") == "claude"
+        session.paneID != nil && ["herdr", "tern"].contains(session.hostKind ?? "herdr") && (session.agent ?? "claude") == "claude"
+    }
+
+    /// The tab field and the line under it name the host that renames the tab.
+    static func tabField(_ session: Session) -> String {
+        session.hostKind == "tern" ? String(localized: "Tab name (Tern tab)") : String(localized: "Tab name (herdr tab)")
+    }
+
+    static func tabNote(_ session: Session) -> String {
+        session.hostKind == "tern"
+            ? String(localized: "The tab name syncs to Tern. The session name uses Claude's /rename, so claude --resume on the Mac shows it too.")
+            : String(localized: "The tab name syncs to herdr. The session name uses Claude's /rename, so claude --resume on the Mac shows it too.")
     }
 
     static func body(_ session: Session, tab: String, title: String) -> APIClient.RenameBody {
         APIClient.RenameBody(tabName: showsTab(session) && tab != (session.slotName ?? "") ? tab : nil,
                              title: title != session.title ? title : nil)
+    }
+}
+
+nonisolated enum SpaceRenameForm {
+    /// The line under a space's name says what else it renames: a herdr workspace, or a Tern session (Tern's spaces are
+    /// its sessions).
+    static func note(_ group: SpaceGroup?) -> String {
+        group.flatMap(NodeMenu.kind) == "tern"
+            ? String(localized: "Also renames this session in Tern.")
+            : String(localized: "Also renames this workspace in herdr.")
     }
 }

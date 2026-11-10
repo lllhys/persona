@@ -190,4 +190,32 @@ describe("refreshing", () => {
     h.advance(FS_DEBOUNCE_MS);
     expect(ev.got).toEqual([{ dirs: ["/w", "/w/src"], git: true }]);
   });
+
+  it("a reconnect while the page is hidden rereads nothing until it shows, then once", () => {
+    const h = harness();
+    const ev = events();
+    h.live.watch(opts, ev.fn);
+    h.setVisible(false);
+    h.emit("hello", {});
+    h.advance(FS_DEBOUNCE_MS);
+    expect(ev.got).toEqual([]);
+    expect(h.pendingTimers()).toBe(0);
+    h.setVisible(true);
+    h.advance(FS_DEBOUNCE_MS);
+    expect(ev.got).toEqual([{ dirs: ["/w", "/w/src"], git: true }]);
+  });
+
+  it("a reread still waiting when the page turns hidden is dropped: the return refreshes once", () => {
+    const h = harness();
+    const ev = events();
+    h.live.watch(opts, ev.fn);
+    h.emit("hello", {});
+    h.setVisible(false);
+    expect(h.pendingTimers()).toBe(0);
+    h.advance(1000);
+    expect(ev.got).toEqual([]);
+    h.setVisible(true);
+    h.advance(FS_DEBOUNCE_MS);
+    expect(ev.got).toEqual([{ dirs: ["/w", "/w/src"], git: true }]);
+  });
 });

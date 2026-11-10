@@ -24,6 +24,11 @@ describe("service worker routes", () => {
     expect(at("/assets/a-1.js", "cors", "GET", "https://other.example.com")).toBe("pass");
   });
 
+  it("passes public navigation and every standalone asset through without a shell or cache lookup", () => {
+    for (const p of ["/share", "/share/" + "A".repeat(64), "/share-assets", "/share-assets/viewer-hash.js", "/share-assets/viewer-hash.css", "/public-share/index.html", "/api/public/agent-shares/" + "A".repeat(64)]) {
+      expect(at(p)).toBe("pass"); expect(at(p, "navigate")).toBe("pass");
+    }
+  });
   it("keeps hashed assets and the root's icons and manifest", () => {
     expect(at("/assets/main-NaR2WL1g.js", "cors")).toBe("asset");
     expect(at("/assets/KaTeX_Main-Regular-B22Nviop.woff2", "cors")).toBe("asset");

@@ -101,7 +101,8 @@ const (
 	DeviceWorktreeCreate  = "worktree.create"
 
 	// The hub's.
-	// DeviceDevicesList (on DeviceAll): {} → {devices: [Device], phone_online}, the user's machines.
+	// DeviceDevicesList (on DeviceAll): {} → {devices: [Device], phone_online, apps: [ClientApp]}, the user's machines
+	// and the Persona apps that last said their version (apps: absent from a hub from before).
 	DeviceDevicesList = "devices.list"
 	// DeviceInteractionsList (on DeviceAll): {} → {interactions}, what the machines' agents wait on the user for.
 	DeviceInteractionsList = "interactions.list"
@@ -132,6 +133,18 @@ type Device struct {
 	// ClaudeVersion is Claude Code's version there ("" when it has none or never said): 设置 › 模型供应商's built-in
 	// claude lists the machines that have it.
 	ClaudeVersion string `json:"claude_version,omitempty"`
+}
+
+// ClientApp is one Persona app as it last described itself in client_hello (docs/protocol/protocol.md "Client
+// capabilities and heartbeat"): one per signed-in device, newest first. Platform is ios (an iPad too: its OS says
+// iPadOS) | macos | watchos | visionos | android; never the web, which the hub serves (its version is the hub's).
+type ClientApp struct {
+	Platform  string    `json:"platform"`
+	Version   string    `json:"version"`         // the marketing version (CFBundleShortVersionString, versionName)
+	Build     string    `json:"build,omitempty"` // the build number
+	OS        string    `json:"os,omitempty"`    // "iOS 26.1"
+	Simulator bool      `json:"simulator,omitempty"`
+	SeenAt    time.Time `json:"seen_at"` // its last client_hello
 }
 
 // ErrNoDevice: the hub has no machine by the id a DeviceCall gave.
@@ -350,6 +363,9 @@ type SessionView struct {
 	// Supervising: its current turn was started by a supervision message about the tasks it handed out (#3124): the assistant
 	// does not push its normal finish (SupervisedFinish); it pushes what the user needs to know (notify_user).
 	Supervising bool `json:"supervising,omitempty"`
+	// Direction: the conversation is (or was) a leader, one direction of the owner's work (assistant/directions.go,
+	// #3484); nil for any other.
+	Direction *proto.Direction `json:"direction,omitempty"`
 }
 
 // ErrStaleSnapshot is manager.snapshot's stale_snapshot: a newer one came in first (two changes reported at once).

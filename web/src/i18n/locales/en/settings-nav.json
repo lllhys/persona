@@ -23,7 +23,7 @@
   "hint_extensions": "Add abilities: connectors, channels, voice",
   "hint_devices": "Signed-in phones and browsers",
   "hint_hub": "Hub updates and extension download mirrors",
-  "tab_managers": "Managers",
+  "tab_managers": "Assistants",
   "hint_managers": "Where each assistant runs and whether it's online",
   "group_personal": "Personal",
   "group_assistant": "Assistant",

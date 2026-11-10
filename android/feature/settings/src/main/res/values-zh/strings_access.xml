@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_access_title">Cloudflare Access</string>
+    <string name="settings_access_of">Cloudflare Access · %1$s</string>
+    <string name="settings_access_on">已开启</string>
+    <string name="settings_access_off">未开启</string>
+    <string name="settings_access_client_id">Client ID</string>
+    <string name="settings_access_client_secret">Client Secret</string>
+    <string name="settings_access_caption">用于发布在 Cloudflare Access 后面的 hub。在 Cloudflare Zero Trust 里创建服务令牌，并加进 hub 应用的 Service Auth 策略。只有发给这个 hub 的请求会带上它。</string>
+    <string name="settings_access_pairing_caption">只有 hub 在 Cloudflare Access 后面时才需要：连接前先填好服务令牌，不然第一个请求就会被挡回来。</string>
+    <string name="settings_access_save">保存</string>
+    <string name="settings_access_saved">服务令牌已保存</string>
+    <string name="settings_access_clear">删除服务令牌</string>
+    <string name="settings_access_cleared">服务令牌已删除</string>
+    <string name="settings_access_failed">服务令牌没保存上，请再试一次。</string>
+    <string name="settings_pairing_failure_access_required">这个 hub 在 Cloudflare Access 后面，需要服务令牌。在 Cloudflare Access 里填好 Client ID 和 Client Secret，再连接一次。</string>
+    <string name="settings_pairing_failure_access_rejected">Cloudflare Access 拒绝了服务令牌。检查 Client ID 和 Client Secret，以及 hub 的 Access 策略是否包含这个令牌。</string>
+    <string name="settings_pairing_recovery_access">填写服务令牌</string>
+</resources>

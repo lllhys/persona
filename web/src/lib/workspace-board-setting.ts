@@ -14,6 +14,8 @@ export interface WorkspaceBoardSetting {
 
 let state: WorkspaceBoardSetting = { enabled: null, canWrite: false };
 let loading: Promise<void> | null = null;
+// a read was asked for while one was out: the hub may have changed after that one was answered
+let again = false;
 // Every read, write and push of the switch, numbered: an answer applies only while nothing newer came after its request
 // (a read on its way when the user flips the switch, or a write overtaken by the next flip, would put an old value back).
 let rev = 0;
@@ -29,23 +31,39 @@ export function getWorkspaceBoardSetting(): WorkspaceBoardSetting {
   return state;
 }
 
-/** Reads the switch again (on every hello: another hub, or one that came back, may say otherwise). */
+/**
+ * Reads the switch again (on every hello: another hub, or one that came back, may say otherwise). Asked for while a read
+ * is out, it reads once more after that one (what changed while the socket was down is not lost), and the promise it
+ * returns covers that read too.
+ */
 export function refreshWorkspaceBoardSetting(): Promise<void> {
-  if (loading) return loading;
-  const mine = ++rev;
-  loading = api<{ enabled?: boolean; can_write?: boolean }>("/workspace-board/settings")
-    .then((r) => {
-      if (mine === rev) set({ enabled: r.enabled === true, canWrite: r.can_write === true });
-    })
-    .catch((e) => {
-      // a hub from before the switch showed the board to everyone and has nothing to turn it off with
-      if (e instanceof ApiError && e.status === 404 && mine === rev) set({ enabled: true, canWrite: false });
-      // anything else: keep what we had, the next hello asks again
-    })
-    .finally(() => {
+  if (loading) {
+    again = true;
+    return loading;
+  }
+  loading = (async () => {
+    try {
+      do {
+        again = false;
+        await readSwitch();
+      } while (again);
+    } finally {
       loading = null;
-    });
+    }
+  })();
   return loading;
+}
+
+async function readSwitch(): Promise<void> {
+  const mine = ++rev;
+  try {
+    const r = await api<{ enabled?: boolean; can_write?: boolean }>("/workspace-board/settings");
+    if (mine === rev) set({ enabled: r.enabled === true, canWrite: r.can_write === true });
+  } catch (e) {
+    // a hub from before the switch showed the board to everyone and has nothing to turn it off with
+    if (e instanceof ApiError && e.status === 404 && mine === rev) set({ enabled: true, canWrite: false });
+    // anything else: keep what we had, the next hello asks again
+  }
 }
 
 /** Turns the board on or off for this hub; shown at once, put back (and thrown) when the hub refuses. */
@@ -90,5 +108,6 @@ export function useWorkspaceBoardSetting(): WorkspaceBoardSetting {
 export function resetWorkspaceBoardSettingForTest() {
   state = { enabled: null, canWrite: false };
   loading = null;
+  again = false;
   rev = 0;
 }

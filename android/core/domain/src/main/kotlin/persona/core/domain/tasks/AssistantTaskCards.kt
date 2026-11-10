@@ -22,7 +22,13 @@ data class MergedTaskCard(
     }
 }
 
-data class DispatchHint(val count: Int) : AssistantExtra
+/** One task a reply dispatched (#3700): its to-do, null when the hub could not start it, and its title. */
+data class DispatchedTask(val todoId: String?, val title: String)
+
+/** The line under a reply that dispatched work: the tasks themselves, in plan order, each opening its own task. */
+data class DispatchHint(val tasks: List<DispatchedTask>) : AssistantExtra {
+    val count: Int get() = tasks.size
+}
 
 object AssistantTaskCards {
     private val lifecycle = setOf("plan", "task", "receipt", "review", "report")
@@ -105,7 +111,13 @@ object AssistantTaskCards {
         val dispatched = cards.groupBy { it.identity.planId ?: it.identity.id }.filterValues { group ->
             group.any { it.todo != null || it.plan?.state == "started" || it.records.any { record -> record.kind == "task" } }
         }
-        val payloads = dispatched.mapValues { (_, group) -> DispatchHint(group.size) }
+        val payloads = dispatched.mapValues { (_, group) ->
+            DispatchHint(group.sortedBy { it.identity.index ?: Int.MAX_VALUE }.map { card ->
+                // the to-do's current title, the plan's until the to-do arrives
+                DispatchedTask(card.todo?.id ?: card.identity.todoId,
+                    card.todo?.title ?: card.identity.index?.let { card.plan?.tasks?.getOrNull(it)?.title }.orEmpty())
+            })
+        }
         val combined = feed.filterNot(::isBackgroundEvent) + dispatched.map { (id, group) ->
             FeedItem(id, at = group.first().identity.at, kind = "unknown")
         }

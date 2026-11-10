@@ -28,5 +28,6 @@
   "session_choices_one": "{count} session has an id starting with {sid}. Choose one to open",
   "session_choices_other": "{count} sessions have an id starting with {sid}. Choose one to open",
   "title_health": "Health",
-  "title_agent_archives": "Archived agents"
+  "title_agent_archives": "Archived agents",
+  "title_subscriptions": "Subscriptions"
 }

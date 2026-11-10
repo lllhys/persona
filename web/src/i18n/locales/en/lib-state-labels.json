@@ -11,6 +11,7 @@
   "done": "Done",
   "interrupted": "Interrupted",
   "follow_up": "Follow-up",
+  "task_waiting": "Waiting",
   "not_started": "Not started",
   "failed": "Didn't start",
   "count_needs_you_one": "{count} needs you",

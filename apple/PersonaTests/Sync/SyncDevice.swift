@@ -128,6 +128,10 @@ final class SyncDevice {
         if req.method == "GET" {
             var r: [String: JSONValue] = ["get": .string(name)]
             if let a = req.query["after_seq"].flatMap(Int.init) { r["after_seq"] = .number(Double(a)) }
+            // an op's receipt goes by the case's id for the write that op went with (#2770)
+            if name == "/ops", let op = req.path.components(separatedBy: "/").last.flatMap({ UUID(uuidString: $0) }) {
+                r["id"] = .string((firstOp.first { $0.value == op } ?? lastOp.first { $0.value == op })?.key ?? op.uuidString)
+            }
             requests.append(r)
             return nil
         }

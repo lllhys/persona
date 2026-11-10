@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="designsystem_manager_switcher">管理者</string>
+    <string name="designsystem_manager_switcher">切换助手</string>
     <string name="designsystem_manager_offline">离线</string>
     <string name="designsystem_manager_last_synced">最后同步于 %1$s</string>
     <string name="designsystem_manager_just_now">刚刚</string>
@@ -12,4 +12,10 @@
     </plurals>
     <string name="designsystem_manager_chip_offline">%1$s，离线</string>
     <string name="designsystem_manager_offline_note">%1$s · %2$s</string>
+    <string name="designsystem_manager_current">当前</string>
+    <string name="designsystem_manager_others_waiting">别的助手有事等你处理</string>
+    <plurals name="designsystem_manager_waiting">
+        <item quantity="other">%1$d 件等你处理</item>
+    </plurals>
+    <string name="designsystem_manager_spoken">%1$s，%2$s</string>
 </resources>

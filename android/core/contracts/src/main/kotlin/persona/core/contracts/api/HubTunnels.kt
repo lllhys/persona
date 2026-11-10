@@ -167,6 +167,8 @@ data class HubTunnelInfo(
     val routed: TunnelKind? = null,
     /** The connection of the hub's group is up. */
     val online: Boolean = false,
+    /** The Cloudflare Access service token its requests carry; stored with the tunnels, not a tunnel itself. */
+    val access: HubAccess? = null,
 )
 
 /** This device's SSH key, one per device, never synced. */
@@ -200,6 +202,9 @@ interface HubTunnelSettings {
 
     suspend fun saveProxy(hubId: String, route: LocalProxyRoute?)
 
+    /** Null clears it. A connection that is not up tries again with the new value. */
+    suspend fun saveAccess(hubId: String, access: HubAccess?)
+
     companion object {
         val None: HubTunnelSettings = object : HubTunnelSettings {
             override val hubs = MutableStateFlow(emptyList<HubTunnelInfo>())
@@ -208,6 +213,7 @@ interface HubTunnelSettings {
             override suspend fun saveSsh(hubId: String, route: SshRoute?) = Unit
             override suspend fun verifyProxy(hubId: String, route: LocalProxyRoute) = Unit
             override suspend fun saveProxy(hubId: String, route: LocalProxyRoute?) = Unit
+            override suspend fun saveAccess(hubId: String, access: HubAccess?) = Unit
         }
     }
 }

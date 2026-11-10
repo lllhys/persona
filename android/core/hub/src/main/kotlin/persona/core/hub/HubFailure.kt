@@ -15,6 +15,10 @@ enum class HubError {
     AddressNotFound, ConnectionRefused, Unreachable, Timeout, CertificateMismatch,
     PairingExpired, Incompatible, TlsRequired, HubMismatch, LocalNetworkPermission,
     NoNetwork, RateLimited, Server, Protocol, Transport,
+    /** Cloudflare Access in front of the hub stopped the request: no service token set ([HubHttpClient.access]). */
+    AccessRequired,
+    /** Cloudflare Access refused the service token that was sent. */
+    AccessRejected,
 }
 
 class HubFailure(

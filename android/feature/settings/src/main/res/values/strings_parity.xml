@@ -27,7 +27,7 @@
     <string name="settings_providers_fold">Fold</string>
     <string name="settings_providers_unfold">Show</string>
     <string name="settings_providers_hidden_note">Only hidden in Persona; ~/.zshrc is not changed. Open one to bring it back.</string>
-    <string name="settings_providers_list_sep">, </string>
+    <string name="settings_providers_list_sep">", "</string>
     <string name="settings_providers_api_tag">API</string>
     <string name="settings_providers_delete">Delete provider</string>
     <string name="settings_providers_delete_title">Delete “%1$s”?</string>
@@ -154,7 +154,7 @@
     <string name="settings_storage_clear_all_title">Clear all %1$s of caches?</string>
     <string name="settings_storage_clear_text">Settings and the pairing stay.</string>
     <string name="settings_row_storage">Storage</string>
-    <string name="settings_row_assistant">Assistant</string>
+    <string name="settings_row_assistant">Assistant profile</string>
     <string name="settings_row_assistant_subtitle">Where it runs, what it knows about you, its time zone and notifications</string>
     <string name="settings_notify_system_off">Notifications are off</string>
     <string name="settings_notify_system_off_text">The settings below take effect once system settings allow Persona to send notifications.</string>

@@ -2,6 +2,7 @@
 import { BASE } from "./base";
 import type { Item } from "./types";
 import { injectedOf } from "./injected";
+import { taskCalls } from "./task-association";
 
 const PREFIX = "persona.feedCache.v1:";
 export const FEED_CACHE_MAX_BYTES = 256 * 1024;
@@ -150,10 +151,25 @@ function containsCredential(raw: string): boolean {
 
 /** Only the newest two user-question turns, matching GET items?turns=2; injected prompts do not consume the budget. */
 function newestTurns(value: FeedCache): FeedCache {
+  const userQuestion = (item: Item) => item.role === "user" && item.kind === "text" && !item.queued && !item.wake && !injectedOf(item);
   let start = value.items.length, turns = 0;
   while (start > 0 && turns < 2) {
-    const item = value.items[--start];
-    if (item.role === "user" && item.kind === "text" && !item.queued && !item.wake && !injectedOf(item)) turns++;
+    if (userQuestion(value.items[--start])) turns++;
+  }
+  // A retained report must not lose the earlier launch it belongs under. Extend the contiguous prefix, including
+  // that call's user turn, rather than caching a detached call that would break paging coverage.
+  const calls = taskCalls(value.items);
+  const needed = new Set<string>();
+  for (let at = value.items.length - 1; at >= 0 && (at >= start || needed.size); at--) {
+    const item = value.items[at];
+    if (item.task?.kind === "agent") {
+      const call = item.tool_use_id || calls.get(item.id);
+      if (call) needed.add(call);
+    }
+    if (item.kind === "tool_use" && (item.tool_name === "Agent" || item.tool_name === "Task") && needed.delete(item.tool_use_id ?? "") && at < start) {
+      start = at;
+      while (start > 0 && !userQuestion(value.items[start])) start--;
+    }
   }
   while (start > 0 && value.items[start].seq === value.items[start - 1].seq) start--;
   return {

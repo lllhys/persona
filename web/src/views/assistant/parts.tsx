@@ -1,5 +1,5 @@
 // Small controls the assistant pages share ("Scheduled tasks", "All chats", Settings › Assistant). Tokens only (src/styles.css).
-import { cx, EASE } from "../../ui/atoms";
+import { cx, Switch as AtomSwitch } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { SegmentedTrack } from "../../ui/Segmented";
 
@@ -9,32 +9,12 @@ export const inputClass =
 export const textareaClass =
   "w-full resize-y rounded-control bg-field px-3 py-2 text-[13px] leading-relaxed text-ink shadow-inset-field outline-none placeholder:text-ink-3 focus:shadow-[inset_0_0_0_1px_var(--accent)] disabled:opacity-60";
 
-/** An on/off switch; a click on it doesn't reach the row under it. */
+/** The shared switch (ui/atoms.tsx); a click or key on it doesn't reach the row under it. */
 export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (on: boolean) => void; label: string; disabled?: boolean }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation();
-        onChange(!checked);
-      }}
-      onKeyDown={(e) => e.stopPropagation()}
-      className={cx(
-        "touch-hit relative inline-flex h-5 w-[34px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-45",
-        checked ? "bg-green" : "bg-line-strong",
-      )}
-    >
-      <span
-        aria-hidden
-        className="absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-btn"
-        style={{ transform: checked ? "translateX(14px)" : "none", transition: `transform 220ms ${EASE}` }}
-      />
-    </button>
+    <span className="inline-flex shrink-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      <AtomSwitch on={checked} onChange={onChange} label={label} title={label} disabled={disabled} />
+    </span>
   );
 }
 

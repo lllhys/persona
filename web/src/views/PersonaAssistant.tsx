@@ -12,7 +12,7 @@ import { codedFailure, helpTopic, passesBySelf, refreshReadiness, type CodedFail
 import { navigate } from "../lib/router";
 import { refreshAssistant, useStore } from "../lib/store";
 import { effectiveLauncher, NEW_CONVERSATION, pickedLauncher, pickLauncher } from "../lib/assistant-chat";
-import { noteSent, outboxMessage } from "../lib/outbox";
+import { adoptedConversation, noteSent, outboxMessage } from "../lib/outbox";
 import { Button, cx, EASE, IconButton, Loading } from "../ui/atoms";
 import { Icon } from "../ui/icons";
 import { ChatView, Header } from "./chat/ChatView";
@@ -23,10 +23,12 @@ import { PersonaAvatar, usePersona } from "./assistant/Persona";
 import { ChatOnlyNote, FailureCard, ReadinessCard, useReadinessGate } from "./assistant/Readiness";
 import { DayLine } from "./assistant/Tasks";
 import { ShellHeaderSlots, ShellSwitch } from "./ShellSwitch";
-import { MAIN_TITLE, conversationTitle } from "./assistant/conversations";
+import { conversationTitle } from "./assistant/conversations";
 import { formatList, t } from "../i18n";
-import { ManagerSwitcher, useShownOffline } from "./ManagerParts";
-import { chosenManager, noteConversation, ownerHeaders, shownManager } from "../lib/manager-choice";
+import { useAssistantTitle, useShownOffline } from "./ManagerParts";
+import { chosenManager, noteConversation, ownerHeaders, sameManager, shownManager, useShownManager } from "../lib/manager-choice";
+import { useScopedMachines } from "../lib/current-assistant";
+import type { AssistantInfo, Session } from "../lib/types";
 
 /** The example questions of a hub without readiness (its `suggestions` replace them, docs/assistant/onboarding.md 4.7). */
 const SUGGESTIONS = [t("personaassistant.suggestion_meetings"), t("personaassistant.suggestion_agents"), t("personaassistant.suggestion_lark"), t("personaassistant.suggestion_projects")];
@@ -43,12 +45,31 @@ const noop = () => {};
 // @ in a new conversation: other sessions as context; no chat yet, so no files it touched (typed / and ~ paths still browse)
 const NEW_MENTION: MentionSource = { self: "persona-new", files: () => [], workspaces: true };
 
+/** The computer conversation sid runs on when it is another assistant's than the current one (opened from an inbox
+ *  item's hand-off, a link, the palette): the hub's list of sessions has it under that manager, or a page here started
+ *  it for that manager (lib/outbox.ts adoptConversation). "": the current assistant's (or not known to be another's). */
+export function elsewhere(sid: string, shown: string, assistant: AssistantInfo | null, sessions: Record<string, Session[]>): string {
+  if (assistant && (assistant.main === sid || assistant.conversations.some((c) => c.session_id === sid))) return "";
+  for (const list of Object.values(sessions)) {
+    const s = list.find((x) => x.session_id === sid);
+    if (s) return s.assistant && !sameManager(s.manager, shown) ? s.machine_id : "";
+  }
+  const adopted = adoptedConversation(sid);
+  return adopted && !sameManager(adopted.manager, shown) ? adopted.machine : "";
+}
+
 export function PersonaAssistant({ sid, fresh, onToggleSidebar }: { sid?: string; fresh?: boolean; onToggleSidebar: () => void }) {
   const assistant = useStore((s) => s.assistant);
   const assistantError = useStore((s) => s.assistantError);
   const loaded = useStore((s) => s.loaded);
-  // the shown manager offline (with several, ManagerParts): its history stays, nothing goes
-  const offline = useShownOffline();
+  // another assistant's conversation opens as itself, on its own computer, and the current assistant stays
+  // (docs/assistant/managers.md "Clients")
+  const shown = useShownManager();
+  const away = useStore((s) => (sid && !fresh ? elsewhere(sid, shown, s.assistant, s.sessions) : ""));
+  // the shown manager offline (with several, ManagerParts): its history stays, nothing goes; another's conversation
+  // says its own (ChatView, by the session's manager)
+  const shownOffline = useShownOffline();
+  const offline = away ? null : shownOffline;
   const scope = feedCacheScope();
   const manager = chosenManager() ?? "";
   // A reloaded conversation link needs its machine before the socket reconnects, so its saved outbox can appear.
@@ -61,7 +82,7 @@ export function PersonaAssistant({ sid, fresh, onToggleSidebar }: { sid?: string
     return page && (page.manager ?? "") === manager ? page : null;
   }, [scope, manager, sid, fresh, assistant]);
   const main = assistant?.main ?? cached?.sessionID;
-  const machine = assistant?.machine_id ?? cached?.machineID;
+  const machine = away || (assistant?.machine_id ?? cached?.machineID);
   if (fresh) return <Starter onToggleSidebar={onToggleSidebar} />;
   const id = sid ?? main;
   if (id) {
@@ -81,7 +102,6 @@ export function PersonaAssistant({ sid, fresh, onToggleSidebar }: { sid?: string
         starting={starting.has(id)}
         onToggleSidebar={onToggleSidebar}
         topCenter={topCenter}
-        banner={id === main ? <ManagerSwitcher className="border-b border-line" /> : undefined}
         mainCache={id === main && scope ? { scope, manager } : undefined}
         refreshError={id === main ? assistantError ?? undefined : undefined}
         onRefresh={id === main ? () => void refreshAssistant().catch(() => {}) : undefined}
@@ -113,8 +133,6 @@ function AssistantLoadFailed({ error, onToggleSidebar }: { error: string; onTogg
       <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
         <ShellHeaderSlots page="assistant" onToggleSidebar={onToggleSidebar} end={<IconButton icon="info" label={t("personaassistant.profile")} onClick={() => navigate({ name: "profile" })} />} />
       </header>
-      {/* another manager can still be picked when this one's page didn't load */}
-      <ManagerSwitcher />
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-[13px] text-ink-2">{t("personaassistant.load_failed", { error })}</p>
         <Button onClick={retry} busy={retrying} icon="retry">
@@ -131,13 +149,15 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function Starter({ main, onToggleSidebar }: { main?: boolean; onToggleSidebar: () => void }) {
   const assistant = useStore((s) => s.assistant);
-  const machines = useStore((s) => s.machines);
+  // the starter names the current assistant's computers, the ones it can work on
+  const machines = useScopedMachines();
   const persona = usePersona();
   const [seed, setSeed] = useState(0);
 
   const gate = useReadinessGate();
   const [failure, setFailure] = useState<CodedFailure | null>(null);
   const offline = useShownOffline();
+  const mainTitle = useAssistantTitle();
   // the first message while its start is on its way (#1697): the page is the conversation's already, the message at its
   // top and "Preparing" under it, the box at the bottom, so nothing moves when the conversation itself takes over
   const [sending, setSending] = useState<{ out: Outgoing; launcher: string; at: number } | null>(null);
@@ -228,7 +248,7 @@ function Starter({ main, onToggleSidebar }: { main?: boolean; onToggleSidebar: (
       {sending ? (
         // the conversation page's own header, as it will read once the conversation is there
         <Header
-          title={main ? MAIN_TITLE : conversationTitle({ title: "" })}
+          title={main ? mainTitle : conversationTitle({ title: "" })}
           subtitle={main ? undefined : [sending.launcher, ago(new Date(sending.at).toISOString())].join(" · ")}
           machineName=""
           assistant
@@ -253,7 +273,6 @@ function Starter({ main, onToggleSidebar }: { main?: boolean; onToggleSidebar: (
         </button>
       </header>
       )}
-      {main && <ManagerSwitcher className={sending ? "border-b border-line" : undefined} />}
       <div className={sending ? "flex min-h-0 flex-1 flex-col" : "flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-5 pb-[10vh]"}>
         <div className={sending ? "contents" : "w-full max-w-[640px]"} style={sending ? undefined : { animation: `fade-up 450ms ${EASE} both` }}>
           {sending ? (

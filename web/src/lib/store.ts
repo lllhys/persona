@@ -23,7 +23,7 @@ import type { AssistantInfo, Interaction, Item, Machine, MeshHub, Session } from
 import type { Resolution } from "./answered";
 import { answersIn, type DelegatedAnswer, type Reanswer } from "./delegate";
 import type { AgentLaunch } from "./new-agent";
-import { isSpacesSupported, type Todo } from "./todos";
+import { isSpacesSupported, makeSessionLookup, type SessionLookup, type Todo } from "./todos";
 import { releaseAttachments } from "./attachments";
 import { dropElicitationDraft } from "./elicitation";
 import type { OutboxEntry } from "./outbox";
@@ -64,6 +64,9 @@ export interface State {
   /** Compact list rows never overwrite a chat's complete details in sessions. */
   sessionSummaries: Session[];
   sessionCounts: ListCounts | null;
+  /** List rows of open tasks' agents the Agents window does not hold, by runtimeIdentity (#3274): the list's deltas
+   *  for them and an exact lookup for one no list has, so a task's state never reads a missing agent as stopped. */
+  taskRows: Record<string, Session>;
   /** Finished agents this page marked seen that the hub has not recorded yet, by runtimeIdentity (lib/seen-outbox.ts):
    *  the rows in `sessions` and `sessionSummaries` are held seen meanwhile, the paged list's rows by the row itself. */
   seen: SeenMarks;
@@ -102,6 +105,7 @@ let state: State = {
   sessions: {},
   sessionSummaries: [],
   sessionCounts: null,
+  taskRows: {},
   seen: {},
   interactions: [],
   answered: {},
@@ -209,7 +213,79 @@ onRuntimeChanges((upsert, remove) => {
   const known = new Set(Object.values(state.sessions).flat().map(runtimeIdentity));
   const updates = runtimeSessions.isSummary() ? [] : upsert.filter((row) => known.has(runtimeIdentity(row)));
   applyCompleteSessions(updates, remove);
+  keepTaskRows(upsert, remove.map(runtimeRemoval));
 });
+
+/** The runtime identities of the open tasks' agents. */
+function openTaskAgents(): Set<string> {
+  const out = new Set<string>();
+  for (const todo of state.todos) {
+    if (todo.done_at) continue;
+    for (const a of todo.agents ?? []) if (!a.released_at) out.add(runtimeIdentity({ machine_id: a.machine_id, session_id: a.session_id } as Session));
+  }
+  return out;
+}
+
+/** Keeps the list's newest rows of open tasks' agents (`taskRows`), whether the Agents window holds them or not. */
+function keepTaskRows(upsert: Session[], remove: string[] = []) {
+  const agents = openTaskAgents();
+  let rows = state.taskRows;
+  const change = () => { if (rows === state.taskRows) rows = { ...rows }; };
+  for (const row of upsert) {
+    const id = runtimeIdentity(row);
+    if (agents.has(id) && rows[id] !== row) { change(); rows[id] = row; }
+  }
+  for (const id of remove) if (id in rows) { change(); delete rows[id]; }
+  for (const id of Object.keys(rows)) if (!agents.has(id)) { change(); delete rows[id]; }
+  if (rows !== state.taskRows) set({ taskRows: rows });
+}
+
+/** `base`, and for an agent it does not have, the list's row of an open task's agent (`taskRows`). */
+export function withTaskRows(base: SessionLookup, rows: Record<string, Session>): SessionLookup {
+  return (mid, sid) => base(mid, sid) ?? rows[runtimeIdentity({ machine_id: mid, session_id: sid } as Session)];
+}
+
+/** How a task's agents are now, for its status, card and pill (#3274): the newest of the list's row (the Agents window or
+ *  `taskRows`, which the list's deltas keep current) and the chat's complete row, which stops being refreshed once its
+ *  chat closes. The complete row stands while it says the same about the agent's state, for its subagents and steps. */
+export function taskSessionLookup(s: Pick<State, "sessions" | "sessionSummaries" | "taskRows">): SessionLookup {
+  const full = makeSessionLookup(s.sessions);
+  const listed = withTaskRows(s.sessionSummaries.length ? makeSessionLookup(s.sessionSummaries) : () => undefined, s.taskRows);
+  return (mid, sid) => {
+    const detail = full(mid, sid);
+    const row = listed(mid, sid);
+    if (!row || !detail || row === detail) return row ?? detail;
+    if ((detail.rev ?? 0) > (row.rev ?? 0)) return detail;
+    // New summaries carry all the tray's live work metadata. A same-state update can change counts/phase/progress
+    // without changing work or pending cards; never let an older open-chat snapshot hide it.
+    if (row.background_tasks_count !== undefined) return row;
+    const same = row.state === detail.state && !!row.background_working === !!detail.background_working
+      && (row.pending_interactions ?? 0) === (detail.pending_interactions ?? 0) && sameValue(row.work, detail.work);
+    return same ? detail : row;
+  };
+}
+
+const taskRowsAsked = new Set<string>();
+/** An open task's agent that no list row or chat detail has (outside the Agents window and quiet since it loaded): one
+ *  exact lookup for it (`sessions_lookup`), then the list's deltas keep it (#3274). */
+async function lookUpTaskAgents() {
+  if (!state.features.includes(SESSIONS_LOOKUP_FEATURE)) return;
+  const listed = new Set(state.sessionSummaries.map(runtimeIdentity));
+  const missing = [...openTaskAgents()].filter((id) => !taskRowsAsked.has(id) && !listed.has(id) && !(id in state.taskRows)
+    && !(state.sessions[JSON.parse(id)[0]] ?? []).some((s) => runtimeIdentity(s) === id));
+  for (const id of missing.slice(0, 20)) {
+    taskRowsAsked.add(id);
+    const [mid, sid] = JSON.parse(id) as [string, string];
+    const params = new URLSearchParams({ summary: "1", limit: "1", machine_id: mid, session_id: sid });
+    try {
+      const page = await api<{ sessions?: Session[] }>(`/sessions?${params}`);
+      const row = page?.sessions?.[0];
+      if (row && runtimeIdentity(row) === id) keepTaskRows([row]);
+    } catch {
+      taskRowsAsked.delete(id); // asked again with the next todos or connection
+    }
+  }
+}
 
 /** A clicked filtered row may not belong to the unfiltered first page. Keep a small hint until exact lookup finishes. */
 export function rememberSessionRow(row: Session) {
@@ -624,6 +700,8 @@ function onMessage(msg: Record<string, unknown>) {
       if (runtimeSessions.isSummary() !== summaryMode) listedFull.clear();
       runtimeSessions.setSummary(summaryMode);
       setAgentListMode(state.features.includes(SESSIONS_LIST_FEATURE));
+      taskRowsAsked.clear();
+      void lookUpTaskAgents();
       // subscriptions are per connection: chats resubscribe from what they have either way
       sessionListeners.forEach((ls) => ls.forEach((l) => l.reconnected?.()));
       // a seen sent over the socket that went may be lost with it
@@ -707,7 +785,7 @@ function onMessage(msg: Record<string, unknown>) {
       agentsChanged(Array.isArray(msg.session_ids) ? (msg.session_ids as string[]) : []);
       break;
     case "todos":
-      void refreshTodos();
+      todosPushed();
       break;
     case "delta":
       sessionListeners.get(key(msg.machine_id as string, msg.session_id as string))?.forEach((l) => l.delta?.(msg.text as string));
@@ -828,6 +906,8 @@ export function upsertSession(s: Session) {
   const next = i < 0 ? [...list, s] : list.map((x, j) => {
     if (j !== i) return x;
     const merged = { ...x, ...s };
+    merged.background_working = s.background_working;
+    merged.background_waiting = s.background_waiting;
     // An optimistic action can start from getSession's summary fallback. A later complete info response must
     // drop its scalar summary markers, or they keep overriding the complete task arrays indefinitely.
     if (typeof s.waiting !== "boolean") {
@@ -835,6 +915,18 @@ export function upsertSession(s: Session) {
       delete merged.background_count;
       delete merged.running_subagents;
       delete merged.running_workflows;
+      delete merged.background_tasks_count;
+      delete merged.workflow_progress;
+      merged.background = s.background;
+      merged.subagents = s.subagents;
+      merged.workflows = s.workflows;
+    } else {
+      // A summary is a complete projection: omitted zero counts and a disappeared run clear the previous one.
+      merged.background_count = s.background_count ?? 0;
+      merged.running_subagents = s.running_subagents ?? 0;
+      merged.running_workflows = s.running_workflows ?? 0;
+      merged.background_tasks_count = s.background_tasks_count;
+      merged.workflow_progress = s.workflow_progress;
     }
     return merged;
   });
@@ -1087,7 +1179,10 @@ function applyTodos(todos: PromiseSettledResult<{ todos: Todo[] }>, fresh: () =>
     for (const t of list) {
       if (t.manager) noteItemManager(`/todos/${encodeURIComponent(t.id)}`, t.manager);
     }
-    return set({ todos: list, todosSupported: true, todosLoaded: true, todosError: null, spacesSupported: computeSpacesSupported(list) });
+    set({ todos: list, todosSupported: true, todosLoaded: true, todosError: null, spacesSupported: computeSpacesSupported(list) });
+    keepTaskRows([]);
+    void lookUpTaskAgents();
+    return;
   }
   const reason = todos.reason;
   if (reason instanceof ApiError && reason.status === 404) return set({ todosSupported: false, todosLoaded: true, todosError: null, spacesSupported: false });
@@ -1116,6 +1211,27 @@ export function dropTodo(id: string) {
   noteItemManager(`/todos/${encodeURIComponent(id)}`, undefined);
   todosAsked.forget();
   set({ todos: state.todos.filter((t) => t.id !== id) });
+}
+
+// A push that says the to-dos changed ({"type":"todos"}, a task's feed item) comes in bursts: the hub sends one per write,
+// and a supervised task's report, stage and links land within the same second. Every GET /todos is the whole list (tens
+// of KB on a busy hub), so pushes read it one at a time: one that lands while such a read is out asks for one more read
+// after it, however many land meanwhile. What this page itself just changed still reads at once (refreshTodos).
+let pushedRead = false;
+let pushedAgain = false;
+
+export function todosPushed() {
+  if (pushedRead) {
+    pushedAgain = true;
+    return;
+  }
+  pushedRead = true;
+  void refreshTodos().finally(() => {
+    pushedRead = false;
+    if (!pushedAgain) return;
+    pushedAgain = false;
+    todosPushed();
+  });
 }
 
 export async function refreshTodos() {
@@ -1160,9 +1276,10 @@ const assistantByManager = new Map<string, AssistantInfo>();
 /** The assistant page asked for: "" the default's (no header goes, whichever manager the default turns out to be),
  *  else the manager picked on it. */
 const pageOf = () => chosenManager() ?? "";
-/** Where the page's answer is kept: under its manager once the roster's default is known; "" before (the default's,
- *  whose id is not known yet), moved under the default's id when it is. */
-const cacheKey = () => (defaultKnown() ? shownManager() : "");
+/** Where the page's answer is kept: under its manager, the one picked (kept across reloads, so it may be there before
+ *  the roster is read) or the default once the roster said which that is; "" before (the default's, whose id is not
+ *  known yet), moved under the default's id when it is. */
+const cacheKey = () => chosenManager() ?? (defaultKnown() ? defaultManager() : "");
 
 // The manager whose page is drawn (null: the default's, before the roster said which that is).
 let drawnPage = { page: pageOf(), manager: null as string | null };
@@ -1304,6 +1421,7 @@ export function reset() {
   endedHere.clear();
   // a /todos or /assistant answer still on its way belongs to the old login
   todosAsked.forget();
+  pushedAgain = false; // the next login reads its own list
   assistantAsked.forget();
   assistantByManager.clear();
   // and so do the pins and mutes of a refresh() or a failed save still on its way
@@ -1314,6 +1432,7 @@ export function reset() {
   sessionsPushed.clear();
   resetAgents();
   rowHints.clear();
+  taskRowsAsked.clear();
   listedFull.clear();
   runtimeSessions.reset();
   clearMemoryPages();
@@ -1325,6 +1444,7 @@ export function reset() {
     sessions: {},
   sessionSummaries: [],
   sessionCounts: null,
+    taskRows: {},
     seen: {},
     interactions: [],
     answered: {},

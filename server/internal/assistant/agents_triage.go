@@ -2,14 +2,19 @@ package assistant
 
 import (
 	"context"
+	"github.com/nwverse/persona/server/internal/closeout"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/textfmt"
 )
 
 // The triage's model (purpose agent.triage, "Model Settings › Triage"'s): the hub's models.json, the one place the Agents
@@ -49,6 +54,18 @@ func (s *Service) triageTurnModel(ctx context.Context, v *workView, machine stri
 	if reply == "" {
 		return &proto.WorkState{}, false, nil
 	}
+	co, coArtifacts, hasCloseout := closeout.Parse(reply)
+	if hasCloseout {
+		s.checkCloseout(ctx, &co, coArtifacts)
+		if closeoutDisproved(co) {
+			// It says merged or deployed and it is not: nobody can call this turn finished. Unsure, with the closeout
+			// and what was found kept for whoever looks.
+			return &proto.WorkState{Closeout: &co, Artifacts: workArtifacts(coArtifacts), By: "rule"}, false, nil
+		}
+	}
+	if hasCloseout && co.Status == proto.CloseoutDone {
+		return closeoutDone(co, coArtifacts, s.lang(ctx)), false, nil // its own closeout says so: no model
+	}
 	others, byShort := triageOthers(machine, c.SessionID, v.sessions(machine))
 	name := machine
 	if d, ok := v.device(machine); ok && d.Name != "" {
@@ -64,13 +81,82 @@ func (s *Service) triageTurnModel(ctx context.Context, v *workView, machine stri
 		in.ApprovedWait, in.ApprovedThen, in.ApprovedByTask = a.wait, a.then, a.task != ""
 	}
 	s.work.mu.Unlock()
+	if st := s.fleetStore(); st != nil {
+		// Bound the history read separately from the 20 question/answer pairs sent to the model.
+		records, err := st.Interactions(ctx, machine, c.SessionID, 100)
+		if err != nil {
+			return nil, false, err
+		}
+		in.Answered = triageAnswered(records)
+	}
 	var out triageOut
 	if err := s.purposeModel("agent.triage").JSON(ctx, prompts.RenderAgentTriage(prompts.AgentTriage{Owner: s.owner(ctx), Language: answerLanguage(s.hello(ctx).Locale)}),
 		prompts.RenderAgentTriageInput(in), &out); err != nil {
 		return nil, false, err
 	}
 	same = out.Wait != nil && out.Wait.Approved && in.ApprovedThen != ""
-	return triageWork(out, byShort, time.Now(), s.lang(ctx)), same, nil
+	out.Questions = slices.DeleteFunc(out.Questions, func(q proto.Question) bool {
+		text := strings.TrimSpace(q.Question)
+		return text == "" || !strings.Contains(reply, text) || !explicitUserRequest(text)
+	})
+	w = triageWork(out, byShort, time.Now(), s.lang(ctx))
+	if hasCloseout {
+		w = withCloseout(w, co, coArtifacts)
+	}
+	return w, same, nil
+}
+
+// Interactions returns newest first. Deferral, delegation and permission approval are not user decisions on questions.
+func triageAnswered(records []db.InteractionRecord) []prompts.AgentAnswerItem {
+	var answered []prompts.AgentAnswerItem
+	for _, rec := range records {
+		r := rec.Resolution
+		if rec.Interaction.Kind != proto.IxQuestion || rec.Status != "resolved" || r == nil || r.Cancel || r.Dismiss || r.AnsweredBy == proto.AnsweredByAssistant {
+			continue
+		}
+		for _, q := range rec.Interaction.Questions {
+			a := strings.TrimSpace(r.Answers[q.Question])
+			if strings.TrimSpace(q.Question) == "" || a == "" || deferredWorkOption(q, a) {
+				continue
+			}
+			switch canonicalAnswer(a) {
+			case answerSkip, answerNotNow, answerHold, answerWait, answerStop:
+				continue
+			}
+			answered = append(answered, prompts.AgentAnswerItem{Question: textfmt.Cut(q.Question, 200), Answer: textfmt.Cut(a, 200)})
+			if len(answered) == 20 {
+				return answered
+			}
+		}
+	}
+	return answered
+}
+
+// A model may select a request, never turn a statement into one. The prompt handles intent; this checks its evidence.
+var userRequest = lazyre.New(`(?i)^(?:请(?:你|您)?(?:确认|选择|提供|告诉|决定|批准|授权|登录|打开|回复|帮我|在)|麻烦|你决定|需要(?:你|您)(?:确认|选择|提供|决定|批准|授权)|(?:please\s+)?(?:confirm(?:\s+to)?|choose|select|provide|tell|approve|authorize|sign in|log in|open|visit|let me know|reply)\b|(?:確認|選択|承認|入力|ログイン)してください)`) // i18n-ignore: match literal request syntax, not UI text
+var requestAnnotation = lazyre.New(`\s*(?:\([^()\n]*\)|（[^（）\n]*）|\[[^\[\]\n]*\]|【[^【】\n]*】)$`)
+
+func explicitUserRequest(text string) bool {
+	text = strings.TrimSpace(text)
+	if userRequest.MatchString(strings.TrimLeft(text, "*_`\"'「『（(【")) { // i18n-ignore: strip literal Markdown and quotation marks
+		return true
+	}
+	for {
+		// Strip decoration first, but keep parentheses until a trailing annotation has been considered.
+		text = strings.TrimRightFunc(text, func(r rune) bool {
+			return unicode.IsSpace(r) || strings.ContainsRune("*_`\"'」』”’", r) || unicode.Is(unicode.So, r) || // i18n-ignore: literal reply punctuation
+				r == '️' || r == '︎' || r == '‍' || r >= 0x1F3FB && r <= 0x1F3FF
+		})
+		if loc := requestAnnotation.FindStringIndex(text); loc != nil && loc[0] > 0 {
+			text = text[:loc[0]]
+			continue
+		}
+		trimmed := strings.TrimRight(text, "）)】]") // i18n-ignore: literal closing brackets
+		if trimmed == text {
+			return strings.HasSuffix(text, "?") || strings.HasSuffix(text, "？") // i18n-ignore: literal question punctuation
+		}
+		text = trimmed
+	}
 }
 
 // projectsFor are the names of the knowledge base's projects whose directories hold cwd on machine (none when it

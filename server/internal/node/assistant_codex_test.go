@@ -743,11 +743,17 @@ func TestCodexGetsRealWritableRoots(t *testing.T) {
 // starts (#2571).
 func TestAssistantCodexTurnError(t *testing.T) {
 	n := codexTestNode(t)
+	probedLaunchers(t, map[string]string{"cx_test": "codex"})
+	models := assistantRecoveryModels
+	assistantRecoveryModels = func(context.Context, *Node, string) (proto.LauncherModels, error) {
+		return proto.LauncherModels{Agent: "codex", Models: []proto.AgentModel{}}, nil // no fallback after the same-model retry
+	}
+	t.Cleanup(func() { assistantRecoveryModels = models })
 	cwd := t.TempDir()
 	p, c, f := newFakeCodex(t, n, cwd)
-	p.id = "proc-err"
+	p.id = testThread
 	c.threadID = testThread
-	n.procs["proc-err"] = p
+	n.procs[testThread] = p
 
 	turn := func(id string) {
 		f.push(map[string]any{"method": "turn/started", "params": map[string]any{"threadId": testThread, "turn": map[string]any{"id": id, "status": "inProgress"}}})
@@ -769,7 +775,7 @@ func TestAssistantCodexTurnError(t *testing.T) {
 	session := func() proto.Session {
 		list := n.assistantSessions()
 		for _, s := range list {
-			if s.SessionID == "proc-err" {
+			if s.SessionID == testThread {
 				return s
 			}
 		}
@@ -778,9 +784,17 @@ func TestAssistantCodexTurnError(t *testing.T) {
 	}
 
 	turn("t1")
-	end("t1", "failed", map[string]any{"message": "unexpected status 503", "codexErrorInfo": map[string]any{"httpConnectionFailed": map[string]any{"httpStatusCode": 503}}})
+	transient := map[string]any{"message": "unexpected status 503", "codexErrorInfo": map[string]any{"httpConnectionFailed": map[string]any{"httpStatusCode": 503}}}
+	f.push(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": testThread,
+		"turn": map[string]any{"id": "t1", "status": "failed", "error": transient}}})
+	waitFor(t, "the same-model Codex retry", func() bool { return len(f.sent("turn/start")) == 1 })
+	if got := f.sent("turn/start"); len(got) != 1 || !strings.Contains(string(got[0].Params), "persona-context") {
+		t.Fatalf("the retry did not resume with hidden context: %+v", got)
+	}
+	turn("t1-retry")
+	end("t1-retry", "failed", transient) // no next model: the second failure is final
 	if s := session(); s.TurnError != "unexpected status 503" || s.TurnErrorKind != proto.TurnErrorTransient {
-		t.Fatalf("failed turn: %q, %q", s.TurnError, s.TurnErrorKind)
+		t.Fatalf("failed turn after its bounded recovery: %q, %q", s.TurnError, s.TurnErrorKind)
 	}
 
 	turn("t2")

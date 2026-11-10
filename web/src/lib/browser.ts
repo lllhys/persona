@@ -27,13 +27,13 @@ export interface BrowserStep {
   text: string;
 }
 
-/** What the section shows below the switch (nothing while it is off). */
+/** What the section shows below the switch (nothing while it is off). The live screen is the page's (showsScreen). */
 export type BrowserView =
   | { kind: "off" }
   | { kind: "offline" }
   | { kind: "installing"; text: string }
   | { kind: "install"; text: string; retry: boolean }
-  | { kind: "setup"; text: string; running: boolean; steps: BrowserStep[]; screen: boolean }
+  | { kind: "setup"; text: string; running: boolean; steps: BrowserStep[] }
   | { kind: "unready"; text: string }
   | { kind: "ready"; text: string; steps: BrowserStep[]; recheck: boolean };
 
@@ -68,7 +68,7 @@ export function browserView(b: MachineBrowser, online: boolean): BrowserView {
     return { kind: "install", text: failed ? t("lib-browser.install_failed", { error: job.error || t("lib-browser.installer_error") }) : t("lib-browser.not_installed"), retry: job?.state === "failed" };
   }
   if (!b.set_up) {
-    return { kind: "setup", text: job?.kind === "open" ? t("lib-browser.setup_opened") : t("lib-browser.setup_needed"), running: job?.state === "running", steps: setUpSteps(), screen: !!b.screen_sharing };
+    return { kind: "setup", text: job?.kind === "open" ? t("lib-browser.setup_opened") : t("lib-browser.setup_needed"), running: job?.state === "running", steps: setUpSteps() };
   }
   if (!b.ready) return { kind: "unready", text: b.note || t("lib-browser.not_ready") };
   return { kind: "ready", text: b.version ? t("lib-browser.ready_version", { version: b.version }) : t("lib-browser.ready"), steps: readySteps(b), recheck: b.analytics === "on" };

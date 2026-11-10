@@ -136,6 +136,7 @@ type TriageConfig struct {
 	Wake         *bool `json:"wake,omitempty"`
 	Decide       *bool `json:"decide,omitempty"`
 	ToolLoop     *bool `json:"tool_loop,omitempty"`
+	Closeout     *bool `json:"closeout,omitempty"`
 	// TransientRetry: the initial value of the transient_retry switch (unset: on): "Continue" after a transient model
 	// error, as a rule, whether or not the triage itself is on.
 	TransientRetry *bool `json:"transient_retry,omitempty"`

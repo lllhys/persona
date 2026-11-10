@@ -119,21 +119,19 @@ class ScopedHealthTests(unittest.TestCase):
     def test_old_hub_missing_default_field_is_not_a_capability_probe(self):
         _, identity, snapshot_hash = self.snapshot()
         self.assertEqual(identity['main'], 'main-fixture')
-        self.assertEqual(len(snapshot_hash), 64)
+        self.assertIsNone(snapshot_hash)
         self.assertNotIn('default_permission_mode', self.answers['assistant?manager=m-fixture&archived=true'])
 
-    def test_wrong_scope_or_main_and_busy_or_unknown_refused(self):
+    def test_wrong_scope_or_main_refused_but_display_activity_is_not_authority(self):
         for change in [dict(manager='m-other'), dict(main='other-main')]:
             with self.subTest(change=change), patch.dict(self.answers['assistant?manager=m-fixture&archived=true'], change), self.assertRaises(ValueError):
                 self.snapshot()
-        row = self.answers['sessions?machine_id=box']['sessions'][0]
-        for change in [dict(state='working'), dict(state='unknown'), dict(manager='m-other'),
-                       dict(compaction={'state': 'running'})]:
-            with self.subTest(change=change), patch.dict(row, change), self.assertRaises(ValueError):
-                self.snapshot()
+        # Display lists have no authoritative activity envelope. Health ignores them.
+        self.answers['sessions?machine_id=box']['sessions'][0]['state'] = 'working'
+        self.snapshot()
 
     def test_missing_main_or_offline_machine_refused(self):
-        self.answers['assistant?manager=m-fixture&archived=true']['conversations'] = []
+        self.answers['assistant?manager=m-fixture&archived=true']['main'] = ''
         with self.assertRaises(promoter.SnapshotPending): self.snapshot()
         self.answers['machines']['machines'][0]['online'] = False
         with self.assertRaises(promoter.SnapshotPending): self.snapshot()
@@ -182,6 +180,7 @@ class PublisherTransactionTests(unittest.TestCase):
             patch.object(promoter, 'transport_argv', return_value=['ssh', 'example.invalid']),
             patch.object(promoter, 'inspect_target', return_value={'phase': 'checked', 'manager_id': 'm-fixture'}),
             patch.object(promoter, 'snapshot', return_value=({'version': self.manifest['version']}, self.identity, 'c' * 64)),
+            patch.object(promoter, 'idle_evidence', side_effect=lambda *args: ('c' * 64, dt.datetime.now(dt.timezone.utc))),
             patch.object(promoter, 'nodes', return_value={'box': {'version': 'old', 'deploying': False}}),
             patch.object(promoter, 'manager_manifest', return_value=self.manifest),
             patch.object(promoter, 'verify_binary'), patch.object(promoter, 'time', wraps=promoter.time),
@@ -204,7 +203,7 @@ class PublisherTransactionTests(unittest.TestCase):
         receipt = promoter.promote(self.payload)
         self.assertEqual(receipt['phase'], 'confirmed')
         self.assertEqual(receipt['source'], 'a' * 40)
-        self.assertEqual(self.commands, ['stage', 'check', 'refresh', 'start', 'status', 'confirm', 'status'])
+        self.assertEqual(self.commands, ['stage', 'refresh', 'check', 'refresh', 'start', 'status', 'confirm', 'status'])
 
     def test_transfer_over_one_minute_refreshes_idle_proof_before_start(self):
         initial = dt.datetime.now(dt.timezone.utc)
@@ -232,16 +231,26 @@ class PublisherTransactionTests(unittest.TestCase):
             return original_remote(argv, command, data, timeout)
 
         promoter.remote.side_effect = remote
-        promoter.snapshot.side_effect = lambda *args, **kwargs: (
-            {'version': self.manifest['version']}, self.identity,
-            ('c' if clock[0] == initial else 'd') * 64)
+        promoter.idle_evidence.side_effect = lambda *args, **kwargs: (('c' if clock[0] == initial else 'd') * 64, clock[0])
         with patch.object(promoter.dt, 'datetime', Clock):
             receipt = promoter.promote(self.payload)
         self.assertEqual(receipt['phase'], 'confirmed')
-        self.assertLess(actual_datetime.fromisoformat(plans['initial']['idle_valid_until']), clock[0])
+        self.assertNotIn('idle_valid_until', plans['initial'])
+        self.assertNotIn('idle_snapshot_sha256', plans['initial'])
         mutable = {'idle_verified_at', 'idle_valid_until', 'idle_snapshot_sha256'}
         self.assertEqual({k: v for k, v in plans['initial'].items() if k not in mutable},
                          {k: v for k, v in plans['fresh'].items() if k not in mutable})
+
+    def test_idle_deadline_is_not_renewed_by_later_publication_work(self):
+        observed = dt.datetime.now(dt.timezone.utc)
+        target = dict(self.target, candidate_size=9)
+        plan = promoter.make_plan(target, self.manifest, 'run', ('c' * 64, observed),
+                                  observed + dt.timedelta(seconds=45))
+        self.assertEqual(plan['idle_verified_at'], observed.isoformat())
+        self.assertEqual(plan['idle_valid_until'], (observed + dt.timedelta(seconds=60)).isoformat())
+        with self.assertRaisesRegex(ValueError, 'expired'):
+            promoter.make_plan(target, self.manifest, 'run', ('c' * 64, observed),
+                               observed + dt.timedelta(seconds=60))
 
     def test_read_only_check_does_not_stage_or_start(self):
         before = sorted(str(p) for p in self.root.rglob('*'))
@@ -250,8 +259,23 @@ class PublisherTransactionTests(unittest.TestCase):
         self.assertEqual(self.commands, [])
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob('*')))
 
+    def test_busy_or_missing_authority_never_checks_or_starts_candidate(self):
+        promoter.idle_evidence.side_effect = ValueError('busy or incomplete runtime')
+        with self.assertRaisesRegex(ValueError, 'busy or incomplete'):
+            promoter.promote(self.payload)
+        self.assertEqual(self.commands, ['stage'])
+        self.assertNotIn('check', self.commands)
+        self.assertNotIn('start', self.commands)
+
+    def test_second_authority_failure_never_starts(self):
+        promoter.idle_evidence.side_effect = [('c' * 64, dt.datetime.now(dt.timezone.utc)), ValueError('runtime became busy')]
+        with self.assertRaisesRegex(ValueError, 'became busy'):
+            promoter.promote(self.payload)
+        self.assertIn('check', self.commands)
+        self.assertNotIn('start', self.commands)
+
     def test_hub_health_failure_requests_rollback_never_confirms(self):
-        promoter.snapshot.side_effect = [({'version': self.manifest['version']}, self.identity, 'c' * 64)] * 3 + [
+        promoter.snapshot.side_effect = [({'version': self.manifest['version']}, self.identity, 'c' * 64)] * 4 + [
             ({'version': 'old'}, self.identity, 'c' * 64)]
         with self.assertRaisesRegex(RuntimeError, 'live version'):
             promoter.promote(self.payload)
@@ -260,18 +284,18 @@ class PublisherTransactionTests(unittest.TestCase):
 
     def test_ready_transient_reconnect_retries_then_confirms(self):
         healthy = ({'version': self.manifest['version']}, self.identity, 'c' * 64)
-        promoter.snapshot.side_effect = [healthy] * 3 + [
+        promoter.snapshot.side_effect = [healthy] * 4 + [
             promoter.SnapshotPending('Target machines must be known and online'),
             promoter.SnapshotPending('Original main has not resynced'), healthy]
         self.statuses = iter([{'phase': 'applied', 'ready': {'pid': 42}}] * 3 + [{'phase': 'confirmed'}])
         self.assertEqual(promoter.promote(self.payload)['phase'], 'confirmed')
-        self.assertEqual(promoter.snapshot.call_count, 6)
+        self.assertEqual(promoter.snapshot.call_count, 7)
         self.assertNotIn('rollback', self.commands)
         self.assertEqual(self.commands.count('confirm'), 1)
 
     def test_ready_transient_reconnect_is_bounded_and_rolls_back(self):
         healthy = ({'version': self.manifest['version']}, self.identity, 'c' * 64)
-        promoter.snapshot.side_effect = [healthy] * 3 + [promoter.SnapshotPending('still offline')]
+        promoter.snapshot.side_effect = [healthy] * 4 + [promoter.SnapshotPending('still offline')]
         promoter.time.monotonic.side_effect = [0, 0, 1, 61]
         with self.assertRaisesRegex(TimeoutError, '60 seconds'):
             promoter.promote(self.payload)
@@ -286,10 +310,10 @@ class PublisherTransactionTests(unittest.TestCase):
         def api(root, path):
             if path == 'managers':
                 snapshots[0] += 1
-                return {'managers': [dict(id='m-fixture', online=snapshots[0] != 7,
+                return {'managers': [dict(id='m-fixture', online=snapshots[0] != 9,
                                          deploy='service', version=self.manifest['version'])]}
             if path == 'assistant?manager=m-fixture&archived=true':
-                return dict(manager='m-fixture', main='' if snapshots[0] == 8 else 'main', machine_id='box',
+                return dict(manager='m-fixture', main='' if snapshots[0] == 10 else 'main', machine_id='box',
                             conversations=[] if snapshots[0] == 9 else [idle_row('main')],
                             update_inventory=dict(schema=1, complete=True, revision='r1', observed_at=dt.datetime.now(dt.timezone.utc).isoformat()))
             if path == 'machines':
@@ -299,18 +323,18 @@ class PublisherTransactionTests(unittest.TestCase):
                 return dict(sessions=rows, update_inventory=dict(schema=1, complete=True, revision='r1', observed_at=dt.datetime.now(dt.timezone.utc).isoformat()))
             raise AssertionError(path)
 
-        self.statuses = iter([{'phase': 'applied', 'ready': {'pid': 42}}] * 4 + [{'phase': 'confirmed'}])
+        self.statuses = iter([{'phase': 'applied', 'ready': {'pid': 42}}] * 3 + [{'phase': 'confirmed'}])
         with patch.object(promoter, 'snapshot', wraps=snapshot_impl), patch.object(promoter, 'api', side_effect=api):
             self.assertEqual(promoter.promote(self.payload)['phase'], 'confirmed')
-        self.assertEqual(snapshots[0], 11)
+        self.assertEqual(snapshots[0], 12)
         self.assertNotIn('rollback', self.commands)
 
     def test_ready_explicit_identity_conflict_rolls_back_without_retry(self):
         healthy = ({'version': self.manifest['version']}, self.identity, 'c' * 64)
-        promoter.snapshot.side_effect = [healthy] * 3 + [ValueError('identity conflicts')]
+        promoter.snapshot.side_effect = [healthy] * 4 + [ValueError('identity conflicts')]
         with self.assertRaisesRegex(ValueError, 'identity conflicts'):
             promoter.promote(self.payload)
-        self.assertEqual(promoter.snapshot.call_count, 4)
+        self.assertEqual(promoter.snapshot.call_count, 5)
         self.assertIn('rollback', self.commands)
         self.assertNotIn('confirm', self.commands)
 

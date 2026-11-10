@@ -22,6 +22,7 @@ import persona.core.domain.sort.canInterrupt
 import persona.core.domain.sort.canTerminal
 import persona.core.domain.sort.closeConfirmation
 import persona.core.domain.sort.deleteConfirmation
+import persona.core.domain.sort.isTern
 import persona.core.domain.sort.resumeCommand
 import persona.core.domain.sort.source
 
@@ -132,12 +133,13 @@ internal fun ChatHeader(
     }
     when (dialog) {
         "rename" -> JDialog(onDismiss = { dialog = null }, title = stringResource(R.string.chat_chrome_rename),
-            text = stringResource(R.string.chat_chrome_rename_text),
+            text = stringResource(if (session?.isTern == true) R.string.chat_chrome_rename_text_tern else R.string.chat_chrome_rename_text),
             confirm = stringResource(R.string.chat_chrome_save) to { dialog = null; state.rename(session!!, title, tabName) },
             confirmEnabled = canRename && session?.let { SessionRename.changes(it, title, tabName).changed } == true,
             content = {
                 Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
-                    if (!session?.paneId.isNullOrBlank()) JTextField(tabName, { tabName = it }, label = stringResource(R.string.chat_chrome_tab_name), singleLine = true)
+                    if (!session?.paneId.isNullOrBlank()) JTextField(tabName, { tabName = it }, singleLine = true,
+                        label = stringResource(if (session?.isTern == true) R.string.chat_chrome_tab_name_tern else R.string.chat_chrome_tab_name))
                     JTextField(title, { title = it }, label = stringResource(R.string.chat_chrome_session_name), singleLine = true)
                 }
             })

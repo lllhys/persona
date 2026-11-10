@@ -17,21 +17,18 @@ import { machineWithHub } from "../lib/mesh";
 import { baseName, tabLabel } from "../lib/format";
 import { agentKey, isSpacePinned, pinnedSessions } from "../lib/pins";
 import { firstAndCurrent } from "../lib/persona-nav";
-import { sidebarConversations, usePinnedConversations } from "../lib/conversation-pins";
+import { pinOrder, sidebarConversations, usePinnedConversations } from "../lib/conversation-pins";
 import { autoConversations, autoOrigin, isAutoConversation, originLabel, type AutoOrigin, type OriginTally } from "../lib/conversation-origins";
 import { ConversationRowMenu, pinnedSectionItems } from "./ConversationMenu";
-import { useDisconnect } from "./DisconnectBrowser";
 import { href, navigate, type Route } from "../lib/router";
 import { useAgentSessions, useFullAgentSessions } from "../lib/sessions";
 import { refresh, useStore } from "../lib/store";
 import { conversationTitle } from "./assistant/conversations";
-import { BREATHING, connStatus, phaseTone, type ConnPhase } from "../lib/connection";
 import { buildTodoTree, shareTree, type TodoTree } from "../lib/todo-tree";
 import { openTodoFromTag, TODO_STATUS_INFO, type TodoStatus } from "../lib/todos";
 import type { Machine, Session } from "../lib/types";
-import { Collapse, cx, EASE, Kbd, Menu, Spinner, useMenu, type MenuItem } from "../ui/atoms";
+import { Collapse, cx, EASE, Kbd, Menu, sidebarFoldMotion, useMenu, type MenuItem } from "../ui/atoms";
 import { StatusMark } from "../ui/StatusMark";
-import { AppMark } from "../ui/AppMark";
 import { Icon, type IconName } from "../ui/icons";
 import { HerdrNotices as HerdrNoticesContent } from "./agents/HerdrNotices";
 import { HubNoticeLine as HubNoticeLineContent } from "./agents/HubNoticeRow";
@@ -47,9 +44,7 @@ import type { MenuAt } from "../ui/menu-model";
 import { useSidebarTerminals } from "../lib/sidebar-terminals";
 import { usePanes } from "../lib/terminal-panes";
 import { buildTerminalTree, shellsOnly, type TermSpace } from "../lib/terminals";
-import { setTheme, useTheme, type Theme } from "./theme";
 import { LinkTodoDialog as LinkTodoDialogContent, type LinkTargetSpace } from "./LinkTodoDialog";
-import { hubMenuItems, useHubs } from "./Hubs";
 import { FoldScope, useFolded } from "../lib/use-folded";
 import { clipsOverflow, glideBox, glideStyle, sameBox, type GlideBox, type Span } from "../lib/glide";
 import { AGENTS_FOLD, onGrouping, setAgentsFolded } from "../lib/sidebar-api";
@@ -64,6 +59,8 @@ import { BADGE_CLASS, DOT_CLASS, type GoFn, GroupCount, holdsRow, morePagesMenu,
 import { NavRow, PersonalAgents, PersonaRow, PinnedHeading, SessionRow } from "./SidebarRows";
 import { LooseSection, MachineSection, RepoMachineSection, SessionTally, type SpaceMenuFn, SpaceSection, TodoTreeView } from "./SidebarTree";
 import { CollapseButton, PagesTally } from "./SidebarRail";
+import { scoped, useScope, useScoped, useScopedTodos } from "../lib/current-assistant";
+import { AssistantSwitcher } from "./AssistantSwitcher";
 // Declared in the files split out of this one; re-exported so the files that import them from here stay as they are.
 export { useNavPages, type NavPage } from "./SidebarParts";
 export { AgentRow, PersonaRow, PinnedHeading, SessionRow } from "./SidebarRows";
@@ -253,8 +250,13 @@ export function Sidebar({ route, onSearch, onNewAgent, onNavigate }: { route: Ro
   // a phone's drawer has the pages as two rows of icons, so its first screen reaches the Agents (#1996)
   const narrow = useMedia(NARROW);
   const activeKey = useActiveKey(route);
-  const pinnedIds = usePinnedConversations();
+  const localPins = usePinnedConversations();
+  // the leader conversations are pinned by the hub, first (#3623): not this browser's to unpin
+  const leaders = assistant?.leaders;
+  const isLeader = (id: string) => !!leaders?.includes(id) && id !== assistant?.main;
+  const pinnedIds = pinOrder(leaders, localPins);
   const { pinned: pinnedConvs, recent } = sidebarConversations(assistant?.conversations ?? [], assistant?.main, pinnedIds, 5, activeKey.startsWith("j:") ? activeKey.slice(2) : undefined);
+  const localPinned = pinnedConvs.filter((c) => !isLeader(c.session_id)).length;
   const convs = [...pinnedConvs, ...recent];
   // the main row sits above the pages, so"Persona chats"waits for the assistant (a hub without it has none)
   const chats = !!assistant;
@@ -275,7 +277,7 @@ export function Sidebar({ route, onSearch, onNewAgent, onNavigate }: { route: Ro
     <aside className="flex h-full w-full flex-col bg-canvas">
       <div className="px-2.5 pt-2.5">
         <div className="mb-2 flex items-center gap-1">
-          <div className="min-w-0 flex-1"><AccountRow phase={phase} online={online} total={total} /></div>
+          <div className="min-w-0 flex-1"><AssistantSwitcher phase={phase} online={online} total={total} route={route} /></div>
           {/* folds the column to the rail of icons (a wide screen; the drawer closes by its scrim) */}
           {!narrow && <CollapseButton collapsed={false} chord={bindings["left-sidebar"]} />}
         </div>
@@ -315,9 +317,9 @@ export function Sidebar({ route, onSearch, onNewAgent, onNavigate }: { route: Ro
             right={personaFolded ? <SectionAdd icon="compose" label={t("sidebar.new_chat")} to={{ name: "persona-new" }} go={go} /> : undefined}
           >
             <NavRow k="j:new" reg={reg} hover={hover} active={activeKey === "j:new"} to={{ name: "persona-new" }} go={go} icon="compose" label={t("sidebar.new_chat")} />
-            {pinnedConvs.length > 0 && <PinnedHeading onMenu={(at) => setChatsMenu(at)} />}
+            {pinnedConvs.length > 0 && <PinnedHeading onMenu={localPinned ? (at) => setChatsMenu(at) : undefined} />}
             {convs.map((c) => (
-              <SessionRow key={c.session_id} s={c} k={`j:${c.session_id}`} reg={reg} hover={hover} active={activeKey === `j:${c.session_id}`} to={{ name: "persona", sid: c.session_id }} go={go} label={conversationTitle(c)} showState={false} icon={pinnedIds.includes(c.session_id) ? "pin" : undefined} onMenu={onConvMenu} menuLabel={t("conversation-menu.actions")} />
+              <SessionRow key={c.session_id} s={c} k={`j:${c.session_id}`} reg={reg} hover={hover} active={activeKey === `j:${c.session_id}`} to={{ name: "persona", sid: c.session_id }} go={go} label={conversationTitle(c)} showState={false} icon={pinnedIds.includes(c.session_id) ? "pin" : undefined} hint={isLeader(c.session_id) ? t("sidebar.leader") : undefined} onMenu={onConvMenu} menuLabel={t("conversation-menu.actions")} />
             ))}
             {assistant && <AutoConversations conversations={assistant.conversations} main={assistant.main} shown={convs} activeKey={activeKey} holds={autoHolds} reg={reg} hover={hover} go={go} />}
             {assistant && <NavRow k="history" reg={reg} hover={hover} active={activeKey === "history"} to={{ name: "history" }} go={go} icon="list" label={t("sidebar.all_chats")} hint={assistant.conversations.length > convs.length ? String(assistant.conversations.length) : undefined} />}
@@ -329,8 +331,8 @@ export function Sidebar({ route, onSearch, onNewAgent, onNavigate }: { route: Ro
         {/* the phone's Agents page shows them already: the drawer over it doesn't build them twice */}
         {!(narrow && route.name === "agent-list") && <AgentsBlock reg={reg} hover={hover} activeKey={activeKey} go={go} onNewAgent={onNewAgent} onNavigate={onNavigate} foldable />}
       </div>
-      {convMenu && <ConversationRowMenu s={convMenu.s} main={convMenu.s.session_id === assistant?.main} pinned={pinnedIds.includes(convMenu.s.session_id)} anchor={convMenu.anchor} at={convMenu.at} onClose={() => setConvMenu(null)} />}
-      {chatsMenu && <Menu anchor={chatsMenu.anchor ?? null} point={chatsMenu.point} onClose={() => setChatsMenu(null)} align="right" width={200} header={t("sidebar.pinned_section")} items={pinnedSectionItems(pinnedConvs.length)} />}
+      {convMenu && <ConversationRowMenu s={convMenu.s} main={convMenu.s.session_id === assistant?.main} pinned={pinnedIds.includes(convMenu.s.session_id)} leader={isLeader(convMenu.s.session_id)} anchor={convMenu.anchor} at={convMenu.at} onClose={() => setConvMenu(null)} />}
+      {chatsMenu && <Menu anchor={chatsMenu.anchor ?? null} point={chatsMenu.point} onClose={() => setChatsMenu(null)} align="right" width={200} header={t("sidebar.pinned_section")} items={pinnedSectionItems(localPinned)} />}
       {/* subscription rate-limit windows (#2432): nothing is drawn without data */}
       <SidebarUsage />
       <NodePrompt />
@@ -434,9 +436,9 @@ function MorePages({ more, reg, hover, activeKey, go }: { more: NavPage[]; reg: 
         <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{t("sidebar.more_pages")}</span>
         {folded && counted.length > 0 && <span aria-hidden className={cx("size-1.5 rounded-full", DOT_CLASS[counted[0].badgeTone ?? "accent"])} />}
         <span className="text-[11px] text-ink-3 tabular-nums">{more.length}</span>
-        <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 text-ink-3 transition-transform duration-200" style={{ transform: folded ? "rotate(-90deg)" : "none" }} />
+        <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 text-ink-3 transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
       </button>
-      <Collapse open={!folded}>
+      <Collapse open={!folded} sidebarFold>
         <div className="flex flex-col gap-px pl-3" inert={folded || undefined}>
           {more.map((p) => <NavRow key={p.k} {...p} reg={reg} hover={hover} active={activeKey === p.k} go={go} />)}
         </div>
@@ -456,7 +458,10 @@ function AgentsBlock(props: AgentsBlockProps) {
   useEffect(() => onGrouping(setGrouping), []);
   // A saved grouping (including an explicitly selected default) is a view preference the paged API cannot express.
   const grouped = AGENT_GROUPINGS.some((g) => g.key === grouping);
-  const full = pins.sessions.length > 0 || pins.spaces.length > 0 || grouped;
+  // several assistants: the list is the current one's (docs/assistant/managers.md "Clients"), which the hub's paged list
+  // cannot ask for, so the complete list is read and filtered here
+  const several = useScope().several;
+  const full = pins.sessions.length > 0 || pins.spaces.length > 0 || grouped || several;
   const chooseGrouping = useCallback((g: AgentGrouping) => {
     storeValue("persona.agentGrouping", g);
     setGrouping(g);
@@ -469,7 +474,7 @@ function AgentsBlock(props: AgentsBlockProps) {
   }, [props.hover]);
   // Back to the paged list: forget the saved grouping. Offered only where the paged list exists and nothing is pinned
   // (pins keep the full list either way).
-  const pagedList = bounded && grouped && pins.sessions.length === 0 && pins.spaces.length === 0
+  const pagedList = bounded && grouped && !several && pins.sessions.length === 0 && pins.spaces.length === 0
     ? returnToPagedList
     : undefined;
   return bounded && !full ? <BoundedAgentsBlock {...props} chooseGrouping={chooseGrouping} /> : <LegacyAgentsBlock {...props} grouping={agentGrouping(grouping)} chooseGrouping={chooseGrouping} pagedList={pagedList} />;
@@ -507,12 +512,23 @@ function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, add = true,
 }
 
 function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, add = true, foldable = false, grouping, chooseGrouping, pagedList }: AgentsBlockProps & { grouping: AgentGrouping; chooseGrouping: (g: AgentGrouping) => void; pagedList?: () => void }) {
-  const machines = useStore(selectSidebarMachines);
-  const { sessions: all, loaded } = useFullAgentSessions();
+  // the current assistant's computers, agents and to-dos (all of them with one assistant)
+  const scope = useScope();
+  const sidebarMachines = useStore(selectSidebarMachines);
+  // the ids of the current assistant's computers (null with one assistant): strings, so a push of a computer's load or
+  // memory leaves them equal and doesn't draw the block again
+  const ownIds = useStore((s) => (scope.several ? scoped(s.machines, scope).map((m) => m.id) : null));
+  const machines = useMemo(() => {
+    if (!ownIds) return sidebarMachines;
+    const own = new Set(ownIds);
+    return sidebarMachines.filter((m) => own.has(m.id));
+  }, [ownIds, sidebarMachines]);
+  const { sessions: every, loaded } = useFullAgentSessions();
+  const all = useScoped(every);
   const mutes = useStore((s) => s.mutes);
   const pins = useStore((s) => s.pins);
   const interactions = useStore((s) => s.interactions);
-  const todos = useStore((s) => s.todos);
+  const todos = useScopedTodos();
   const todosSupported = useStore((s) => s.todosSupported);
   const todosLoaded = useStore((s) => s.todosLoaded);
   const launches = useStore((s) => Object.values(s.launches).filter((launch) => launch.phase !== "ready"));
@@ -531,6 +547,12 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
     });
     hover(null);
   };
+  // Stable, so the memoized grouping bar skips store pushes that leave its props equal.
+  const chooseGroupingOutOfChatList = useCallback((g: AgentGrouping) => {
+    setChatList(false);
+    localStorage.setItem("persona.agentChatList", "0");
+    chooseGrouping(g);
+  }, [chooseGrouping]);
   const availableGroupings = useMemo(() => {
     if (todosSupported === false) return AGENT_GROUPINGS.filter((g) => g.key !== "todo");
     return AGENT_GROUPINGS;
@@ -683,7 +705,7 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
         {foldable ? (
           <button type="button" aria-expanded={!folded} onClick={toggleBlock} className="touch-hit relative z-10 flex min-w-0 flex-1 items-center gap-1 whitespace-nowrap text-left text-[11px] font-semibold text-ink-3 hover:text-ink-2">
             <span className="min-w-0 truncate">Agents</span>
-            <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 opacity-0 transition-[opacity,transform] duration-200 group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100" style={{ transform: folded ? "rotate(-90deg)" : "none" }} />
+            <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 opacity-0 transition-[opacity,transform] group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
           </button>
         ) : (
           <span className="min-w-0 flex-1 text-[11px] font-semibold text-ink-3">Agents</span>
@@ -710,9 +732,9 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
         ]} />
       )}
       <FoldScope.Provider value={AGENTS_FOLD}>
-      <Collapse open={!folded}>
+      <Collapse open={!folded} sidebarFold>
       <div inert={folded || undefined}>
-      <GroupingBar groupings={availableGroupings} selection={shownGrouping} onChoose={(g) => { setChatList(false); localStorage.setItem("persona.agentChatList", "0"); chooseGrouping(g); }} />
+      <GroupingBar groupings={availableGroupings} selection={shownGrouping} onChoose={chooseGroupingOutOfChatList} />
       <FilterBar selection={filter} counts={filterTotals} onChoose={choose} botmux={botmux} />
       <AgentDimensionFilterBar filters={dimFilters} onChange={setDimFilters} facets={facets} plan={searchPlan} chatList={chatList} onToggleChatList={toggleChatList} />
       {/* "herdr is not running on <computer>" with "Start" (#1916): before a message to an agent there fails */}
@@ -914,50 +936,6 @@ const FilterBar = memo(function FilterBar({ selection, counts, onChoose, botmux 
   );
 });
 
-const AccountRow = memo(function AccountRow({ phase, online, total }: { phase: ConnPhase; online: number; total: number }) {
-  const menu = useMenu();
-  const theme = useTheme();
-  const otherHubs = hubMenuItems(useHubs());
-  const themes: { k: Theme; label: string; icon: IconName }[] = [
-    { k: "system", label: t("sidebar.theme_system"), icon: "monitor" },
-    { k: "light", label: t("sidebar.theme_light"), icon: "sun" },
-    { k: "dark", label: t("sidebar.theme_dark"), icon: "moon" },
-  ];
-  const disconnect = useDisconnect();
-  return (
-    <>
-      <button type="button" onClick={menu.open} className="flex w-full items-center gap-2.5 rounded-control p-1.5 text-left transition-[background-color,transform] duration-100 hover:bg-hover active:scale-[0.98]">
-        <AppMark size={32} radius={8} className="shadow-hairline" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] leading-tight font-medium text-ink">Persona</span>
-          <span className="flex items-center gap-1.5 truncate text-[11px] leading-tight text-ink-3">
-            <span aria-hidden data-conn-dot className={cx("size-1.5 rounded-full", phaseTone(phase).color)} style={phaseTone(phase).breathing ? BREATHING : undefined} />
-            {connStatus(phase, online, total)}
-          </span>
-        </span>
-        {/* the menu is gone while the hub revokes this browser's token: the row it opened from says it is busy */}
-        {disconnect.busy ? <Spinner size={12} /> : <Icon name="chevron" size={12} stroke={2} className="text-ink-3" />}
-      </button>
-      {menu.anchor && (
-        <Menu
-          anchor={menu.anchor}
-          onClose={menu.close}
-          width={220}
-          header={t("sidebar.appearance")}
-          items={[
-            ...themes.map((t) => ({ key: t.k, label: t.label, icon: t.icon, checked: theme === t.k, onSelect: () => setTheme(t.k) })),
-            // the other hubs in this browser's list (#1014); none, and the menu is as before
-            ...otherHubs,
-            { key: "settings", label: t("sidebar.nav_settings"), icon: "gear", divider: otherHubs.length > 0, onSelect: () => navigate({ name: "settings" }) },
-            { key: "logout", label: t("sidebar.disconnect"), icon: "logout", danger: true, onSelect: disconnect.start },
-          ]}
-        />
-      )}
-      {disconnect.dialog}
-    </>
-  );
-});
-
 // Every group in the sidebar is one of these: its title folds it, and the fold is kept in this browser (useFolded).
 const ORIGIN_ICON: Record<AutoOrigin, IconName> = { inbox: "inbox", task: "clock", lark_agent: "at", spawned: "fork", extension: "extension", other: "more" };
 
@@ -1015,9 +993,9 @@ function AutoConversations({ conversations, main, shown, activeKey, holds, reg, 
         <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{t("sidebar.auto_chats")}</span>
         {folded && <TallyMark tally={total} />}
         <span className="text-[11px] text-ink-3 tabular-nums">{total.count}</span>
-        <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 text-ink-3 transition-transform duration-200" style={{ transform: folded ? "rotate(-90deg)" : "none" }} />
+        <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 text-ink-3 transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
       </button>
-      <Collapse open={!folded}>
+      <Collapse open={!folded} sidebarFold>
         <div className="flex flex-col gap-px pl-3" inert={folded || undefined}>
           {groups.map((g) => {
             const k = `auto:${g.origin}`;

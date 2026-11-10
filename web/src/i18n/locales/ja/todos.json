@@ -20,6 +20,7 @@
   "stage_verify": "確認済み",
   "stage_pr": "PR",
   "stage_pr_n": "PR #{n}",
+  "stage_mr_n": "MR !{n}",
   "stage_pr_label": "{pr}（{host}）を新しいタブで開く",
   "delete_title": "ToDoを削除",
   "delete_confirm": "「{title}」を削除しますか？関連付けられたエージェントには影響しません。",

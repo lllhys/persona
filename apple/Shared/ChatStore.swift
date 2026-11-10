@@ -6,12 +6,17 @@ nonisolated struct ToolCall: Identifiable, Hashable, Sendable {
     var use: Item
     var result: Item?
     var images: [ImagePayload] = []
+    var results: [Item] = []
+    var agentStatus: String?
 
     var id: String { use.id }
     var name: String { use.toolName ?? "tool" }
     var input: JSONValue { use.toolInput ?? .object([:]) }
-    var isRunning: Bool { result == nil }
-    var isError: Bool { result?.isError ?? false }
+    var isRunning: Bool {
+        if let agentStatus { return !SubagentDelivery.isTerminal(agentStatus) }
+        return result == nil
+    }
+    var isError: Bool { agentStatus == "failed" || agentStatus == "error" || (result?.isError ?? false) }
 }
 
 nonisolated extension ChatRow {
@@ -168,12 +173,36 @@ nonisolated struct Turn: Identifiable, Hashable, Sendable {
     }
 }
 
+nonisolated enum SubagentDelivery {
+    static func isTerminal(_ status: String?) -> Bool {
+        switch status {
+        case "completed", "failed", "error", "killed", "stopped": true
+        default: false
+        }
+    }
+
+    static func isReceipt(_ item: Item) -> Bool {
+        if let task = item.task, task.kind == "agent" {
+            guard task.status == "running" || task.status == "waiting", task.detail == nil else { return false }
+        }
+        let text = item.text ?? ""
+        return text.hasPrefix("Async agent launched successfully") || text.contains("moved to the background (ID:")
+    }
+
+    static func isWake(_ row: ChatRow) -> Bool {
+        guard case .notice(let item) = row else { return false }
+        return item.kind == .toolResult && item.task?.kind == "agent" && item.wake == true
+    }
+}
+
 /// Background tasks and the calls that started them: a notice names its call by tool_use_id, or only by the task id
 /// the call's result announced ("running in background with ID: …", "Monitor started (task …"). Built with the
 /// rows; a call outside the loaded items is simply not found.
 nonisolated struct TaskIndex: Equatable, Sendable {
     /// A call's notices, oldest first, by the call's tool_use_id.
     var notes: [String: [TaskNote]] = [:]
+    var reports: [String: [Item]] = [:]
+    var agentStatuses: [String: String] = [:]
     /// The call a notice came from (notice item id → tool_use_id).
     var calls: [String: String] = [:]
     /// Calls whose result says they went to the background (they may not have reported back yet).
@@ -199,6 +228,16 @@ nonisolated struct TaskIndex: Equatable, Sendable {
                 if let id = it.toolUseID { uses[id] = it; x.asked.insert(id) }
             case .toolResult:
                 if let id = it.toolUseID { x.answered.insert(id) }
+                if let id = it.toolUseID, let note = it.task, note.kind == "agent" {
+                    x.agentStatuses[id] = note.status ?? ""
+                    x.notes[id, default: []].append(note)
+                    x.calls[it.id] = id
+                    if !SubagentDelivery.isReceipt(it), !(it.text ?? "").isEmpty {
+                        x.reports[id, default: []].append(it)
+                    }
+                    if let task = note.taskID { byTask[task] = id }
+                }
+                if it.task?.kind == "agent", !SubagentDelivery.isReceipt(it) { continue }
                 guard let id = it.toolUseID, let text = it.text, text.contains("background") || text.contains("Monitor started") || text.contains("agentId"),
                       let m = text.firstMatch(of: launched) else { continue }
                 // A subagent that ran to its end says its agentId under its report too (to go on with SendMessage):
@@ -217,6 +256,19 @@ nonisolated struct TaskIndex: Equatable, Sendable {
                 guard let n = it.task, let call = n.toolUseID ?? n.taskID.flatMap({ byTask[$0] }) else { continue }
                 x.notes[call, default: []].append(n)
                 x.calls[it.id] = call
+                if n.kind == "agent", n.status != "event", x.agentStatuses[call] != nil {
+                    x.agentStatuses[call] = n.status ?? ""
+                }
+                if n.kind == "agent", n.status != "event", n.detail?.isEmpty == false {
+                    var report = it
+                    report.kind = .toolResult
+                    report.role = "user"
+                    report.toolUseID = call
+                    report.text = n.detail
+                    report.fullSize = nil
+                    report.isError = n.failed || n.status == "error"
+                    x.reports[call, default: []].append(report)
+                }
                 if x.descriptions[call] == nil, let use = uses[call] {
                     x.descriptions[call] = use.toolInput?["description"]?.string
                     x.startedAt[call] = use.ts
@@ -1063,11 +1115,11 @@ final class ChatStore {
 
     nonisolated static func buildRows(_ items: [Item]) -> [ChatRow] {
         let items = compactions(picturesAfterTheirText(items))
-        var results: [String: Item] = [:]
+        var results: [String: [Item]] = [:]
         var images: [String: [ImagePayload]] = [:]
         for it in items {
             guard let tid = it.toolUseID else { continue }
-            if it.kind == .toolResult { results[tid] = it }
+            if it.kind == .toolResult { results[tid, default: []].append(it) }
             if it.kind == .image, let img = it.image { images[tid, default: []].append(img) }
         }
         var rows: [ChatRow] = []
@@ -1087,7 +1139,10 @@ final class ChatStore {
             switch it.kind {
             case .toolUse:
                 flushThoughts(asRows: run.isEmpty)
-                var call = ToolCall(use: it, result: it.toolUseID.flatMap { results[$0] })
+                let deliveries = it.toolUseID.flatMap { results[$0] } ?? []
+                let agent = it.toolName == "Agent" || it.toolName == "Task"
+                var call = ToolCall(use: it, result: deliveries.last, results: agent ? deliveries : [],
+                                    agentStatus: deliveries.last(where: { $0.task?.kind == "agent" }).map { $0.task?.status ?? "" })
                 call.images = it.toolUseID.flatMap { images[$0] } ?? []
                 run.append(.call(call))
             case .thinking:
@@ -1096,6 +1151,11 @@ final class ChatStore {
                 flushThoughts(asRows: run.isEmpty)
                 run.append(.folded(it))
             case .toolResult:
+                if it.task?.kind == "agent", it.wake == true {
+                    flushThoughts(asRows: run.isEmpty)
+                    flushRun()
+                    rows.append(.notice(it))
+                }
                 continue
             case .image where it.toolUseID != nil:
                 continue
@@ -1381,9 +1441,9 @@ nonisolated enum ChatCache {
     /// v13: cached tails count user questions, not automatic supervision; discard the old shallow tails.
     /// v14: injected supervision levels and folded promotion are retained, including client evidence on replaced folds.
     /// Bump it whenever the item structure or the text the hub gives an item changes.
-    static let folder = "chats-v14"
+    static let folder = "chats-v15"
     /// The folder before, removed on the first launch with this one.
-    private static let previous = "chats-v13"
+    private static let previous = "chats-v14"
 
     /// Once per launch, before the first copy is read or written (a static let runs once, on whichever thread asks first).
     private static let dropOlder: Void = {
@@ -1460,16 +1520,32 @@ nonisolated enum ChatCache {
     /// its first seq would bring back leaves out the rest of that line).
     static func tail(_ items: [Item], turns: Int) -> [Item] {
         var seen = 0
+        var start = 0
         for i in items.indices.reversed() where items[i].role == "user" && items[i].kind == .text
             && items[i].queued != true && items[i].wake != true && Injected.of(items[i]) == nil {
             seen += 1
-            if seen == turns {
-                var start = i
-                while start > 0 && items[start - 1].seq == items[start].seq { start -= 1 }
-                return Array(items[start...])
+            if seen == turns { start = i; break }
+        }
+        guard start > 0 else { return items }
+        var launches: [String: Int] = [:]
+        var question = 0
+        for i in items.indices {
+            let item = items[i]
+            if item.isUserInput, item.queued != true, Injected.of(item) == nil { question = i }
+            if item.kind == .toolUse, item.toolName == "Agent" || item.toolName == "Task", let id = item.toolUseID {
+                launches[id] = question
             }
         }
-        return items
+        var i = items.count - 1
+        while i >= start {
+            let item = items[i]
+            if item.task?.kind == "agent", let call = item.toolUseID ?? item.task?.toolUseID, let launch = launches[call] {
+                start = min(start, launch)
+            }
+            i -= 1
+        }
+        while start > 0 && items[start - 1].seq == items[start].seq { start -= 1 }
+        return Array(items[start...])
     }
 }
 

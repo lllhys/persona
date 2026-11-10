@@ -189,6 +189,7 @@ func TestSmallPrompts(t *testing.T) {
 		RenderJSONOnly("system"):           "system\n\nReply with a single JSON object only, no prose, no code fences.",
 		RenderTranslateMailInput("S", "T"): "主题：S\n\nT",
 		RenderCodexInstructions("mem"):     "mem",
+		SnapshotCut():                      "- 快照到此截断；其余用 agents_list、todo_list、inbox 查",
 	} {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
@@ -335,6 +336,21 @@ func TestAgentTriageLineLanguageAndIDs(t *testing.T) {
 	for _, s := range []string{zh, en} {
 		if !strings.Contains(s, "pane id、session id、批次号") {
 			t.Fatal("the line rule must keep internal ids out")
+		}
+	}
+}
+
+// The Progress row's paraphrase of a report follows the work line's rule (#3181): the user's language, a length,
+// no subject and no internal ids.
+func TestAgentReportLineLanguageAndIDs(t *testing.T) {
+	zh := RenderAgentReportLine(AgentReportLine{Max: 30})
+	en := RenderAgentReportLine(AgentReportLine{Language: "English", Max: 60})
+	if strings.Contains(zh, "用English写") || !strings.Contains(zh, "不超过 30 个字，") || !strings.Contains(en, "用English写，不超过 60 个字符，") {
+		t.Fatalf("line language and length:\n%s\n---\n%s", zh, en)
+	}
+	for _, s := range []string{zh, en} {
+		if !strings.Contains(s, "不要写「Agent」「它」这类主语") || !strings.Contains(s, "pane id、session id、批次号") {
+			t.Fatal("the line rule must keep the subject and internal ids out")
 		}
 	}
 }

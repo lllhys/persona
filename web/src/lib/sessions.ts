@@ -114,22 +114,24 @@ function createFullCache(owner: string) {
   };
 }
 
-/** Pins and grouping need complete rows, including agents outside the bounded first page. Consumers
- * share a scoped snapshot and request, released shortly after the last legacy list leaves. */
-export function useFullAgentSessions(): { sessions: Session[]; loaded: boolean } {
+/** Pins, grouping and the per-assistant lists need complete rows, including agents outside the bounded first page.
+ * Consumers share a scoped snapshot and request, released shortly after the last one leaves. */
+export function useFullAgentSessions(on = true): { sessions: Session[]; loaded: boolean } {
   const by = useStore((s) => s.sessions);
   const bounded = useStore((s) => s.features.includes(SESSIONS_LIST_FEATURE));
   const loaded = useStore((s) => s.loaded);
   const snapshot = useSyncExternalStore(subscribeFull, getFullSnapshot, getFullSnapshot);
-  const owner = credentialOwner();
+  const owner = on ? credentialOwner() : "";
   const full = fullCache?.owner === owner ? snapshot : EMPTY_FULL_LIST;
   useEffect(() => {
-    if (!bounded || !loaded) return;
+    if (!on || !bounded || !loaded) return;
     if (fullCache && fullCache.owner !== owner) fullCache.dispose();
     fullCache ??= createFullCache(owner);
     return fullCache.retain();
-  }, [bounded, loaded, owner, snapshot.epoch]);
+  }, [on, bounded, loaded, owner, snapshot.epoch]);
   return useMemo(() => {
+    // `on` false: the caller has no use for the list now and asks the hub for nothing
+    if (!on) return EMPTY_FULL_LIST;
     if (!bounded) return { sessions: Object.values(by).flat().filter((s) => !s.assistant), loaded };
     if (!loaded) return EMPTY_FULL_LIST;
     if (by === full.base) return full;
@@ -143,7 +145,7 @@ export function useFullAgentSessions(): { sessions: Session[]; loaded: boolean }
       return next && next !== before.get(key(s)) ? next : s;
     });
     return { sessions, loaded: full.loaded };
-  }, [bounded, loaded, full, by]);
+  }, [on, bounded, loaded, full, by]);
 }
 
 /** The agents by state. `badge` is the sidebar's "Needs you" count: without quiet tasks' agents, which the main conversation

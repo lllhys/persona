@@ -57,6 +57,20 @@ func TestFailedStartIsShownAndAnswersSends(t *testing.T) {
 	}
 }
 
+func TestRecoveryKeepsPendingStartsWaiting(t *testing.T) {
+	var l startLog
+	r := &startRec{done: make(chan struct{}), session: proto.Session{SessionID: "s1", Starting: true}}
+	l.add("s1", r)
+	l.recovered("s1")
+	if l.get("s1") != r {
+		t.Fatal("finding a pane before an async start finishes must not release queued messages")
+	}
+	l.finish("s1", nil)
+	if err := l.wait(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTabNameBeforeAndAfterTheTab(t *testing.T) {
 	var l startLog
 	l.add("s1", &startRec{done: make(chan struct{})})

@@ -149,7 +149,9 @@ func (s *Service) taskWorking(ctx context.Context, mid, sid string) {
 	s.tasks.mu.Lock()
 	s.tasks.working[t.ID] = time.Now()
 	s.tasks.mu.Unlock()
+	s.clearTaskCheck(ctx, t.ID) // it judged the work before this turn (task_check.go)
 	s.setTaskStage(ctx, t.ID, "develop", "")
+	s.taskPlanApproval()
 	if t.Supervision != nil {
 		s.supervisedWorking(ctx, t)
 	}
@@ -199,7 +201,7 @@ const interruptedSummary = assistantwire.InterruptedSummary
 // Not kept in a package variable: that would read the catalogs whenever personad starts, a hook too (#1308).
 func silentTurnErrorIn(l i18n.Lang) string { return i18n.T(l, "assistant-tasks.silent_turn") }
 
-var prLink = lazyre.New(`https://github\.com/[\w.-]+/[\w.-]+/pull/\d+`)
+var prLink = lazyre.New(`https://github\.com/[\w.-]+/[\w.-]+/pull/\d+|https://[^/\s<>"()]+/(?:[^/\s<>"()]+/)+merge_requests/\d+\b`)
 
 // taskTurnEnded: one of the task's agents (sid on machine) ended a turn. Once none of them works or waits for the
 // user any more, the conversation gets a receipt (once per stretch of work), and the todo is closed if the judge
@@ -211,9 +213,15 @@ func (s *Service) taskTurnEnded(ctx context.Context, machine, sid string) {
 
 // taskTurnSettled is taskTurnEnded once the turn stayed still: after its sleep, or afterSettle's timer.
 func (s *Service) taskTurnSettled(ctx context.Context, machine, sid string) {
+	if s.meetingTurnNow(machine, sid) {
+		return // a meeting's batch: never the task's progress, report or completion (meeting_turns.go)
+	}
 	t, ok := s.taskOf(ctx, machine, sid)
 	if !ok {
-		return
+		// An agent Persona started that is on no todo becomes a task once a turn of it did work (#3617, agent_tasks.go).
+		if t, ok = s.agentTaskAtTurnEnd(ctx, machine, sid); !ok {
+			return
+		}
 	}
 	if current, ok := s.todoNow(t.ID); ok && (current.Cancelled() || current.AgentAborted(machine, sid)) {
 		s.logf("task %s: cancelled or agent %s/%s aborted: skipping turn end", t.ID, machine, sid)
@@ -358,12 +366,7 @@ func (s *Service) taskTurnSettled(ctx context.Context, machine, sid string) {
 		s.logf("task %s: receipt: %v", t.ID, err)
 	}
 	s.taskNotice(cctx, t, name, "done", "", clipMarkdown(text, 1500))
-	stage, pr := stageOf(text)
-	// Said deployed: only when the running hub has the work (deploy_check.go); else held at merged, and a watch asks to
-	// verify once the deploy lands.
-	stage, deployed := s.gateDeployStage(cctx, t, stage, pr, last.MachineID, last.SessionID, text)
-	s.setTaskStage(cctx, t.ID, stage, pr)
-	if deployed {
+	if s.advanceTaskReply(cctx, t, last.MachineID, last.SessionID, text) {
 		go s.askAcceptance(t, last.MachineID, last.SessionID, text) // verified, by the supervising assistant or the user (acceptance.go)
 	}
 	s.taskReport(t, reportDone, name, [2]string{last.MachineID, last.SessionID}, text, nil)

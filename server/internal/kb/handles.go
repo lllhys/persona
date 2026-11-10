@@ -65,7 +65,8 @@ func (s *Store) PersonHandles(id string) []string {
 	return out
 }
 
-// addHandles keeps a person's new hints, hashed (only ever added); it reports whether any was new.
+// addHandles keeps a person's new hints, hashed (only ever added); it reports whether any was new. Callers hold
+// personMu (notePerson's updatePerson), so two senders' hints for one person do not overwrite each other.
 func (e *Engine) addHandles(personID string, hs []Handle) bool {
 	if len(e.HandleKey) == 0 || len(hs) == 0 {
 		return false

@@ -132,7 +132,8 @@ internal object PhoneToolCatalog {
         tool("phone_device_info",
             "Describe the phone: model identifier and name, iOS version, battery percentage and charging state, low power " +
                 "mode, free and total storage in bytes, current network type (wifi/cellular/wired/offline), timezone and " +
-                "locale. Cheap and safe to call when you need context about the device.",
+                "locale, and the Persona app's version, build number and build channel (debug/release). Cheap and safe to " +
+                "call when you need context about the device.",
             PhoneSource.Device),
         tool("phone_clipboard_get",
             "Read the phone's clipboard as text. iOS may show an \"Allow Paste?\" prompt the first time, which the user has " +

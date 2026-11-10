@@ -246,6 +246,7 @@ func (h *Hub) releaseMachines(ctx context.Context, id string) {
 		}
 		h.forgetMachineEntry(mid)
 		h.machineGone(mid)
+		h.dropPending(ctx, mid, "gone with the manager that kept it") // no pending place or Persona Link left behind
 		h.logf("managers: [%s] kept by %s in its own list: gone with it", mid, id)
 	}
 	for _, mid := range mine {

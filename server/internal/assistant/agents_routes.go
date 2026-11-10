@@ -35,6 +35,7 @@ func (s *Service) agentRoutes() {
 		var request struct {
 			TriageSwitches
 			ToolLoop *bool `json:"tool_loop"`
+			Closeout *bool `json:"closeout"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
@@ -47,6 +48,10 @@ func (s *Service) agentRoutes() {
 		in.ToolLoop = prev.ToolLoop
 		if request.ToolLoop != nil {
 			in.ToolLoop = *request.ToolLoop
+		}
+		in.Closeout = prev.Closeout // an app that does not know it leaves it as it was
+		if request.Closeout != nil {
+			in.Closeout = *request.Closeout
 		}
 		if in.ReplyReminder == nil {
 			in.ReplyReminder = prev.ReplyReminder

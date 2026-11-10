@@ -22,7 +22,32 @@ struct OnboardingChecklistTests {
         #expect(rows.map(\.look) == [.done, .checking, .problem, .todo])
         #expect(rows[2].action == "connect_model" && rows[2].alt == "login_claude" && rows[2].title == "Claude Code 还没登录")
         #expect(rows[0].action == nil && rows[3].action == "test_assistant")
-        #expect(OnboardingChecklistModel.left(r) == 2 && !OnboardingChecklistModel.allDone(r))
+        // checking never blocks: only the model is left, and the row says what it is
+        #expect(OnboardingChecklistModel.left(r) == 1 && !OnboardingChecklistModel.allDone(r))
+        #expect(OnboardingChecklistModel.leftSummary(r) == "Claude Code 还没登录")
+    }
+
+    /// Settings counts only what blocks the main conversation (#1925): an unverified model or a running self-check in
+    /// `full` leaves nothing to do, a rate limit neither, and a sleeping computer is one step that names itself.
+    @Test func onlyBlockingStepsAreLeft() throws {
+        let unverified = try readiness(#"""
+        {"mode":"full","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"checking"},
+          {"id":"model","state":"unknown","code":"model_unverified"},{"id":"first_message","state":"todo"}]}
+        """#)
+        #expect(OnboardingChecklistModel.left(unverified) == 0)
+        let limited = try readiness(#"""
+        {"mode":"full","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},{"id":"model","state":"problem","code":"rate_limited"}]}
+        """#)
+        #expect(OnboardingChecklistModel.left(limited) == 0)
+        let asleep = try readiness(#"""
+        {"mode":"setup","next":"computer","steps":[
+          {"id":"computer","state":"problem","code":"node_unreachable","title":"laptop is offline","action":{"id":"wake_computer"}},
+          {"id":"claude","state":"unknown"},{"id":"model","state":"unknown"},{"id":"first_message","state":"unknown"}]}
+        """#)
+        #expect(OnboardingChecklistModel.left(asleep) == 1)
+        #expect(OnboardingChecklistModel.leftSummary(asleep) == "laptop is offline")
     }
 
     @Test func zeroComputersAndUnknownValues() throws {
@@ -31,7 +56,9 @@ struct OnboardingChecklistTests {
           {"id":"computer","state":"todo","code":"no_machine","title":"添加你的电脑","action":{"id":"add_computer"}},
           {"id":"claude","state":"unknown"},{"id":"model","state":"unknown"},{"id":"first_message","state":"unknown"}]}
         """#)
-        #expect(OnboardingChecklistModel.left(zero) == 3)
+        // unknown steps behind a missing computer are not counted: one step, adding the computer
+        #expect(OnboardingChecklistModel.left(zero) == 1)
+        #expect(OnboardingChecklistModel.leftSummary(zero) == "添加你的电脑")
         #expect(OnboardingChecklistModel.rows(zero).first?.action == "add_computer")
         // a state this app does not know: one more step (todo); an action it does not know: no button
         let odd = try readiness(#"""

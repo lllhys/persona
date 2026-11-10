@@ -143,11 +143,17 @@ func (n *Node) spawnCodex(id, cwd, launcher string, resume, spare bool, options 
 		if wasSpare {
 			n.spare = nil
 		}
+		var recovery *assistantTurnRecovery
 		if p.id != "" && n.procs[p.id] == p {
 			delete(n.procs, p.id)
+			recovery = n.recoveries[p.id] // do not confuse a replaced process's late exit with the current one
 		}
 		n.mu.Unlock()
 		if wasSpare || p.id == "" {
+			return
+		}
+		if recovery != nil {
+			n.finishAssistantRecoveryOnExit(p, recovery)
 			return
 		}
 		n.emitDelta(p.id, "")

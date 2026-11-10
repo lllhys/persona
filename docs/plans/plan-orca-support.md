@@ -371,7 +371,7 @@ have no folder.
 Issues discovered while adding tests, with tests pinning current behavior. Fixing now would change the before/after-refactor baseline, so address separately after step 1, updating corresponding tests too:
 
 - Switching to `bypassPermissions`, `tuiSetMode` gives up after 6 shift+tab presses, leaving Claude in a different mode (not the original). Restore the original on failure, or verify the target exists in the cycle first (`node/modes.go`).
-- Fixed (#4873): when `pane.list` fails, `close()` closes only the requested pane (herdr host `Close`, `node/hostherdr.go`). herdr closes the tab itself if that was its last pane, preserving other split panes otherwise.
+- Fixed (#4873): when `pane.list` fails, `close()` closes only the requested pane (herdr host `Close`, `node/hostherdr_launch.go`). herdr closes the tab itself if that was its last pane, preserving other split panes otherwise.
 - Four existing `catchup_test.go` tests fail with `CLAUDE_CONFIG_DIR` set: they assume Claude config under HOME. Clear this variable in tests (new `herdrNode` already does).
 - `TestTerminalControlEndsWhenTakenOrForgotten` in `terminal_test.go` changes global `termLease` while a still-running `controlLoop` reads it: occasional `-race` failures (seen once by the engine-selection worker with `-count=10`; not reproduced in 30 runs each on branch and master). Wait for `controlLoop` before test completion, or make the lease an instance field.
 - Other suspicious behavior (not necessarily needing fixes): fallback from failed herdr snapshot to `agent.list` retains old space / slot names; `editQueue` clears lines based on transcript queue, not what the TUI actually restores.

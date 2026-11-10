@@ -106,12 +106,16 @@ fun PairingFailure.explanation(): Int = when (this) {
     PairingFailure.Expired -> R.string.settings_pairing_failure_expired
     PairingFailure.Incompatible -> R.string.settings_pairing_failure_incompatible
     PairingFailure.TlsRequired -> R.string.settings_pairing_failure_tls_required
+    PairingFailure.AccessRequired -> R.string.settings_pairing_failure_access_required
+    PairingFailure.AccessRejected -> R.string.settings_pairing_failure_access_rejected
     PairingFailure.Unknown -> R.string.settings_pairing_failure_unknown
 }
 
 internal enum class PairingRecovery(@StringRes val label: Int) {
     Retry(R.string.settings_pairing_recovery_retry), Scan(R.string.settings_pairing_rescan),
-    Permission(R.string.settings_pairing_recovery_permission), Update(R.string.settings_pairing_recovery_update)
+    Permission(R.string.settings_pairing_recovery_permission), Update(R.string.settings_pairing_recovery_update),
+    /** Back to the confirm page with the Cloudflare Access fields open. */
+    Access(R.string.settings_pairing_recovery_access),
 }
 
 internal fun PairingFailure.recovery(): PairingRecovery = when (this) {
@@ -119,6 +123,7 @@ internal fun PairingFailure.recovery(): PairingRecovery = when (this) {
     PairingFailure.InvalidCode, PairingFailure.Certificate, PairingFailure.Expired,
     PairingFailure.TlsRequired -> PairingRecovery.Scan
     PairingFailure.Incompatible -> PairingRecovery.Update
+    PairingFailure.AccessRequired, PairingFailure.AccessRejected -> PairingRecovery.Access
     PairingFailure.Dns, PairingFailure.Refused, PairingFailure.Unreachable,
     PairingFailure.Timeout, PairingFailure.Unknown -> PairingRecovery.Retry
 }
@@ -150,7 +155,7 @@ fun pairingStep(error: Throwable, stage: PairingStage? = null): PairingAttemptSt
             HubError.CertificateMismatch -> PairingAttemptStep.Tls
             HubError.PairingExpired -> PairingAttemptStep.Auth
             HubError.Protocol, HubError.Incompatible, HubError.HubMismatch -> PairingAttemptStep.Protocol
-            HubError.Server, HubError.RateLimited -> PairingAttemptStep.Http
+            HubError.Server, HubError.RateLimited, HubError.AccessRequired, HubError.AccessRejected -> PairingAttemptStep.Http
             HubError.TlsRequired -> if (hub.status != null) PairingAttemptStep.Http else PairingAttemptStep.Network
             else -> PairingAttemptStep.Network
         }

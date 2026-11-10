@@ -17,6 +17,10 @@ struct RootView: View {
     }
     @Environment(\.horizontalSizeClass) private var widthClass
     #if os(iOS)
+    /// The Agents page's New Session sheet (`\.newAgentShown`), here so a fold or an unfold keeps it (#2836).
+    @State private var newAgentShown = false
+    /// The tree this window shows now (`\.shownTree`).
+    @State private var shownTree = ShownTree()
     @Environment(\.scenePhase) private var phase
     /// The window's width class when the app was last the active one: what its pages keep while it is away (#2836,
     /// `heldWidthClass`).
@@ -27,7 +31,8 @@ struct RootView: View {
     /// unfold make, on any simulator; only this view's choice flips, as before #2836 (a real fold changes the pages' own
     /// width class too). With `-swapTreeAway YES` the whole app's width class flips instead, from above this view
     /// (`TreeSwapFlip`), while the app counts as away, as while iOS takes its snapshots: nothing is built again
-    /// (`heldWidthClass`, `probe.tree-inner`).
+    /// (`heldWidthClass`, `probe.tree-inner`). With `-swapTreeWhole YES` the whole app's flips while it is active: a real
+    /// fold and unfold, the pages' own width class with it (#2836).
     @State private var flipped = false
     /// The flips it made, and the swaps between the shell and the tabs (`probe.tree`, `-probes YES`): a test that needs
     /// the tree built again checks it was (#2626), one that needs it kept checks it was not (#2836).
@@ -65,6 +70,12 @@ struct RootView: View {
     private var isAway: Bool { phase != .active || away }
     #endif
 
+    /// The shell or the tabs are on screen: not the welcome page, the engine step, the checklist after pairing (the same
+    /// branches as `body`) or an extension's page in their place.
+    private var pagesShown: Bool {
+        model.isPaired && model.pairingEngineMachine == nil && !model.showsChecklist && model.extensionOpen == nil
+    }
+
     /// The shell is on screen, and with it its toast window (`ToastWindow`): not on the welcome page, the engine step or
     /// the checklist after pairing (the same branches as `body`).
     private var shellShown: Bool { usesShell && model.isPaired && model.pairingEngineMachine == nil && !model.showsChecklist }
@@ -97,7 +108,7 @@ struct RootView: View {
                 #if os(visionOS)
                 RootTabs().visionShell()
                 #elseif os(iOS)
-                if usesShell { ShellView() } else { RootTabs().background { ToastWindowHook() } }
+                if usesShell { ShellView().modifier(BuiltTreeRoot()) } else { RootTabs().background { ToastWindowHook() }.modifier(BuiltTreeRoot()) }
                 #else
                 RootTabs()
                 #endif
@@ -123,6 +134,21 @@ struct RootView: View {
         // A new style, Theme Color or persona rebuilds the whole tree (tokens are static); the open tab and chat are remembered.
         .id(model.look)
         #if os(iOS)
+        // The Agents page's New Session, presented here, above the shell / tabs swap: a fold or an unfold while it is open
+        // builds the page again, and the sheet went with it, what was typed in it too (#2836). It still goes when something
+        // else takes the pages' place (the welcome page after unpairing, an extension's page), as it went with the page.
+        .environment(\.newAgentShown, $newAgentShown)
+        .sheet(isPresented: $newAgentShown) {
+            NewChatView { session in
+                newAgentShown = false
+                model.selectedTab = .chats
+                model.openChat = session.key
+            }
+            .id(model.look) // outlives RootView's rebuild for a new look, as Settings' sheet does
+        }
+        .onChange(of: pagesShown) { _, shown in if !shown { newAgentShown = false } }
+        // Which tree is shown: one built before, still alive a moment after a swap, leaves the window to it.
+        .environment(\.shownTree, shownTree)
         // While the app is away its pages keep the width class it had while it was the active one (#2836): the widths iOS
         // snapshots it in on its way to the background build nothing again.
         .transformEnvironment(\.horizontalSizeClass) { width in if let held = heldWidthClass { width = held } }
@@ -142,6 +168,10 @@ struct RootView: View {
                 TreeSwapDebug.shared.compact = false
                 try? await Task.sleep(for: .milliseconds(200))
                 away = false
+            } else if UserDefaults.standard.bool(forKey: "swapTreeWhole") {
+                TreeSwapDebug.shared.compact = true
+                try? await Task.sleep(for: .seconds(1))
+                TreeSwapDebug.shared.compact = false
             } else {
                 flipped = true
                 try? await Task.sleep(for: .seconds(1))
@@ -304,7 +334,79 @@ extension EnvironmentValues {
     /// Set on the iPad's tabs, where Inbox and Settings live in Persona's sidebar; nil elsewhere.
     @Entry var padRouter: PadRouter?
 }
+
+/// The Assistant | Agents switch as a row of its own over a page of a phone's tabs (`pageTabSwitch`): Agents' page
+/// column and Messages, over the chats opened there too. Assistant has it in its floating bar (`AssistantTopBar`), at the
+/// same height. Agents' list options stay on the list's own ⋯ beside it.
+struct PageTabSwitchRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        ViewThatFits(in: .horizontal) {
+            ShellSwitch(tab: $model.selectedTab) { EmptyView() } workMenu: { EmptyView() }
+                .dynamicTypeSize(...Theme.Shell.topBarLargestTypeSize)
+            ShellSwitch(tab: $model.selectedTab) { EmptyView() } workMenu: { EmptyView() }
+                .dynamicTypeSize(...Theme.Shell.compactSwitchLargestTypeSize)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, AssistantTopBar.topInset)
+        .padding(.bottom, Theme.Space.xs)
+        .background(Theme.pageBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("page-tab-switch")
+    }
+}
+
+/// A phone's tabs (`pageTabSwitch`): no tab bar; the pages draw the switch.
+private struct PageTabSwitch: ViewModifier {
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            content.toolbarVisibility(.hidden, for: .tabBar).environment(\.pageTabSwitch, true)
+        } else {
+            content
+        }
+    }
+}
 #endif
+
+/// One tree RootView builds: the shell or the tabs, built again by a fold or an unfold, and by a new look.
+@MainActor final class BuiltTree {}
+
+/// The tree a window shows now (RootView's; nil: none yet). The trees built before it live on a moment after a fold or an
+/// unfold swapped the shell and the tabs (seconds, on an iPad), or a new look built them again: they leave what is asked
+/// of the window to the shown one (#2836: the old Agents page took the chat the new one opened again, and opened it where
+/// no one saw it).
+@MainActor final class ShownTree {
+    var tree: BuiltTree?
+}
+
+#if os(iOS)
+/// The tree under it as one `BuiltTree` (`\.builtTree`), the window's shown one from its appearing.
+private struct BuiltTreeRoot: ViewModifier {
+    @Environment(\.shownTree) private var shown
+    @State private var tree = BuiltTree()
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.builtTree, tree)
+            .onAppear { shown?.tree = tree }
+    }
+}
+#endif
+
+extension EnvironmentValues {
+    /// RootView's `ShownTree`, and the tree a page is in: whether it is the one shown.
+    @Entry var shownTree: ShownTree? = nil
+    @Entry var builtTree: BuiltTree? = nil
+    /// The Agents page's New Session sheet, presented by RootView on iOS (it outlives the tree a fold or an unfold builds
+    /// again, #2836); nil, the page presents its own.
+    @Entry var newAgentShown: Binding<Bool>? = nil
+    /// The Assistant | Agents switch is the pages' own, at their top, ChatGPT's Chat | Work, and the system's tab bar is
+    /// hidden: a phone's tabs, at regular width (iPhone Duo open, where iOS draws the tab bar down the side of the screen,
+    /// at its foot; #2623). The iPad keeps its tab bar along the top; false elsewhere.
+    @Entry var pageTabSwitch = false
+}
 
 /// A tab's page, drawn again only by what it reads itself. Each tab's badge (the agents waiting, the inbox's Needs You) is read
 /// by its `Tab`, and the hub changes them with nearly every push: without this the `Tab` built its page again each time,
@@ -330,6 +432,9 @@ private struct TabPage<Page: View>: View, Equatable {
             TabPage {
                 AssistantView()
                     .modifier(TabActivityScope(tab: .assistant))
+                #if os(iOS)
+                    .modifier(PageTabSwitch())
+                #endif
                 #if PERF_SIGNPOST
                     .modifier(PerfTabMount("assistant"))
                 #endif
@@ -351,6 +456,9 @@ private struct TabPage<Page: View>: View, Equatable {
             TabPage {
                 ChatsView()
                     .modifier(TabActivityScope(tab: .chats))
+                #if os(iOS)
+                    .modifier(PageTabSwitch())
+                #endif
                 #if PERF_SIGNPOST
                     .modifier(PerfTabMount("agents"))
                 #endif
@@ -376,7 +484,7 @@ private struct TabPage<Page: View>: View, Equatable {
             }
             .equatable()
         }
-        .badge(InboxStore.shared.actionCount)
+        .badge(InboxStore.shared.unreadCount)
     }
 }
 
@@ -421,7 +529,13 @@ nonisolated struct ConnectionShown: Encodable, Equatable {
 @MainActor private struct FeishuRootTab: TabContent {
     var body: some TabContent<AppTab> {
         Tab(String(localized: "Messages [Quote Views 4da199]"), systemImage: Theme.Icon.feishuChats, value: AppTab.feishu) {
-            TabPage { LarkConversationsView().modifier(TabActivityScope(tab: .feishu)) }.equatable()
+            TabPage {
+                LarkConversationsView().modifier(TabActivityScope(tab: .feishu))
+                #if os(iOS)
+                    .modifier(PageTabSwitch())
+                #endif
+            }
+            .equatable()
         }
     }
 }

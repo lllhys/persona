@@ -153,7 +153,7 @@ func TestAgentSandboxFallsBack(t *testing.T) {
 		state string
 	}{
 		{"no sandbox-exec", sandbox.Support{OS: "darwin", Why: "机器上没有 sandbox-exec"}, nil, sandbox.AgentUnavailable},
-		{"linux", sandbox.Support{OS: "linux", Bwrap: "/usr/bin/bwrap"}, nil, sandbox.AgentUnsupported},
+		{"linux without bwrap", sandbox.Support{OS: "linux", Why: "机器上没有 bwrap"}, nil, sandbox.AgentUnavailable},
 		{"claude's own sandbox in the user's settings", macSandbox, func(t *testing.T, n *Node, cwd string) []string {
 			writeFile(t, filepath.Join(n.home, ".claude", "settings.json"), enabled)
 			return nil

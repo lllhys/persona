@@ -129,7 +129,7 @@ func TestMergedNotDeployedIsHeldUntilTheHubHasIt(t *testing.T) {
 	if line := deliverySummary(got); !strings.HasPrefix(line, "已合未上线") {
 		t.Fatalf("summary %q", line)
 	}
-	time.Sleep(6 * testReportDelay)
+	waitReportQueue(t, s)
 	if a := askOf(s, todo.ID); a != nil {
 		t.Fatalf("asked to verify work not deployed: %+v", a)
 	}
@@ -157,7 +157,7 @@ func TestMergedNotDeployedIsHeldUntilTheHubHasIt(t *testing.T) {
 	if got.Stage != "verify" {
 		t.Fatalf("stage %q", got.Stage)
 	}
-	time.Sleep(6 * testReportDelay)
+	waitReportQueue(t, s)
 	if n := verifyCards(posts()); n != 0 {
 		t.Fatalf("%d 请验收 cards to the owner for a small task", n)
 	}
@@ -221,7 +221,7 @@ func TestDeployCheckFailingIsNotDeployed(t *testing.T) {
 	if got.Delivery.State != deliveryMerged || got.Stage != "merge" || !strings.Contains(got.Delivery.Gate, "等确认部署") {
 		t.Fatalf("todo %q %+v", got.Stage, got.Delivery)
 	}
-	time.Sleep(6 * testReportDelay)
+	waitReportQueue(t, s)
 	if askOf(s, todo.ID) != nil || verifyCards(posts()) != 0 {
 		t.Fatal("asked to verify work the check could not confirm")
 	}

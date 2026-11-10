@@ -22,6 +22,7 @@
     <string name="chat_delivery_dialog_open">请先处理电脑上的对话框</string>
     <string name="chat_delivery_op_id_reused">这条消息的发送标识已被使用</string>
     <string name="chat_delivery_invalid">消息内容不符合要求</string>
+    <string name="chat_delivery_out_of_scope">这个模型供应商没有设为在这台电脑上用。可以在 设置 › 模型供应商 里改它在哪些电脑上用。</string>
     <string name="chat_delivery_refused">电脑未接受这条消息</string>
     <string name="chat_delivery_delivered_waiting">已送达，等待对话记录</string>
     <string name="chat_delivery_cancel">取消发送</string>
@@ -414,6 +415,9 @@
     <string name="chat_work_thought">思考</string>
     <string name="chat_content_copy">复制</string>
     <string name="chat_content_show_all">展开全部</string>
+    <string name="chat_content_copied">已拷贝</string>
+    <string name="chat_content_quote_more">展开全部</string>
+    <string name="chat_content_quote_less">收起</string>
     <string name="chat_content_full_text">全文</string>
     <string name="chat_content_image">对话图片</string>
     <plurals name="chat_content_collapse_steps">

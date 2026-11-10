@@ -1,0 +1,7 @@
+任务：Migrate the database
+汇报类型：progress
+汇报原文：
+Ran the **migration** script on staging:
+
+- 41 tables moved
+- `orders` needs a backfill

@@ -13,6 +13,7 @@
     <string name="chat_task_detail_own_agent">Agent・チャットから開いたものではありません</string>
     <string name="chat_task_detail_agent_gone">このAgentはもうありません</string>
     <string name="chat_task_detail_agent_gone_body">閉じられた可能性があります。</string>
+    <string name="chat_task_detail_report">最新の報告</string>
     <string name="chat_task_detail_open_chat">チャットを開く</string>
     <string name="chat_task_board_title">タスク</string>
     <string name="chat_task_board_empty">タスクはまだありません</string>

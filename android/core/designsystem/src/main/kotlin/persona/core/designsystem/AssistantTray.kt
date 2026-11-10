@@ -7,9 +7,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import persona.core.designsystem.icons.PhIcons
 
 /** The composer trays are bounded independently of the transcript and the keyboard. */
 object AssistantTrayTokens {
@@ -41,7 +43,8 @@ fun AssistantTrayEntry(label: String, count: Int, tone: AssistantTrayTone, expan
     val active = tone != AssistantTrayTone.Pending || count > 0
     JChip(label, modifier.semantics { stateDescription = description }, selected = expanded,
         onClick = if (enabled) onClick else null, count = count.takeIf { it > 0 }, muted = !active,
-        dot = if (active) assistantTrayColor(tone) else PersonaTheme.palette.ink3)
+        dot = if (active) assistantTrayColor(tone) else PersonaTheme.palette.ink3, role = Role.Button,
+        trailingIcon = if (expanded) PhIcons.CaretDown else PhIcons.CaretUp)
 }
 
 /** Row status marks share the same deliberately named palette as the tray controls. */

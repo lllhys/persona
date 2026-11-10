@@ -134,6 +134,8 @@ extension Theme {
         /// One step turns into the next (a setting's example: before → after, a timeline).
         static let becomes = "arrow.forward"
         static let gitBranch = "arrow.triangle.branch"
+        /// Review an Agent's changes (#151): the session's ⋯ and the Git pane's button.
+        static let reviewChanges = "doc.text.magnifyingglass"
         /// The spaces a host nests under another (Orca's child worktrees,「N 个子项」, #3075).
         static let childSpaces = "square.3.layers.3d.down.right"
         /// A notification that needs attention, in a workspace or from a background task.
@@ -418,6 +420,9 @@ extension Theme {
         /// A hub reached through a SOCKS5 proxy another app on this device serves (Settings › hub › Local Proxy,
         /// docs/operations/network.md "Connecting to hub through a local SOCKS5 proxy").
         static let localProxy = "app.connected.to.app.below.fill"
+        /// A hub behind Cloudflare Access and the service token that lets the app through (Settings › hub › Cloudflare
+        /// Access, docs/operations/network.md "Behind Cloudflare Access").
+        static let cloudflareAccess = "person.badge.shield.checkmark"
         /// This device's own SSH key (its public half, to copy onto the server).
         static let sshKey = "key.horizontal"
         /// The SSH server's key fingerprint, confirmed and pinned.

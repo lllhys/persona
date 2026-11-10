@@ -35,9 +35,9 @@ import java.io.File
 import java.time.Instant
 
 /**
- * An agent whose turn ended while Workflows run (#2935): the row's workflow line (the newest, then "N more waiting") and a
- * background count that counts a workflow once; an older hub's row that only has a workflow in its background; a
- * plain row. Every style, light and dark; PNGs in `build/workflow-row-shots/`.
+ * An agent whose turn ended while Workflows run (#2935): the row's workflow line (the newest, then "N more waiting") and its
+ * facts on a separate metadata line. An older hub's row that only has a workflow in its background, and a plain row. Every style,
+ * light and dark; PNGs in `build/workflow-row-shots/`.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)

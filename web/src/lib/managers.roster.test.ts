@@ -1,65 +1,78 @@
 // @vitest-environment jsdom
-// The roster's default (docs/assistant/managers.md "Clients"): a read that fails takes the hub's own assistant for now, so pages
-// don't wait, and is read again a few seconds later, so a blip on a hub whose default is another manager is put right.
+// Reading the roster again (a `managers` push, the socket's hello): asked while a read is out, it reads once more when
+// that one is done, so a push that tells about a change the hub made after answering the read is not lost.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultKnown, defaultManager, resetManagerChoice } from "./manager-choice";
-import { loadRoster, resetRoster, ROSTER_RETRIES, ROSTER_RETRY_MS } from "./managers";
+import { resetManagerChoice } from "./manager-choice";
+import { currentRoster, loadRoster, resetRoster } from "./managers";
 
-const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(body), headers: new Headers() });
-let answers: { status: number; body: unknown }[] = [];
-let reads = 0;
+let count: number;
+let reads: number;
+// the answers held back until released, in order
+let held: (() => void)[];
 
-async function settle() {
-  for (let i = 0; i < 6; i++) await Promise.resolve();
-}
+const roster = (n: number) => ({ default: "assistant", managers: [{ id: "assistant", name: "助手", online: true }, { id: "m-1", name: "工作", online: true, inbox_needs_you: n }] });
+const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+const work = () => currentRoster()?.managers.find((m) => m.id === "m-1")?.inbox_needs_you;
 
 beforeEach(() => {
-  vi.useFakeTimers();
-  resetManagerChoice();
-  resetRoster();
+  count = 2;
   reads = 0;
-  answers = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (!url.endsWith("/managers")) return reply({ error: "not found" }, 404);
+  held = [];
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    if (new URL(String(input), "http://hub.example.com").pathname !== "/api/v1/managers") return Promise.resolve(json({}));
     reads++;
-    const a = answers.shift() ?? { status: 503, body: { error: "unavailable" } };
-    return reply(a.body, a.status);
+    const body = roster(count); // what the hub knows when the read reaches it
+    return new Promise<Response>((resolve) => held.push(() => resolve(json(body))));
   }));
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllGlobals();
-  resetManagerChoice();
   resetRoster();
+  resetManagerChoice();
 });
 
-describe("the roster's default", () => {
-  it("a failed read takes the hub's own for now, then the read again puts the real default in place", async () => {
-    answers = [{ status: 503, body: { error: "unavailable" } }, { status: 200, body: { default: "m-1", managers: [{ id: "m-1", name: "Work", online: true }] } }];
-    await loadRoster();
+describe("reading the roster again", () => {
+  it("reads once more after a read that was out when asked, for any number of asks meanwhile", async () => {
+    const first = loadRoster();
     await settle();
-    expect(defaultKnown()).toBe(true);
-    expect(defaultManager()).toBe("assistant");
-    await vi.advanceTimersByTimeAsync(ROSTER_RETRY_MS);
+    expect(reads).toBe(1); // read out: the hub answered it with 2
+    count = 5; // the count moves and the hub pushes `managers`, twice, before that answer is back
+    const again = loadRoster();
+    const once = loadRoster();
+    expect(once).toBe(again);
+    held.shift()!();
+    await first;
+    expect(work()).toBe(2);
+    await settle();
+    expect(reads).toBe(2); // one more read, not one per ask
+    held.shift()!();
+    await again;
+    expect(work()).toBe(5);
     await settle();
     expect(reads).toBe(2);
-    expect(defaultManager()).toBe("m-1");
   });
 
-  it("a hub without a roster is not asked again", async () => {
-    answers = [{ status: 404, body: { error: "not found" } }];
-    await loadRoster();
+  it("reads once with nothing out", async () => {
+    const done = loadRoster();
     await settle();
-    expect(defaultKnown()).toBe(true);
-    await vi.advanceTimersByTimeAsync(ROSTER_RETRY_MS * (ROSTER_RETRIES + 1));
+    held.shift()!();
+    await done;
+    await settle();
     expect(reads).toBe(1);
+    expect(work()).toBe(2);
   });
 
-  it("a read that keeps failing is tried a few times, then left to the next hello", async () => {
-    await loadRoster();
-    await vi.advanceTimersByTimeAsync(ROSTER_RETRY_MS * (ROSTER_RETRIES + 3));
+  it("makes no read after a reset for an ask from before it", async () => {
+    void loadRoster();
     await settle();
-    expect(reads).toBe(ROSTER_RETRIES + 1);
+    void loadRoster(); // asked while out
+    resetRoster();
+    held.shift()!();
+    await settle();
+    expect(reads).toBe(1);
   });
 });

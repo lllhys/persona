@@ -197,17 +197,21 @@ func (s *Service) askAcceptanceRound(t Todo, machine, session, reply string, aga
 	s.postAsk(ctx, t, a)
 }
 
-// supervisorVerified says task t's supervisor (the main conversation or a leader) closed it with task_review accepted,
-// having checked its evidence, and did not ask the owner to look themselves (user_check): what it asked the owner is the
-// supervisor's to pass, not the owner's (#3240). A task with no supervisor, or one the done judge closed, still asks; so
-// does a big feature's "Please verify" (verifyBySupervisor).
+// supervisorVerified says supervised task t was closed accepted with its evidence checked, and the owner was not asked
+// to look themselves: its supervisor (the main conversation or a leader) did so with task_review accepted and no
+// user_check, or the done judge's spot check did (judgeClose, #3356) on anything but a big feature (high priority,
+// #3205), which the owner tries. What it asked the owner is then passed for them, not left for them (#3240). A task with
+// no supervisor still asks; so does a big feature's "Please verify" (verifyBySupervisor).
 func supervisorVerified(t Todo) bool {
 	v := t.Supervision
 	if v == nil || v.Supervisor == "" || v.state(t) != reviewAccepted || len(v.Reviews) == 0 {
 		return false
 	}
 	r := v.Reviews[len(v.Reviews)-1]
-	return r.Verdict == reviewAccepted && r.By == "" && !r.UserCheck
+	if r.Verdict != reviewAccepted || r.UserCheck {
+		return false
+	}
+	return r.By == "" || r.By == reviewerJudge && t.Priority != "high"
 }
 
 // verifyBySupervisor passes task id's "Please verify" for its supervisor, as the owner's "Pass" would (the task is
@@ -660,7 +664,7 @@ func (s *Service) acceptTryAs(ctx context.Context, id, card string, byDefault bo
 // taskVerified is what follows deployed task id's "Please verify" a passed (by the owner or its supervisor): the task is
 // verified, its todo's chat thread and where the request came from hear it, and its cards say so.
 func (s *Service) taskVerified(ctx context.Context, id string, a acceptAsk) {
-	s.setTaskStage(ctx, id, "verify", "")
+	s.setTaskStageKind(ctx, id, "verify", "", "", true)
 	s.threadPost(id, threadEvent{kind: threadTodoAccepted}) // and the todo's chat thread
 	s.sourceReportSoon(id, sourceReportWait)                // and where the request came from (todo_source.go)
 	s.updateAskCards(ctx, id, a)
@@ -940,7 +944,7 @@ func (s *Service) snapshotUnaccepted(ctx context.Context, loc *time.Location) ([
 		}
 		total++
 		if len(out) < 8 { // the oldest eight; the total says how many more
-			out = append(out, prompts.SnapshotAccept{Title: clip(oneLine(t.Title), 40), Verdict: verdictText(s.botLang(ctx), &x.a),
+			out = append(out, prompts.SnapshotAccept{Title: clip(oneLine(t.Title), 40), Verdict: clip(oneLine(verdictText(s.botLang(ctx), &x.a)), 120),
 				Changed: x.a.Changed, Link: x.a.Link, Since: x.a.AskedAt.In(loc)})
 		}
 	}

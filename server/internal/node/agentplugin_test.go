@@ -72,7 +72,7 @@ func TestAgentPlugin(t *testing.T) {
 func TestAssistantAllowsTheOfficeScript(t *testing.T) {
 	n, home := testNode(t)
 	want := assistantAllowedTools + ",mcp__" + compat.MCPServer + ",Bash(sh " + filepath.Join(identity.AssistantDir(home), ".claude", "skills", "persona-office", "scripts", "office.sh") + " *)"
-	if got := n.assistantTools(); got != want {
+	if got := n.assistantTools(true); got != want {
 		t.Fatalf("%s\nwant %s", got, want)
 	}
 }

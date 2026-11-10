@@ -2,11 +2,14 @@ package errreport
 
 import (
 	"bytes"
+	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nwverse/persona/sdk/go/wire"
 )
@@ -32,14 +35,58 @@ func TestScrubText(t *testing.T) {
 		{"on build-box.example.net and Studio and studio.local", "on <machine> and <machine> and <machine>.local"},
 		{"InboxViewModelLoadMoreItemsUseCaseImpl failed", "InboxViewModelLoadMoreItemsUseCaseImpl failed"},
 		{"session expired", "session expired"},
+		// a secret's name with a prefix: db_password, PGPASSWORD, aws_secret_access_key, X-Auth-Token
+		{"db_password=hunter2 PGPASSWORD=hunter3 private_key=abc123 x_auth_token=zzz1234",
+			"db_password=" + Redacted + " PGPASSWORD=" + Redacted + " private_key=" + Redacted + " x_auth_token=" + Redacted},
+		{"aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "aws_secret_access_key=" + Redacted},
+		{"MYSQL_PWD=pw1 GITHUB_TOKEN: ghx1 X-Auth-Token: abc1", "MYSQL_PWD=" + Redacted + " GITHUB_TOKEN: " + Redacted + " X-Auth-Token: " + Redacted},
+		{`{"ssh_passphrase": "s3same", "aws_credentials": "c1"}`, `{"ssh_passphrase": "` + Redacted + `", "aws_credentials": "` + Redacted + `"}`},
+		// not secrets: a bare "key" inside a word or after a prefix is a name like any other, and only names that end in
+		// a secret's name count (sort_key, max_tokens and PASSWORD_FILE are not secrets)
+		{"keyboard: x monkey=3 sort_key=name max_tokens=4096 PASSWORD_FILE=/run/x", "keyboard: x monkey=3 sort_key=name max_tokens=4096 PASSWORD_FILE=/run/x"},
 	}
 	for _, c := range cases {
 		if got := s.Text(c.in); got != c.want {
 			t.Errorf("Text(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
+	// A rune whose lowercase has another byte length (U+0130, the Kelvin sign) must not stop mixed-case names from
+	// being hidden, nor shift where they are cut out.
+	mac := NewScrubber("Alices-MacBook-Pro")
+	for in, want := range map[string]string{
+		"on Alices-MacBook-Pro":                       "on <machine>",
+		"\u0130stanbul on Alices-MacBook-Pro":         "\u0130stanbul on <machine>",
+		"5 \u212A on ALICES-MACBOOK-PRO.local":        "5 \u212A on <machine>.local",
+		"\u023A Alices-MacBook-Pro \u0130 x":          "\u023A <machine> \u0130 x", // one grows, one shrinks: same total length
+		"\u212A\u0130\u0130 alices-macbook-pro x":     "\u212A\u0130\u0130 <machine> x",
+		"\u212Bngstr\u00F6m Alices-MacBook-Pro\u0130": "\u212Bngstr\u00F6m <machine>\u0130",
+	} {
+		got := mac.Text(in)
+		if got != want || !utf8.ValidString(got) {
+			t.Errorf("Text(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := NewScrubber("kiln-box").Text("on \u212Ailn-Box"); got != "on <machine>" { // the Kelvin sign folds to k
+		t.Errorf("Kelvin sign: %q", got)
+	}
 	if got := s.Message(`send "the user's words" and 「日本語」 'it''s' failed`); strings.Contains(got, "words") || strings.Contains(got, "日本語") {
 		t.Errorf("quoted spans stay: %q", got)
+	}
+	// a quoted body with a newline in it is still the user's content
+	multiline := []struct{ in, want string }{
+		{"send \"hello there\nmy secret plan\" failed", `send "<redacted>" failed`},
+		{"post “first line\nsecond line” failed", `post "<redacted>" failed`},
+		{"title 「一行\n二行」 bad", `title "<redacted>" bad`},
+		{"run `ls\nrm -rf x` failed", `run "<redacted>" failed`},
+		// two quotes on separate lines stay two spans, and the text between them stays
+		{"open \"a.txt\" failed\nthen \"b.txt\" failed", "open \"<redacted>\" failed\nthen \"<redacted>\" failed"},
+		// apostrophes in prose do not pair across lines
+		{"it's broken\nwe're done", "it's broken\nwe're done"},
+	}
+	for _, c := range multiline {
+		if got := s.Message(c.in); got != c.want {
+			t.Errorf("Message(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
@@ -62,6 +109,29 @@ func TestScrubReportLimits(t *testing.T) {
 	}
 	if _, ok := r.Tags["Bad Key"]; ok || r.Tags["screen"] != "inbox" {
 		t.Fatalf("tags: %v", r.Tags)
+	}
+}
+
+func TestScrubCrumbLevelAndTime(t *testing.T) {
+	r := wire.ErrorReport{Breadcrumbs: []wire.ErrorBreadcrumb{
+		{Category: "nav", Level: "/home/alice", Time: "token=abcdefghijk me@example.com"},
+		{Category: "nav", Level: "Info", Time: "2026-11-06T10:00:00.123+01:00"},
+		{Category: "nav", Level: "warning", Time: "2026-11-06T09:00:00Z"},
+		{Category: "nav", Level: "debug", Time: "2026-11-06 09:00:00"},
+		{Category: "nav"},
+	}}
+	NewScrubber().Report(&r)
+	want := []struct{ level, time string }{
+		{"", ""},
+		{"info", "2026-11-06T09:00:00.123Z"},
+		{"warning", "2026-11-06T09:00:00Z"},
+		{"debug", ""},
+		{"", ""},
+	}
+	for i, w := range want {
+		if c := r.Breadcrumbs[i]; c.Level != w.level || c.Time != w.time {
+			t.Errorf("crumb %d: level %q time %q, want %q %q", i, c.Level, c.Time, w.level, w.time)
+		}
 	}
 }
 
@@ -121,6 +191,85 @@ func TestFingerprintAndGate(t *testing.T) {
 	}
 	if !g.Admit(mk("other", "other"), "hub") {
 		t.Fatal("another sender has its own")
+	}
+}
+
+// An id seen again after IDWindow is remembered once from then on: its old entry neither holds back the ones after
+// it nor, when it goes, takes the new one with it.
+func TestGateReSeenID(t *testing.T) {
+	now := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	g := NewGate(func() time.Time { return now })
+	mk := func(id, fp string) *wire.ErrorReport { return &wire.ErrorReport{ID: id, Fingerprint: fp, Count: 1} }
+	if !g.Admit(mk("x", "f1"), "d") {
+		t.Fatal("x first")
+	}
+	now = now.Add(IDWindow + time.Minute)
+	if !g.Admit(mk("x", "f2"), "d") || !g.Admit(mk("y", "f3"), "d") {
+		t.Fatal("x again after its window, then y")
+	}
+	if !slices.Equal(g.order, []string{"x", "y"}) {
+		t.Fatalf("x once: %v", g.order)
+	}
+	now = now.Add(time.Hour)
+	for i := range idsMost - 2 { // up to the most ids: none goes yet, x and y among them
+		g.Admit(mk(fmt.Sprintf("z%d", i), "z"), "d")
+	}
+	if g.Admit(mk("x", "f4"), "d") {
+		t.Fatal("a retry of x inside its new window")
+	}
+}
+
+// An occurrence the rate limits refuse after its problem's fold window is folded, so the next one let on counts it.
+func TestGateRateLimitedOccurrenceIsFolded(t *testing.T) {
+	now := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	g := NewGate(func() time.Time { return now })
+	mk := func(id, fp string) *wire.ErrorReport { return &wire.ErrorReport{ID: id, Fingerprint: fp, Count: 1} }
+	if !g.Admit(mk("f0", "F"), "d") {
+		t.Fatal("F first")
+	}
+	now = now.Add(FoldWindow)
+	for i := range DeviceRate {
+		if !g.Admit(mk(fmt.Sprintf("p%d", i), fmt.Sprintf("P%d", i)), "d") {
+			t.Fatalf("within the rate: %d", i)
+		}
+	}
+	if g.Admit(mk("f1", "F"), "d") {
+		t.Fatal("over the device's rate")
+	}
+	if got := g.folds["F"].folded; got != 1 {
+		t.Fatalf("the refused one is folded: %d", got)
+	}
+	now = now.Add(time.Minute)
+	r := mk("f2", "F")
+	if !g.Admit(r, "d") || r.Count != 2 {
+		t.Fatalf("the next one carries it: %d", r.Count)
+	}
+}
+
+// Unsent gives an admitted report's count back to its problem: the next one is not folded into it and carries it.
+func TestGateUnsent(t *testing.T) {
+	now := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	g := NewGate(func() time.Time { return now })
+	mk := func(id, fp string) *wire.ErrorReport { return &wire.ErrorReport{ID: id, Fingerprint: fp, Count: 1} }
+	if !g.Admit(mk("1", "F"), "d") || g.Admit(mk("2", "F"), "d") {
+		t.Fatal("one let on, one folded")
+	}
+	now = now.Add(FoldWindow)
+	r := mk("3", "F")
+	if !g.Admit(r, "d") || r.Count != 2 {
+		t.Fatalf("with the folded one: %d", r.Count)
+	}
+	g.Unsent(r)
+	if g.Admit(mk("3", "F"), "d") {
+		t.Fatal("its id stays: a retry of an occurrence already counted would count it twice")
+	}
+	next := mk("4", "F")
+	if !g.Admit(next, "d") || next.Count != 3 {
+		t.Fatalf("the next one carries the unsent one's count: %d", next.Count)
+	}
+	g.Unsent(&wire.ErrorReport{ID: "5", Fingerprint: "unknown", Count: 1})
+	if got := g.folds["unknown"]; got == nil || got.folded != 1 {
+		t.Fatalf("a problem the gate no longer holds starts its fold again: %+v", got)
 	}
 }
 

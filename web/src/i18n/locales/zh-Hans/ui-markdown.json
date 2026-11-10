@@ -1,5 +1,7 @@
 {
   "copy_code": "拷贝代码",
   "copy": "拷贝",
-  "copy_table": "拷贝表格"
+  "copy_table": "拷贝表格",
+  "quote_more": "展开全部",
+  "quote_less": "收起"
 }

@@ -268,7 +268,8 @@ describe("client and admin catalogs", () => {
 });
 
 describe("code", () => {
-  const files = sourceFiles(SRC);
+  // The independent viewer is a real resource consumer too, but never imports the authenticated translator.
+  const files = [...sourceFiles(SRC), ...sourceFiles(join(SRC, "..", "public-share"))];
   const scans = new Map(files.map((f) => [relative(SRC, f), scan(f)]));
 
   it("uses admin-* keys only in the admin UI, whose page is the only one that loads them", () => {

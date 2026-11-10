@@ -9,18 +9,13 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import persona.core.contracts.api.HubManager
-import persona.core.contracts.api.ManagerRoster
 
 /**
- * "Muted" (docs/assistant/inbox.md "Muting") with several managers (docs/assistant/managers.md "Grouping"): each one's
- * mutes are read with it named, under its name, the default first; one that can't be read keeps its place; Unmute goes
- * to the manager whose mute it is and, failing, puts it back there.
+ * "Muted" (docs/assistant/inbox.md "Muting") with several managers (docs/assistant/managers.md "Clients"): the list is the
+ * current assistant's, read with it named and each entry stamped with it; one that can't be read throws; Unmute goes to
+ * the manager whose mute it is and, failing, puts it back there; another assistant's list never stays under this one.
  */
 class InboxMutesModelTest {
-    private val managers = ManagerRoster(listOf(HubManager("assistant", "Assistant", online = true, isDefault = true),
-        HubManager("m-2", "Work", online = true), HubManager("m-3", "Home")), "assistant")
-
     private class Mutes : InboxRepository by FakeInboxRepository() {
         val unmuted = mutableListOf<String>()
         var failUnmute: Exception? = null
@@ -35,24 +30,30 @@ class InboxMutesModelTest {
         }
     }
 
-    @Test fun eachManagersMutesAreReadUnderItsNameAndTakenBackOnIt() = runBlocking {
+    @Test fun theCurrentAssistantsMutesAreReadUnderItsNameAndTakenBackOnIt() = runBlocking {
         val repository = Mutes()
         val model = InboxMutesModel(repository)
-        model.load(managers)
-        val shares = checkNotNull(model.shares)
-        assertEquals(listOf(listOf("o/one"), listOf("o/two"), emptyList()), shares.map { s -> s.group.items.map { it.name } })
-        assertEquals(listOf("assistant", "m-2"), shares.flatMap { s -> s.group.items.map { it.manager } })
-        assertEquals("503", shares[2].failed?.message)
-        assertEquals(listOf("o/two", "o/one"), model.mutes?.map { it.name })
+        model.load("m-2")
+        assertEquals(listOf("o/two"), model.mutes?.map { it.name })
+        assertEquals(listOf<String?>("m-2"), model.mutes?.map { it.manager })
 
-        model.unmute(shares[1].group.items.single())
-        assertEquals(listOf("assistant", "m-3"), model.shares?.filter { it.shown }?.map { it.group.id })
-        assertEquals(listOf("o/one"), model.mutes?.map { it.name }) // the default's mute with the same id stays
+        // Another assistant's list replaces it: the one before is gone, and a manager that can't be read throws with nothing shown.
+        model.load("assistant")
+        assertEquals(listOf("o/one"), model.mutes?.map { it.name })
+        assertEquals(listOf<String?>("assistant"), model.mutes?.map { it.manager })
+        try { model.load("m-3"); fail("a manager that can't be read throws") } catch (e: IllegalStateException) { assertEquals("503", e.message) }
+        assertNull(model.mutes)
 
+        model.load("m-2")
+        model.unmute(model.mutes!!.single())
+        assertEquals(emptyList<InboxMute>(), model.mutes)
+        assertTrue(model.isEmpty)
+
+        model.load("assistant")
         repository.failUnmute = IllegalStateException("offline")
-        val left = checkNotNull(model.shares)[0].group.items.single()
+        val left = model.mutes!!.single()
         try { model.unmute(left); fail("a failed unmute throws") } catch (e: IllegalStateException) { assertEquals("offline", e.message) }
-        assertEquals(listOf(listOf(left), emptyList(), emptyList()), model.shares?.map { it.group.items })
+        assertEquals(listOf(left), model.mutes)
         assertEquals(listOf("m-2:u1", "assistant:u1"), repository.unmuted)
     }
 
@@ -106,24 +107,21 @@ class InboxMutesModelTest {
             override suspend fun unmute(id: String, manager: String?) = answer.await()
         }
         val model = InboxMutesModel(repository)
-        model.load(managers)
-        val gone = checkNotNull(model.shares)[1].group.items.single()
+        model.load("m-2")
+        val gone = model.mutes!!.single()
         val unmuting = launch { model.unmute(gone) }
         yield()
-        model.load(managers) // read while the unmute was on its way: it still has the mute
-        assertEquals(listOf("o/two", "o/one"), model.mutes?.map { it.name })
+        model.load("m-2") // read while the unmute was on its way: it still has the mute
+        assertEquals(listOf("o/two"), model.mutes?.map { it.name })
         answer.complete(Unit)
         unmuting.join()
-        assertEquals(listOf("o/one"), model.mutes?.map { it.name })
-        assertEquals(listOf(listOf("o/one"), emptyList(), emptyList()), model.shares?.map { s -> s.group.items.map { it.name } })
+        assertEquals(emptyList<InboxMute>(), model.mutes)
     }
 
     @Test fun withOneManagerTheMutesAreOneListAsBefore() = runBlocking {
         val model = InboxMutesModel(Mutes())
-        model.load(ManagerRoster(listOf(managers.managers.first()), "assistant"))
-        assertNull(model.shares)
+        model.load(null) // none named
+        assertEquals(listOf("o/one"), model.mutes?.map { it.name })
         assertEquals(listOf<String?>(null), model.mutes?.map { it.manager })
-        model.load(null)
-        assertTrue(model.mutes?.size == 1 && model.shares == null)
     }
 }

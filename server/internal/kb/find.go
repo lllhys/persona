@@ -81,7 +81,8 @@ func matcher(query string) func(string) bool {
 // is not: a person's hashed identity hints (handles.json, handles.go), a connector's cursor (cursors/<source>.json),
 // history imports' progress (history/, history.go), the selection's bookkeeping (select/, a chat's retention.json),
 // the Moments verdicts of a project (moments-judged.json, moments_link.go) and recording undo snapshots mean nothing
-// to a model, and the hints are kept out of every tool and prompt.
+// to a model, and the hints are kept out of every tool and prompt. A meeting's live log (live.json, live.go) is never
+// searched: other people's words said while Persona attended, and the questions asked of it.
 func searchable(rel string) bool {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	switch {
@@ -91,6 +92,8 @@ func searchable(rel string) bool {
 		return false
 	case len(parts) == 3 && parts[0] == KindRecording && (parts[2] == recordingJournal || parts[2] == "minutes.json"):
 		return false // minutes.md has the minutes' text
+	case len(parts) >= 3 && parts[0] == KindRecording && strings.HasPrefix(parts[2], liveFile):
+		return false // live.json, and its temporary file while it is replaced
 	case len(parts) == 3 && parts[0] == KindPerson && parts[2] == "handles.json":
 		return false
 	case len(parts) == 3 && parts[0] == KindProject && parts[2] == "moments-judged.json":

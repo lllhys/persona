@@ -101,6 +101,16 @@ export function createFsLive(deps: FsLiveDeps) {
     for (const w of watchers) queue(w, w.opts.paths, w.opts.git);
   };
 
+  /** A hidden page rereads nothing: what is waiting is dropped, the return refreshes everything. */
+  const dropPending = () => {
+    for (const w of watchers) {
+      if (w.timer !== undefined) deps.clearTimer(w.timer);
+      w.timer = undefined;
+      w.pending.clear();
+      w.pendingGit = false;
+    }
+  };
+
   function begin() {
     if (started) return;
     started = true;
@@ -117,14 +127,16 @@ export function createFsLive(deps: FsLiveDeps) {
         }
       }),
       // A new socket is a new client for the hub: it knows nothing of what was open, and changes were missed.
+      // While hidden the missed changes wait for the return, which refreshes everything anyway.
       deps.onEvent("hello", () => {
         sent.clear();
         keys().forEach(sync);
-        refreshAll();
+        if (deps.visible()) refreshAll();
       }),
       deps.onVisibility(() => {
         keys().forEach(sync);
         if (deps.visible()) refreshAll();
+        else dropPending();
       }),
     ];
   }

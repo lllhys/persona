@@ -65,12 +65,16 @@ func (e *Engine) ForgetSource(source string, archiveSources ...string) (Forgotte
 		if owned(p.Connector, p.Source, p.ID) {
 			out.People = append(out.People, p.ID)
 		} else {
-			kept := slices.DeleteFunc(slices.Clone(p.Chats), func(id string) bool { return slices.Contains(out.Chats, id) })
-			if len(kept) != len(p.Chats) {
-				p.Chats = kept
-				if err := e.Store.putEntity(KindPerson, p.ID, p, &p.Tagging, true); err != nil {
-					return out, err
+			_, _, err := e.Store.updatePerson(p.ID, true, nil, func(p *Person) bool {
+				kept := slices.DeleteFunc(slices.Clone(p.Chats), func(id string) bool { return slices.Contains(out.Chats, id) })
+				if len(kept) == len(p.Chats) {
+					return false
 				}
+				p.Chats = kept
+				return true
+			})
+			if err != nil {
+				return out, err
 			}
 		}
 	}
@@ -246,5 +250,5 @@ func (s *Store) dropLogLines(slug string, gone func(source string) bool) (err er
 		}
 		kept = append(kept, l)
 	}
-	return writeFile(p, []byte(strings.Join(kept, "")))
+	return archiveWrite(p, []byte(strings.Join(kept, "")))
 }

@@ -71,9 +71,10 @@ type briefBodyDone struct {
 
 // briefBodyProgress is a task being worked on.
 type briefBodyProgress struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Stage string `json:"stage,omitempty"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Stage     string `json:"stage,omitempty"`
+	StageKind string `json:"stage_kind,omitempty"`
 }
 
 // body is the facts as a `brief` item's body.
@@ -119,7 +120,7 @@ func (f *briefFacts) body(s *Service, title string) briefBody {
 		b.Done = append(b.Done, briefBodyDone{ID: d.ID, Title: d.Title, At: d.At})
 	}
 	for _, p := range f.Progress {
-		b.Progress = append(b.Progress, briefBodyProgress{ID: p.ID, Title: p.Title, Stage: p.Stage})
+		b.Progress = append(b.Progress, briefBodyProgress{ID: p.ID, Title: p.Title, Stage: p.Stage, StageKind: p.StageKind})
 	}
 	return b
 }

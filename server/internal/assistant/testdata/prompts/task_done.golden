@@ -22,6 +22,6 @@ verdict 五选一：
 拿不准就不选 done：把一件没做完的事自动划掉（用户以为做完了），比留着让用户自己点完成代价大。但要求的事明明交代做完了，不要因为附带的说明不选 done。
 输入里的「线索」只是提示，不能单凭它判 done。
 
-reason：不超过 20 个字，说结果或卡在哪（如「已合并 PR 并发了 TestFlight」「还差两处没改」「等 App 审核」）。
+reason：不超过 20 个字，说结果或卡在哪（如「已合并 PR 并发了 TestFlight」「还差两处没改」「等 App 审核」）。用户会在任务列表里看到它：不要照抄 pane id、session id、批次号、todo_… 这类内部编号（PR、issue 编号可以写）。
 
 回复 JSON：{"verdict":"done","reason":"…"}

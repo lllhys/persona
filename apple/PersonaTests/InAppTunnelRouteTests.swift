@@ -53,4 +53,19 @@ struct InAppTunnelRouteTests {
         let old = try JSONDecoder().decode(InAppTunnelRoute.self, from: Data(#"{"target_host":"192.0.2.5"}"#.utf8))
         #expect(old.name.isEmpty && !old.always && old.targetPort == 18660)
     }
+
+    @Test func anSSHPortProbesOnlyTheSSHPath() throws {
+        // No ssh_port: the route and its probe are what they were.
+        let plain = try #require(InAppTunnelRoute(extensionConfig: ["target_host": .string("192.0.2.5")], always: false))
+        #expect(plain.sshPort == nil && plain.sshProbe == plain)
+        // With one: the direct tunnel still goes to the HTTP port; the SSH path probes the SSH port.
+        let ssh = try #require(InAppTunnelRoute(extensionConfig: ["target_host": .string("192.0.2.5"), "ssh_port": .number(22)], always: false))
+        #expect(ssh.target == "192.0.2.5:18660")
+        #expect(ssh.sshProbe.target == "192.0.2.5:22")
+        // Not a port: ignored.
+        #expect(InAppTunnelRoute(extensionConfig: ["target_host": .string("h"), "ssh_port": .number(0)], always: false)?.sshPort == nil)
+        // Kept with the pairing; a pairing saved before it has none.
+        #expect(try JSONDecoder().decode(InAppTunnelRoute.self, from: JSONEncoder().encode(ssh)) == ssh)
+        #expect(try JSONDecoder().decode(InAppTunnelRoute.self, from: Data(#"{"target_host":"h"}"#.utf8)).sshPort == nil)
+    }
 }

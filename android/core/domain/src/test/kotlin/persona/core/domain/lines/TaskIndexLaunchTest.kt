@@ -30,4 +30,78 @@ class TaskIndexLaunchTest {
         val shell = TaskIndex.build(listOf(use(1, "c"), result(2, "c", "Command running in background with ID: bk2. Output is being written to: /tmp/x"), notice(3, "bk2")))
         assertEquals(mapOf("3#0" to "c"), shell.calls)
     }
+
+    @Test fun anAgentIdTailDoesNotTurnAForegroundReportIntoALaunchReceipt() {
+        val report = "Foreground report\nAll checks passed.\nagentId: agent-a"
+        assertEquals(false, TaskIndex.isLaunchReceipt(report))
+        val receipt = "Async agent launched successfully.\nagentId: agent-a"
+        assertTrue(TaskIndex.isLaunchReceipt(receipt))
+        assertTrue(TaskIndex.isLaunchReceipt("Command running in background with ID: b1"))
+        assertTrue(TaskIndex.isLaunchReceipt("Monitor started (task b1, timeout 1000ms)."))
+        assertTrue(TaskIndex.isLaunchReceipt("Command reached the timeout and moved to the background (ID: b1)."))
+        val use = use(1, "launch")
+        assertTrue(ToolCall(use, result(2, "launch", receipt), emptyList()).running)
+        assertEquals(false, ToolCall(use, result(2, "launch", report), emptyList()).running)
+    }
+
+    private fun report(seq: Int, status: String, kind: String = "tool_result", text: String? = "Report $seq") =
+        LineItem(Item("report$seq", seq, role = "user", kind = kind, text = text,
+            toolUseId = if (kind == "tool_result") "launch" else null,
+            task = persona.core.contracts.TaskNote(kind = "agent", status = status, title = "Check tests",
+                taskId = "agent-a", toolUseId = "launch", detail = "preview")))
+
+    @Test fun intermediateToolResultsStayRunningAndEveryReportIsRetained() {
+        val source = listOf(use(1, "launch"), report(2, "running"), report(3, "running"))
+        val snapshot = chatLines(source, LineOptions(live = true))
+        val call = snapshot.lines.filterIsInstance<ChatLine.Work>().single().steps.filterIsInstance<WorkItem.Tool>().single().call
+        assertTrue(call.running)
+        assertEquals(listOf("report2", "report3"), call.results.map { it.id })
+        assertEquals(listOf("running", "running"), snapshot.tasks.notes["launch"]?.map { it.status })
+        assertEquals("Background · Running", snapshot.tasks.badge("launch")?.text?.shown)
+        assertEquals("Working", snapshot.tasks.badge("launch", concise = true)?.text?.shown)
+        assertEquals(0, snapshot.lines.filterIsInstance<ChatLine.Row>().size)
+        assertEquals("Report 3", snapshot.tasks.note(source.last()).subject)
+
+        val ended = chatLines(source + report(4, "completed", text = null))
+        val done = ended.lines.filterIsInstance<ChatLine.Work>().single().steps.filterIsInstance<WorkItem.Tool>().single().call
+        assertEquals(false, done.running)
+        assertEquals(3, done.results.size) // Status-only notification still carries terminal metadata.
+        assertEquals("Background · Completed", ended.tasks.badge("launch")?.text?.shown)
+        assertEquals("Completed", ended.tasks.badge("launch", concise = true)?.text?.shown)
+    }
+
+    @Test fun onlyExplicitTaskMetadataControlsAnAgentsLifecycle() {
+        for (status in listOf("running", "waiting", "unknown")) {
+            val snapshot = chatLines(listOf(use(1, "launch"), report(2, status)))
+            val call = snapshot.lines.filterIsInstance<ChatLine.Work>().single().steps.filterIsInstance<WorkItem.Tool>().single().call
+            assertTrue("$status must not finish a subagent", call.running)
+        }
+        for (status in listOf("completed", "failed", "stopped", "killed", "ended")) {
+            val snapshot = chatLines(listOf(use(1, "launch"), report(2, status)))
+            val call = snapshot.lines.filterIsInstance<ChatLine.Work>().single().steps.filterIsInstance<WorkItem.Tool>().single().call
+            assertEquals(status, false, call.running)
+            assertEquals(status == "failed", call.failed)
+        }
+        val ordinary = chatLines(listOf(use(1, "launch"), result(2, "launch", "general-purpose says hello")))
+        assertEquals(false, ordinary.lines.filterIsInstance<ChatLine.Work>().single().steps.filterIsInstance<WorkItem.Tool>().single().call.running)
+        assertTrue(ordinary.tasks.notes.isEmpty())
+    }
+
+    @Test fun oldAgentNoticesFoldIntoTheCallAndMemoKeepsCrossTurnReports() {
+        val source = listOf(use(1, "launch"), report(2, "running"),
+            LineItem(Item("user", 3, role = "user", kind = "text", text = "Continue")),
+            report(4, "completed", kind = "notice"))
+        val memo = ChatLinesMemo()
+        memo.lines(source.dropLast(1))
+        val cached = memo.lines(source)
+        val pure = chatLines(source)
+        assertEquals(pure, cached)
+        val call = cached.lines.filterIsInstance<ChatLine.Work>().flatMap { it.steps }.filterIsInstance<WorkItem.Tool>().single().call
+        assertEquals(listOf("report2", "report4"), call.results.map { it.id })
+        assertEquals(false, call.running)
+        assertTrue(cached.lines.filterIsInstance<ChatLine.Row>().none { it.row.type == "notice" })
+        val legacy = listOf(use(1, "launch"), result(2, "launch", "Async agent launched successfully.\nagentId: agent-a"), source[2],
+            notice(4, "agent-a"))
+        assertEquals(chatLines(legacy), ChatLinesMemo().lines(legacy))
+    }
 }

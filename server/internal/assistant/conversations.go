@@ -386,7 +386,7 @@ func (s *Service) deliverRelay(ctx context.Context, machine, to string, msg rela
 		// Register before dispatch: a fast MCP call can arrive before assistant.send returns.
 		s.holdPushes(ctx, to)
 	}
-	if err := s.call(ctx, machine, DeviceAssistantSend, map[string]any{"session_id": to, "text": text, "message_source": msg.source(), "resume_only": true, "supervision": msg.Tool == superviseTool}, nil); err != nil {
+	if err := s.call(ctx, machine, DeviceAssistantSend, map[string]any{"session_id": to, "text": text, "message_source": msg.source(), "resume_only": true, holdPushesParam: msg.Tool == superviseTool}, nil); err != nil {
 		if msg.Tool == superviseTool {
 			s.releasePushes(ctx, to)
 		}

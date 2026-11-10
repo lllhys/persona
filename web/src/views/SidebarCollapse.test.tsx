@@ -171,6 +171,24 @@ describe("folding a block of the sidebar", () => {
     expect(host.querySelector('a[title="Persona 的主对话"]')).not.toBeNull();
   });
 
+  it("gives a section and its chevron the same fold tokens in both directions", async () => {
+    act(() => root.render(<Sidebar route={{ name: "home" }} onSearch={() => {}} onNewAgent={() => {}} />));
+    await flush();
+    const title = button("页面")!;
+    const section = title.closest(".mt-1, .mt-3")!;
+    const fold = [...section.children].find((el) => el.classList.contains("grid")) as HTMLElement;
+    const chevron = title.querySelector("svg")!;
+    const motion = (el: HTMLElement | SVGElement) => ({ duration: el.style.transitionDuration, curve: el.style.transitionTimingFunction });
+    expect(motion(fold)).toEqual({ duration: "var(--sidebar-fold-open)", curve: "var(--sidebar-fold-open-ease)" });
+    expect(motion(chevron)).toEqual(motion(fold));
+    expect(fold.style.opacity).toBe("1");
+
+    act(() => title.click());
+    expect(motion(fold)).toEqual({ duration: "var(--sidebar-fold-close)", curve: "var(--sidebar-fold-close-ease)" });
+    expect(motion(chevron)).toEqual(motion(fold));
+    expect(fold.style.opacity).toBe("1");
+  });
+
   it("folds the whole Agents block,「+」 staying on its title", async () => {
     act(() => root.render(<Sidebar route={{ name: "home" }} onSearch={() => {}} onNewAgent={() => {}} />));
     await flush();

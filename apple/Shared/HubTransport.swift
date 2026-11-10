@@ -75,12 +75,16 @@ nonisolated struct SSHRoute: Codable, Hashable, Sendable {
     var hostKeyAlgorithm: String?
     /// Through the tunnel every time, not only when the hub's own addresses do not answer.
     var always = false
+    /// The SSH server is dialled through the in-app tunnel (a loopback forward to `host:port` through its core), not
+    /// over this device's own network; its key is still pinned for `host:port` (docs/operations/network.md「Connecting to hub through SSH」).
+    var viaInAppTunnel = false
 
     static let defaultTargetHost = "127.0.0.1"
     static let defaultTargetPort = 18660
 
     init(host: String, port: Int = 22, user: String, targetHost: String = SSHRoute.defaultTargetHost,
-         targetPort: Int = SSHRoute.defaultTargetPort, hostKey: String? = nil, hostKeyAlgorithm: String? = nil, always: Bool = false) {
+         targetPort: Int = SSHRoute.defaultTargetPort, hostKey: String? = nil, hostKeyAlgorithm: String? = nil, always: Bool = false,
+         viaInAppTunnel: Bool = false) {
         self.host = host
         self.port = port
         self.user = user
@@ -89,6 +93,7 @@ nonisolated struct SSHRoute: Codable, Hashable, Sendable {
         self.hostKey = hostKey
         self.hostKeyAlgorithm = hostKeyAlgorithm
         self.always = always
+        self.viaInAppTunnel = viaInAppTunnel
     }
 
     /// Ready to carry traffic: a server, a user and a confirmed key.
@@ -100,9 +105,13 @@ nonisolated struct SSHRoute: Codable, Hashable, Sendable {
     /// The same server, user and target: a confirmed key still belongs to it. Another server needs its key confirmed.
     func sameServer(_ other: SSHRoute) -> Bool { host == other.host && port == other.port }
 
+    /// The SSH server as the in-app tunnel core's forward takes it (`host:port`, IPv6 in brackets).
+    var server: String { InAppTunnelRoute(targetHost: host, targetPort: port).target }
+
     enum CodingKeys: String, CodingKey {
         case host, port, user, always
         case targetHost = "target_host", targetPort = "target_port", hostKey = "host_key", hostKeyAlgorithm = "host_key_algorithm"
+        case viaInAppTunnel = "via_in_app_tunnel"
     }
 
     init(from decoder: Decoder) throws {
@@ -115,6 +124,7 @@ nonisolated struct SSHRoute: Codable, Hashable, Sendable {
         hostKey = try c.decodeIfPresent(String.self, forKey: .hostKey)
         hostKeyAlgorithm = try c.decodeIfPresent(String.self, forKey: .hostKeyAlgorithm)
         always = try c.decodeIfPresent(Bool.self, forKey: .always) ?? false
+        viaInAppTunnel = try c.decodeIfPresent(Bool.self, forKey: .viaInAppTunnel) ?? false
     }
 }
 
@@ -130,14 +140,28 @@ nonisolated struct InAppTunnelRoute: Codable, Hashable, Sendable {
     var name: String = ""
     /// Through the tunnel every time, not only when the hub's own addresses do not answer.
     var always = false
+    /// The hub machine's SSH port in the tunnel's network (the extension's `ssh_port`); nil when it gave none. An SSH
+    /// tunnel dialled through this tunnel probes `targetHost:sshPort`, which answers when the hub listens only on loopback.
+    var sshPort: Int?
 
     static let defaultTargetPort = 18660
 
-    init(targetHost: String, targetPort: Int = InAppTunnelRoute.defaultTargetPort, name: String = "", always: Bool = false) {
+    init(targetHost: String, targetPort: Int = InAppTunnelRoute.defaultTargetPort, name: String = "", always: Bool = false,
+         sshPort: Int? = nil) {
         self.targetHost = targetHost
         self.targetPort = targetPort
         self.name = name
         self.always = always
+        self.sshPort = sshPort
+    }
+
+    /// What the core probes for an SSH tunnel dialled through this tunnel: the hub machine's SSH port when the
+    /// extension gave one, else the route as it is (the direct in-app tunnel always uses `targetPort`).
+    var sshProbe: InAppTunnelRoute {
+        guard let sshPort else { return self }
+        var r = self
+        r.targetPort = sshPort
+        return r
     }
 
     var isUsable: Bool { !targetHost.trimmingCharacters(in: .whitespaces).isEmpty && (1...65535).contains(targetPort) }
@@ -156,7 +180,7 @@ nonisolated struct InAppTunnelRoute: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case always, name
-        case targetHost = "target_host", targetPort = "target_port"
+        case targetHost = "target_host", targetPort = "target_port", sshPort = "ssh_port"
     }
 
     init(from decoder: Decoder) throws {
@@ -165,6 +189,7 @@ nonisolated struct InAppTunnelRoute: Codable, Hashable, Sendable {
         targetPort = try c.decodeIfPresent(Int.self, forKey: .targetPort) ?? Self.defaultTargetPort
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         always = try c.decodeIfPresent(Bool.self, forKey: .always) ?? false
+        sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort)
     }
 }
 

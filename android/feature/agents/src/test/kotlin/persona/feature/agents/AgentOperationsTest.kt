@@ -108,6 +108,18 @@ class AgentOperationsTest {
         assertTrue(operations.state.value.uncertain.isEmpty())
     }
 
+    /** A Tern space is one of Tern's sessions and a Tern pane's tab a Tern tab; the dialogs say so (iOS SpaceRenameForm). */
+    @Test fun renameDialogsNameTernForItsSpacesAndTabs() {
+        val herdr = Session("machine", "session", paneId = "w1:p1", spaceKind = "herdr", spaceId = "w1", spaceName = "app")
+        val tern = herdr.copy(paneId = "tern:201863462919", spaceKind = "tern", spaceId = "4")
+        val words = listOf(renameNote(tern, space = true), renameNote(herdr, space = true), renameNote(tern, space = false),
+            renameNote(herdr, space = false), tabNameLabel(tern), tabNameLabel(herdr))
+        assertEquals(listOf(R.string.agents_dialog_rename_space_text_tern, R.string.agents_dialog_rename_space_text,
+            R.string.agents_dialog_rename_text_tern, R.string.agents_dialog_rename_text,
+            R.string.agents_dialog_tab_name_tern, R.string.agents_dialog_tab_name), words)
+        assertEquals("real, distinct resource ids", words.size, words.toSet().size)
+    }
+
     private class FakeOperations : AgentOperations {
         override val scope = "scope"
         var pins = AgentOperationPreferences()

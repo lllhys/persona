@@ -7,6 +7,7 @@
 // tests can run them without a DOM.
 
 import { itemHeaders, otherManager, sameManager, stampedHeaders } from "./manager-choice";
+import { scoped, useScope } from "./current-assistant";
 import { formatDate, t } from "../i18n";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, ApiError, enc, errorText, getToken } from "./api";
@@ -503,9 +504,9 @@ export function sections(items: InboxItem[], f: InboxFilter): InboxSections {
   return out;
 }
 
-/** The sidebar badge: open items that need the user. */
+/** The sidebar badge: unread open items, independent of their pending section. */
 export function badgeCount(items: InboxItem[]): number {
-  return items.filter((it) => !isDone(it) && statusOf(it) === "action").length;
+  return items.filter((it) => !isDone(it) && !it.read).length;
 }
 
 /** The connectors with items in the list (GitHub…), one filter chip each, in the order they first come. */
@@ -1725,9 +1726,11 @@ export function useInbox<T>(select: (s: InboxState) => T): T {
   return useSyncExternalStore(subscribe, read, read);
 }
 
-/** How many unhandled "Needs you" items the inbox has (the sidebar's badge). */
+/** How many unread open items the inbox has (the sidebar's badge). */
 export function useInboxBadge(): number {
-  return useInbox((s) => badgeCount(s.items));
+  // the current assistant's, with several (docs/assistant/managers.md "Clients")
+  const scope = useScope();
+  return useInbox((s) => badgeCount(scoped(s.items, scope)));
 }
 
 /** Tests only: back to an empty, unstarted list. */

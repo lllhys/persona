@@ -283,7 +283,7 @@ func TestTaskDoneSkipAndCheck(t *testing.T) {
 	if code != http.StatusOK || c.Verdict != "waiting" || c.Reason != "等审核" || c.WouldClose || c.Replies != 1 {
 		t.Fatalf("done-check = %d %+v", code, c)
 	}
-	if got := todoNow(h, todo.ID); got.DoneAt != nil {
+	if got := todoNow(h, todo.ID); got.DoneAt != nil || got.Check != nil {
 		t.Fatalf("done-check wrote: %+v", got)
 	}
 	if code, _ := check("todo_nope"); code != http.StatusNotFound {

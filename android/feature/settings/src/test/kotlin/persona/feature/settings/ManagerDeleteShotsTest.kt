@@ -32,8 +32,8 @@ import java.io.File
 class ManagerDeleteShotsTest {
     @get:Rule val rule = createComposeRule()
 
-    private val machines = "它的 2 台电脑会回到 hub 自己的管理者。"
-    private val sources = "它的来源（比如邮箱账号）存在它自己的库里，不先移到别的管理者，就会随它一起删掉。"
+    private val machines = "它的 2 台电脑会回到 hub 自己的助手。"
+    private val sources = "它的来源（比如邮箱账号）存在它自己的库里，不先移到别的助手，就会随它一起删掉。"
 
     @Test fun theDeleteConfirmSaysWhatGoesWithIt() {
         var style by mutableStateOf(AppStyle.Glass)
@@ -72,9 +72,9 @@ class ManagerDeleteShotsTest {
         var count by mutableStateOf(1)
         rule.setContent { PersonaTheme(reduceMotion = true) { ManagerDeleteDialog("Home", false, count, false, {}, {}) } }
         rule.waitForIdle()
-        rule.onNodeWithText("Its 1 computer goes back to the hub's own manager.").assertExists()
+        rule.onNodeWithText("Its 1 computer goes back to the hub's own assistant.").assertExists()
         count = 3
         rule.waitForIdle()
-        rule.onNodeWithText("Its 3 computers go back to the hub's own manager.").assertExists()
+        rule.onNodeWithText("Its 3 computers go back to the hub's own assistant.").assertExists()
     }
 }

@@ -59,5 +59,7 @@
   "rename": "名前を変更",
   "rename_label": "コンピュータ名",
   "rename_hint": "すべてのアプリとこのコンピュータの Persona Link に表示されます。空欄なら ID を使います。ID は変わりません。",
-  "renamed": "「{name}」に変更しました"
+  "renamed": "「{name}」に変更しました",
+  "screen": "画面を見る",
+  "screen_hint": "この Mac の画面をリアルタイムで開く（画面共有）"
 }

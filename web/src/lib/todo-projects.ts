@@ -1,8 +1,11 @@
 // The knowledge-base projects to-dos can belong to (#2581, docs/assistant/todos.md "Project"): read once from
 // GET /api/v1/kb/projects when the To-dos page first needs them, then shared. A hub without a knowledge base (off, not
-// open yet) gives none: groups then show the slug, and the picker offers only what the to-do already has.
+// open yet) gives none: groups then show the slug, and the picker offers only what the to-do already has. The knowledge
+// base is the current assistant's (its routes name the pick): another assistant made current reads its own, and until
+// then the list is empty rather than the last one's.
 import { useEffect, useSyncExternalStore } from "react";
 import { api } from "./api";
+import { chosenManager, useChosenManager } from "./manager-choice";
 
 export interface TodoProject {
   slug: string;
@@ -18,12 +21,15 @@ interface KBEntry {
   extra?: string;
 }
 
-let projects: TodoProject[] = [];
-let loading: Promise<void> | undefined;
+const NONE: TodoProject[] = [];
+// whose they are: the picked assistant, "" the default
+let projects: { of: string; list: TodoProject[] } = { of: "", list: NONE };
+let loading: { of: string; done: Promise<void> } | undefined;
 const listeners = new Set<() => void>();
+const pick = () => chosenManager() ?? "";
 
-function set(next: TodoProject[]) {
-  projects = next;
+function set(of: string, list: TodoProject[]) {
+  projects = { of, list };
   for (const l of listeners) l();
 }
 
@@ -32,17 +38,20 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l);
 }
 
-const current = () => projects;
+const current = () => (projects.of === pick() ? projects.list : NONE);
 
-/** Reads the list again (after a project was made, or the first time). */
+/** Reads the list again (after a project was made, the first time, or for another assistant made current). */
 export function loadTodoProjects(): Promise<void> {
-  loading ??= api<{ items?: KBEntry[] }>("/kb/projects")
-    .then((r) => set(todoProjectsOf(r.items ?? [])))
+  const of = pick();
+  if (loading?.of === of) return loading.done;
+  const done = api<{ items?: KBEntry[] }>("/kb/projects")
+    .then((r) => set(of, todoProjectsOf(r.items ?? [])))
     .catch(() => undefined)
     .finally(() => {
-      loading = undefined;
+      if (loading?.done === done) loading = undefined;
     });
-  return loading;
+  loading = { of, done };
+  return done;
 }
 
 /** The knowledge base's projects as to-dos use them: the hub does not list merged ones; ignored ones (not a project) are left out. */
@@ -54,10 +63,11 @@ export function todoProjectsOf(items: KBEntry[]): TodoProject[] {
 
 /** The projects, read again whenever a page that uses them opens. */
 export function useTodoProjects(): TodoProject[] {
+  const picked = useChosenManager();
   const list = useSyncExternalStore(subscribe, current, current);
   useEffect(() => {
     void loadTodoProjects(); // each page that shows them reads them fresh: a project made meanwhile shows up
-  }, []);
+  }, [picked]);
   return list;
 }
 

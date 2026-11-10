@@ -22,13 +22,13 @@
     <string name="settings_extension_external_updates">この拡張機能はマーケットで管理されていません。提供元で更新してください。</string>
     <string name="settings_extension_external_uninstall">この拡張機能はアプリ外で管理されています。提供元で削除してください。</string>
     <string name="settings_extension_external_enabled">有効状態はこの拡張機能の提供元で管理されます。</string>
-    <string name="settings_extension_unknown">このマネージャーはこの操作を提供していません。</string>
+    <string name="settings_extension_unknown">このアシスタントはこの操作を提供していません。</string>
     <string name="settings_extension_market_unavailable">拡張機能マーケットを利用できません。復元して再試行してください。</string>
     <string name="settings_extension_market_missing">この拡張機能はマーケットに掲載されていません。</string>
     <string name="settings_extension_market_removed">マーケットが削除されたため自動更新は一時停止中です。保存した設定は保持されます。</string>
-    <string name="settings_extension_global_off">このマネージャーの自動更新はオフです。拡張機能の設定は保持されます。</string>
-    <string name="settings_extension_global_unknown">このマネージャーの全体の自動更新設定を読み取れません。</string>
+    <string name="settings_extension_global_off">このアシスタントの自動更新はオフです。拡張機能の設定は保持されます。</string>
+    <string name="settings_extension_global_unknown">このアシスタントの全体の自動更新設定を読み取れません。</string>
     <string name="settings_extension_rollback">ロールバック</string>
-    <string name="settings_extension_rollback_unavailable">このマネージャーはロールバックの確認プレビューを提供していません。このページからは実行しません。</string>
+    <string name="settings_extension_rollback_unavailable">このアシスタントはロールバックの確認プレビューを提供していません。このページからは実行しません。</string>
     <string name="settings_extension_remove_version">インストール済みバージョン：%1$s</string>
 </resources>

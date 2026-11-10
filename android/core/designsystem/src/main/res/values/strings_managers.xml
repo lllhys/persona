@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="designsystem_manager_switcher">Managers</string>
+    <string name="designsystem_manager_switcher">Switch assistant</string>
     <string name="designsystem_manager_offline">Offline</string>
     <string name="designsystem_manager_last_synced">Last synced %1$s</string>
     <string name="designsystem_manager_just_now">just now</string>
@@ -14,4 +14,11 @@
     </plurals>
     <string name="designsystem_manager_chip_offline">%1$s, offline</string>
     <string name="designsystem_manager_offline_note">%1$s · %2$s</string>
+    <string name="designsystem_manager_current">Current</string>
+    <string name="designsystem_manager_others_waiting">Something is waiting for you at another assistant</string>
+    <plurals name="designsystem_manager_waiting">
+        <item quantity="one">%1$d waiting for you</item>
+        <item quantity="other">%1$d waiting for you</item>
+    </plurals>
+    <string name="designsystem_manager_spoken">%1$s, %2$s</string>
 </resources>

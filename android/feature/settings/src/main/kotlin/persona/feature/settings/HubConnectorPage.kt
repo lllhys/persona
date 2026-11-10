@@ -22,13 +22,20 @@ internal fun HubConnectorPage(
     connectorId: String,
     onBack: () -> Unit,
     manager: String? = null,
+    /** For the source subscriptions' entry row (#2041), the default manager's only; without them it is left out. */
+    extensions: persona.core.contracts.api.ExtensionManagement? = null,
+    onSubscriptions: (() -> Unit)? = null,
 ) {
     val owner = manager?.takeIf { it.isNotBlank() } ?: LocalManagerRoster.current?.defaultManagerId.orEmpty()
-    key(connectors, connectorId, owner) { HubConnectorDetails(connectors, connectorId, onBack, owner) }
+    val subscriptions = rememberSubscriptionCounts(extensions.takeIf { manager.isNullOrBlank() && onSubscriptions != null }) { it.connector == connectorId }
+    key(connectors, connectorId, owner) {
+        HubConnectorDetails(connectors, connectorId, onBack, owner, subscriptions, onSubscriptions ?: {})
+    }
 }
 
 @Composable
-private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: String, onBack: () -> Unit, owner: String) {
+private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: String, onBack: () -> Unit, owner: String,
+                                subscriptions: Pair<Int, Int>?, onSubscriptions: () -> Unit) {
     val requestManager = remember(owner) { RequestManager(owner) }
     val scope = rememberCoroutineScope { requestManager }
     val feedback = LocalAppFeedback.current
@@ -111,6 +118,8 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
                     SettingsCaption(guide.joinToString("\n"), Modifier.padding(horizontal = pagePadding, vertical = Tokens.Space.s))
                 }
             }
+
+            subscriptionsEntry(subscriptions, onSubscriptions)
 
             if (signIn != null && ConnectorText.signsInHere(c)) {
                 connectorSignIn(c, signInState.bind, signIn, scope, onSignOut = { confirmingLogout = true })

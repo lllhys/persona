@@ -33,6 +33,7 @@ import { dependencyText, dependentError, type Contribution, type Dependent } fro
 import { Group, Pill, Row, Switch, SettingsHint } from "./SettingsParts";
 import { ManagerHeading } from "../ManagerParts";
 import { formatList, t } from "../../i18n";
+import { SubscriptionsEntry } from "../subscriptions/SubscriptionsEntry";
 
 /**
  * The tab's pages, by its `extension` parameter (lib/extension-market.ts extensionsRoute): the list, an extension, a page an extension
@@ -735,6 +736,8 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
           )}
 
           {(p.enabled ?? true) && !!p.contributes?.connectors?.length && <ExtensionConnectorInbox ids={p.contributes.connectors} manager={manager} onOpen={onConnector} />}
+          {/* source subscriptions (#2041) of its connectors, the default manager's */}
+          {(p.enabled ?? true) && !manager && !!p.contributes?.connectors?.length && <SubscriptionsEntry pick={(l) => l.extension === p.id} scope={{ ext: p.id }} />}
 
           {editable && fields.length > 0 && (
             <>

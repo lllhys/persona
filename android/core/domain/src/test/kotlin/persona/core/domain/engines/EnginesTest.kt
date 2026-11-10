@@ -45,8 +45,8 @@ class EnginesTest {
         val future = DetectedEngine("future", "Future", available = true)
         assertEquals(listOf("herdr", "future"), (Engines.options(machine(engines = listOf(herdr, future))).map { it.id }).zhAny())
         val fallback = Engines.options(machine())
-        assertEquals(listOf("herdr", "herdr-core", "orca", "paseo", "cindy"), (fallback.map { it.id }).zhAny())
-        assertEquals(listOf("herdr", "Herdr App", "Orca", "Paseo", "Cindy"), (fallback.map { it.name }).zhAny())
+        assertEquals(listOf("herdr", "herdr-core", "orca", "tern", "paseo", "cindy"), (fallback.map { it.id }).zhAny())
+        assertEquals(listOf("herdr", "Herdr App", "Orca", "Tern", "Paseo", "Cindy"), (fallback.map { it.name }).zhAny())
         assertTrue(fallback.none { it.available })
     }
 
@@ -58,8 +58,10 @@ class EnginesTest {
         // Known engines stay selectable offline and without detection (applied on connect).
         assertTrue(Engines.canSelect("orca", machine(online = false)))
         assertTrue(Engines.canSelect("paseo", machine(online = false)))
+        assertTrue(Engines.canSelect("tern", machine(online = false)))
         assertTrue(Engines.canSelect("cindy", machine(online = false)))
         assertEquals("Paseo 里的 Agent", (Engines.detail("paseo")).zhAny())
+        assertEquals("Tern 里的终端", (Engines.detail("tern")).zhAny())
         assertEquals("Cindy 里的 Agent", (Engines.detail("cindy")).zhAny())
     }
 

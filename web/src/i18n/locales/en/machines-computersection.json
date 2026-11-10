@@ -15,5 +15,6 @@
   "allow_detail_lcu": "Sees the screen, clicks, and types through LCU. Confirmations are on the phone and web",
   "install_detail_lcu": "Downloads the LCU release from GitHub and verifies it. Does not register Claude / Codex approval UIs, and does not install ChatGPT; install the official ChatGPT desktop app yourself first.",
   "install_title_lcu": "Install LCU",
-  "install_confirm_lcu": "Downloads the LCU release from GitHub on this Mac, verifies it, and installs it. Does not register Claude or Codex; confirmations stay on the phone and web. Requires the official ChatGPT desktop app already installed; Persona will not download or sign into it. The first time, allow ChatGPT Accessibility and Screen Recording on that Mac."
+  "install_confirm_lcu": "Downloads the LCU release from GitHub on this Mac, verifies it, and installs it. Does not register Claude or Codex; confirmations stay on the phone and web. Requires the official ChatGPT desktop app already installed; Persona will not download or sign into it. The first time, allow ChatGPT Accessibility and Screen Recording on that Mac.",
+  "allow_from_here": "To click Allow from here, use View screen at the top of this page."
 }

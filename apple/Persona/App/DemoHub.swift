@@ -35,6 +35,8 @@ final class DemoHub {
     private var blockedClaudeDirs: [String: [JSONValue]] = [:]
     /// Settings › Claude Code › Live Replies, by machine (on unless turned off, as on a hub).
     private var liveReplies: [String: Bool] = [:]
+    /// Settings › Knowledge Selection: what was saved in the demo (nil: the hub's defaults).
+    private var kbSelection: JSONValue?
     private var memory: [JSONValue] = []
     private var prefs: JSONValue = .object([:])
     private var pins: JSONValue = .object([:])
@@ -230,6 +232,7 @@ final class DemoHub {
         case ["lark", "flags"]: return ["conversations": .array([]), "messages": .array([])]
         case ["lark", "emojis"]: return ["emojis": .object([:])]
         case ["kb-search"]: return DemoKnowledgeSearch.answer(q["q"] ?? "", kb: data["kb"])
+        case ["kb", "selection"]: return kbSelection ?? Self.defaultKBSelection()
         case ["lark", "reactions", "quick"]: return ["keys": .array([])]
         default: break
         }
@@ -297,6 +300,25 @@ final class DemoHub {
             return it
         default: throw notFound()
         }
+    }
+
+    /// The selection a hub starts with (the hub's `kb.Defaults`): mentions, the owner's own messages and direct chats
+    /// stored, every document rule on, no per-item settings.
+    private static func defaultKBSelection() -> JSONValue {
+        func rules(_ names: [String], on: Set<String>) -> JSONValue {
+            .object(Dictionary(uniqueKeysWithValues: names.map { ($0, JSONValue.object(["on": .bool(on.contains($0))])) }))
+        }
+        func order(_ levels: [[String]]) -> JSONValue { .array(levels.map { level in .array(level.map { .string($0) }) }) }
+        let messages = KBSelection.Part.messages.ruleNames
+        let docs = KBSelection.Part.docs.ruleNames
+        let messageLevels = [["mentions", "mine"]] + messages.dropFirst(2).map { [$0] }
+        return .object([
+            "version": .number(1),
+            "messages": .object(["order": order(messageLevels), "rules": rules(messages, on: ["mentions", "mine", "dm"])]),
+            "docs": .object(["order": order([["mentions", "comment_mentions"], ["authored"], ["viewed"]]), "rules": rules(docs, on: Set(docs))]),
+            "items": .array([]),
+            "history": .object([:]),
+        ])
     }
 
     private func sessionGet(_ k: SessionKey, _ what: String, _ q: [String: String]) throws -> JSONValue {
@@ -518,6 +540,9 @@ final class DemoHub {
             broadcast(["type": "machines", "machines": .array(machines)])
             return machines[i]
         case ("machines", 3) where p[2] == "reconnect": return ["ok": true]
+        case ("kb", 2) where p[1] == "selection" && method == "PUT":
+            kbSelection = body
+            return body
         case ("kb", _): return ["ok": true]
         default: throw refuse()
         }
@@ -644,7 +669,7 @@ final class DemoHub {
         sockets.removeAll { $0.socket == nil }
         sockets.append(WeakSocket(socket: s))
         s.send(["type": "hello", "server_version": "demo", "client_id": "demo",
-                "features": ["file_upload", "terminal_stream", "task_push"]])
+                "features": ["file_upload", "terminal_stream", "task_push", .string(ProviderScopeForm.feature)]])
         s.send(["type": "machines", "machines": .array(machines)])
         for m in Set(sessions.compactMap { $0["machine_id"]?.string }).sorted() {
             s.send(["type": "sessions", "machine_id": .string(m), "sessions": .array(sessions.filter { $0["machine_id"]?.string == m })])

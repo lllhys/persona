@@ -101,6 +101,17 @@ struct HubsView: View {
         ForEach(meshOnly(g), id: \.hubID) { m in
             meshRow(m, inUse: model.isLive(g) && on.map { cfg in m.endpoints?.contains { $0.hasPrefix(cfg.url.absoluteString) } == true } == true)
         }
+        // Each paired hub's Cloudflare Access service token (docs/operations/network.md "Behind Cloudflare Access"), keyed
+        // apart from its other rows like the SSH ones.
+        ForEach(members, id: \.accessRowID) { h in
+            NavigationLink(value: SettingsPage.cloudflareAccess(h.id)) {
+                SettingsRow(title: members.count > 1 ? String(localized: "Cloudflare Access · \(h.displayName)") : String(localized: "Cloudflare Access"),
+                            symbol: Theme.Icon.cloudflareAccess, tint: Theme.Hue.orange,
+                            value: h.config.access == nil ? String(localized: "Not set") : String(localized: "Set [Hubs View 7c1e4b]"), look: .oneLine)
+            }
+            .accessibilityIdentifier("hubs.access.\(h.id)")
+        }
+        .bareListRow()
         Group {
             // Each paired hub's SSH tunnel (docs/operations/network.md「Connecting to hub through SSH」). Keyed apart from the hub rows above: the
             // same ids twice in one section, and the Mac showed only one of the two sets of rows (#1221).
@@ -281,4 +292,6 @@ private extension PairedHub {
     var inAppTunnelRowID: String { "tunnel." + id }
     /// The Local Proxy row's identity, apart from the hub's other rows.
     var localProxyRowID: String { "proxy." + id }
+    /// The Cloudflare Access row's identity.
+    var accessRowID: String { "access." + id }
 }

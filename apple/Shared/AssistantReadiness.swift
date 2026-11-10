@@ -128,8 +128,11 @@ nonisolated struct AssistantReadiness: Codable, Hashable, Sendable {
         return s
     }
 
-    /// The steps of computer / claude / model still to do (Settings's 「还有 N 步」).
-    var stepsLeft: Int { Self.blocking.compactMap { step($0) }.filter { $0.state != "ok" && $0.state != "skipped" }.count }
+    /// The steps of computer / claude / model still to do (Settings's 「还有 N 步」): only the ones that block, like
+    /// `blockingStep` and the hub's readinessBlocks; unknown / checking and a rate limit leave nothing to do (5.1).
+    var stepsToDo: [Step] { Self.blocking.compactMap { step($0) }.filter { !$0.passes && $0.code != "rate_limited" } }
+
+    var stepsLeft: Int { stepsToDo.count }
 
     /// The main conversation already runs: its computer, Claude Code and model all check out.
     var claudeWorks: Bool { Self.blocking.allSatisfy { step($0)?.state == "ok" } }

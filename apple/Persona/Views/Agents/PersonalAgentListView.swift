@@ -38,7 +38,11 @@ struct PersonalAgentListView: View {
         return seen
     }
 
-    private func update(_ change: (inout PersonalAgentPrefs) -> Void) { store.update(model.api, change) }
+    private func update(_ change: (inout PersonalAgentPrefs) -> Void) {
+        store.update(model.api, change) { message in
+            model.toast = Toast(String(localized: "Couldn't save: \(message)"), style: .error)
+        }
+    }
 
     var body: some View {
         List {

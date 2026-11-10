@@ -23,6 +23,9 @@ const (
 	HerdrCore = "herdr-core"
 	// Botmux is botmux, the Feishu topic ↔ AI CLI bridge: a pane is a botmux session, its id the session id.
 	Botmux = "botmux"
+	// Tern is Tern, Stencil's multiplexing terminal: a pane is a Tern block, its id the block's number (what Tern puts in
+	// the block's processes as TERN_PANE).
+	Tern = "tern"
 	// Tmux is a tmux server the user opened: a pane is tmux's own id ("%11"), read and typed into through the tmux
 	// command. No space, slot or agent comes from it: a session running there is listed by claudebg.go (#2562).
 	Tmux = "tmux"
@@ -30,7 +33,7 @@ const (
 
 // Kinds are the host kinds a stored pane may be prefixed with; the list is fixed, not what a machine registers, so
 // a stored pane means the same everywhere.
-var Kinds = []string{Herdr, Orca, HerdrCore, Botmux, Tmux}
+var Kinds = []string{Herdr, Orca, HerdrCore, Botmux, Tern, Tmux}
 
 // Host is what every terminal host provides. Pane ids in what it returns (Agent.PaneID, Created.Pane) are PaneRefs
 // of its own kind; the PaneRefs it is given are always of its kind.

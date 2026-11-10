@@ -106,6 +106,7 @@ func TestAuthorityWireReadsPersistedIdentityWithoutMigrationOrWrites(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	p = identityOnly(p)
 	before := tree(t, c.Home)
 	result, readErr := c.ReadAuthority(context.Background(), p)
 	// A read that never connected must fail the test, not leave the fake in Accept and the package at go test's timeout.

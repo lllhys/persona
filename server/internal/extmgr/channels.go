@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/connector"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/extension/host"
+	"github.com/nwverse/persona/server/internal/feishubot"
 	"github.com/nwverse/persona/server/internal/i18n"
 )
 
@@ -424,18 +425,38 @@ func (h *Manager) bindFeishu(ctx context.Context, step string, values map[string
 		{Name: "app_secret", Label: "App Secret", Secret: true},
 		{Name: "domain", Label: i18n.T(l, "hub-channels.domain_label")},
 	}
+	credentials := func(errText string) connector.Prompt {
+		p := connector.Prompt{Step: "credentials", Fields: fields, Hint: i18n.T(l, "hub-channels.credentials_hint")}
+		if u := feishubot.ConsoleURL(strings.TrimSpace(values["domain"])); u != "" {
+			p.Link, p.LinkText = u, i18n.T(l, "hub-channels.console_link")
+		}
+		p.Error = errText
+		return p
+	}
+	var configNote string
 	if step == "credentials" && values != nil {
 		id, secret, domain := strings.TrimSpace(values["app_id"]), strings.TrimSpace(values["app_secret"]), strings.TrimSpace(values["domain"])
 		on := true
 		if err := h.updateBot(ctx, &on, &id, &secret, &domain, nil); err != nil {
-			return connector.Prompt{Step: "credentials", Fields: fields, Error: i18n.Localize(err, l)}, nil
+			if feishubot.CredentialRejected(err) {
+				h.logf("bots: credentials rejected by the platform: %v", err)
+				return credentials(i18n.T(l, "hub-channels.credentials_rejected")), nil
+			}
+			return credentials(i18n.Localize(err, l)), nil
 		}
+		// Best-effort: with the credentials just verified, set the scopes, events and the long-connection mode
+		// and submit the publish, so the console's manual steps are done (docs/extensions/bots.md). Its outcome
+		// is a sentence on the next step, never a failure of the bind.
+		rep := feishubot.New(id, secret, domain).AutoConfigure(ctx)
+		if rep.Detail != "" {
+			h.logf("bots: auto-configure: %s", rep.Detail)
+		}
+		configNote = feishuConfigureNote(l, rep, domain, id)
 		step = ""
 	}
 	v := h.botView(ctx)
 	if !v.HasSecret {
-		return connector.Prompt{Step: "credentials", Fields: fields,
-			Hint: i18n.T(l, "hub-channels.credentials_hint")}, nil
+		return credentials(""), nil
 	}
 	if !v.Enabled {
 		on := true
@@ -462,8 +483,41 @@ func (h *Manager) bindFeishu(ctx context.Context, step string, values map[string
 	if issued {
 		h.auditBot(ctx, botRecord{action: auditBotPairCode})
 	}
-	return connector.Prompt{Step: "pair", Kind: PromptPairCode, UserCode: code, Interval: 3,
-		Hint: i18n.T(l, "hub-channels.pair_hint")}, nil
+	hint := i18n.T(l, "hub-channels.pair_hint")
+	if configNote != "" { // what the auto-configure just did, if anything
+		hint = configNote + " " + hint
+	}
+	return connector.Prompt{Step: "pair", Kind: PromptPairCode, UserCode: code, Interval: 3, Hint: hint}, nil
+}
+
+// feishuConfigureNote turns the auto-configure report into one sentence for the pair step; "" when nothing
+// was tried or there is nothing worth saying. The manual fallback names the one thing to do by hand, with a
+// link to the app's console page.
+func feishuConfigureNote(l i18n.Lang, rep feishubot.ConfigureReport, domain, appID string) string {
+	if rep.Skipped {
+		return ""
+	}
+	if rep.Issue == feishubot.IssueNone && rep.Configured {
+		return i18n.T(l, "hub-channels.auto_configured")
+	}
+	what := ""
+	switch rep.Issue {
+	case feishubot.IssueBotCapability:
+		what = i18n.T(l, "hub-channels.auto_config_bot_capability")
+	case feishubot.IssuePatchScope:
+		what = i18n.T(l, "hub-channels.auto_config_patch_scope")
+	case feishubot.IssueNotSelfBuilt:
+		what = i18n.T(l, "hub-channels.auto_config_not_self_built")
+	default:
+		what = i18n.T(l, "hub-channels.auto_config_unreachable")
+	}
+	note := i18n.T(l, "hub-channels.auto_config_manual", i18n.Args{"what": what})
+	if rep.Issue != feishubot.IssueUnreachable {
+		if u := feishubot.AppConsoleURL(domain, appID); u != "" {
+			note += " " + u // the app's console page, where that one switch is
+		}
+	}
+	return note
 }
 
 // unbindChannel undoes the binding: a plugin channel's connector signs out, the Feishu bot forgets its owner.

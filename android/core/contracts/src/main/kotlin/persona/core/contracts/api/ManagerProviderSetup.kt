@@ -7,12 +7,14 @@ internal class ManagerProviderSetup(private val source: ProviderSetup, manager: 
     init { require(manager.isNotBlank()) }
     private val owner = RequestManager(manager)
     override val builtinPresets get() = source.builtinPresets
+    override val launcherScope get() = source.launcherScope
     override fun forManager(manager: String) = source.forManager(manager)
     override suspend fun presets() = withContext(owner) { source.presets() }
     override suspend fun add(provider: NewProvider) = withContext(owner) { source.add(provider) }
     override suspend fun create(provider: NewProvider) = withContext(owner) { source.create(provider) }
     override suspend fun test(probe: ProviderProbe) = withContext(owner) { source.test(probe) }
     override suspend fun discover(probe: ProviderProbe) = withContext(owner) { source.discover(probe) }
+    override suspend fun update(name: String, changes: ProviderUpdate) = withContext(owner) { source.update(name, changes) }
     override suspend fun launchers() = withContext(owner) { source.launchers() }
     override suspend fun launcher(name: String) = withContext(owner) { source.launcher(name) }
     override suspend fun remove(name: String) = withContext(owner) { source.remove(name) }

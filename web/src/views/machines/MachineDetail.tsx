@@ -1,7 +1,9 @@
 // Machine details (/machines/<id>, docs/server/machines.md "App", iOS MachineDetailView): one page, the most used on top — how the
 // computer is (online, system, which hub when there are several), its agents by herdr space (a row opens the chat),
 // its values now, CPU / memory / network / load over 1, 6 or 24 hours (hover a chart to read a moment, all follow) and
-// each core now (Linux), the system, the launchers. Its engine (which one the agents come from) follows the agents. A Mac the hub's extension cua is on for gets "Computer control" after that, and "Browser" (ego lite, it
+// each core now (Linux), the system, the launchers. Its engine (which one the agents come from) follows the agents. A Mac the hub's extension cua is on for gets "Computer control" after that, and "Browser" (ego lite) while ego is on.
+// A Mac whose live screen can be shown (showsScreen) gets "View screen" in the top bar, the page's one way to it: it stays in view
+// while the page scrolls, and does not wait for Cua Driver, which the screen does not use.
 import { MoveToManager } from "../ManagerParts";
 import { offlineManagerOf, useRoster } from "../../lib/managers";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,6 +37,7 @@ import {
 import { hubLabel, routeText } from "../../lib/mesh";
 import { machineDeployment } from "../../lib/machine-deploy";
 import { classifyConnection } from "../../lib/node-health";
+import { screenPath, showsScreen } from "../../lib/computer";
 import { href, onLinkClick } from "../../lib/router";
 import { getState, refresh, useStore } from "../../lib/store";
 import type { Session } from "../../lib/types";
@@ -240,7 +243,21 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
   }
 
   return (
-    <Page mid={mid} title={m.name} onToggleSidebar={onToggleSidebar} right={<span className="hidden whitespace-nowrap text-[11.5px] text-ink-3 sm:inline">{range === "1h" ? t("machines-machinedetail.refresh_10s") : t("machines-machinedetail.refresh_1m")}</span>}>
+    <Page
+      mid={mid}
+      title={m.name}
+      onToggleSidebar={onToggleSidebar}
+      right={
+        <>
+          <span className="hidden whitespace-nowrap text-[11.5px] text-ink-3 sm:inline">{range === "1h" ? t("machines-machinedetail.refresh_10s") : t("machines-machinedetail.refresh_1m")}</span>
+          {showsScreen(m) && (
+            <Button icon="monitor" href={screenPath(mid)} title={t("machines-machinedetail.screen_hint")}>
+              {t("machines-machinedetail.screen")}
+            </Button>
+          )}
+        </>
+      }
+    >
       {/* the computer */}
       <section className="overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 420ms ${EASE} both` }}>
         <div className="flex items-start gap-3 px-4 py-3.5">

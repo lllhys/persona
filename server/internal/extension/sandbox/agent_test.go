@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,25 @@ func agentDial(path string) int {
 	}
 	c.Close()
 	return 0
+}
+
+// readAgentSocket reads one generation label from a test Unix socket. The Linux snapshot test uses it to distinguish a
+// live bind of the old socket inode from the replacement listening at the same host path.
+func readAgentSocket(path string) (string, error) {
+	c, err := net.DialTimeout("unix", path, 2*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return "", err
+	}
+	buf := make([]byte, 32)
+	n, err := c.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	return string(buf[:n]), nil
 }
 
 // agentFixture is a fake home with ~/.persona and an explicit custom .state-link symlink, with a file of each
@@ -180,17 +200,140 @@ func TestWrapAgentFallsBack(t *testing.T) {
 		plan  AgentPlan
 		state string
 	}{
-		"linux":       {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: func() Support { return Support{OS: "linux", Bwrap: "/usr/bin/bwrap"} }}, AgentUnsupported},
-		"no tool":     {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: func() Support { return Support{OS: "darwin", Why: "机器上没有 sandbox-exec"} }}, AgentUnavailable},
-		"inner":       {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: ok, Inner: "Codex 自带沙箱"}, AgentSkipped},
-		"home":        {AgentPlan{DataDirs: []string{f.home}, Home: f.home, Probe: ok}, AgentSkipped},
-		"bad profile": {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: ok, Check: func(string) error { return errors.New("syntax") }}, AgentUnavailable},
+		"linux without bwrap": {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: func() Support { return Support{OS: "linux", Why: "机器上没有 bwrap"} }}, AgentUnavailable},
+		"other OS":            {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: func() Support { return Support{OS: "windows"} }}, AgentUnsupported},
+		"no tool":             {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: func() Support { return Support{OS: "darwin", Why: "机器上没有 sandbox-exec"} }}, AgentUnavailable},
+		"inner":               {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: ok, Inner: "Codex 自带沙箱"}, AgentSkipped},
+		"home":                {AgentPlan{DataDirs: []string{f.home}, Home: f.home, Probe: ok}, AgentSkipped},
+		"bad profile":         {AgentPlan{DataDirs: plan.DataDirs, Home: f.home, Probe: ok, Check: func(string) error { return errors.New("syntax") }}, AgentUnavailable},
 	}
 	for name, c := range cases {
 		a, e, st := WrapAgent(c.plan, argv, env)
 		if st.State != c.state || st.Why == "" || !slices.Equal(a, argv) || !slices.Equal(e, env) {
 			t.Errorf("%s: %+v %v %v", name, st, a, e)
 		}
+	}
+}
+
+// The Linux branch builds a default-allow bwrap command and sends its opaque profile through the same Check hook.
+// It shares neither the network nor the pid namespace, and its view exposes only this start's launcher settings.
+func TestWrapAgentLinux(t *testing.T) {
+	f := newAgentFixture(t)
+	argv, env := []string{"/bin/echo", "hi"}, []string{"A=1"}
+	plan := f.plan()
+	plan.Probe = func() Support { return Support{OS: "linux", Bwrap: "/usr/bin/bwrap"} }
+	checked := false
+	plan.Check = func(profile string) error {
+		checked = true
+		parts := strings.Split(profile, "\x00")
+		for _, unwanted := range []string{"--unshare-net", "--unshare-pid", "--unshare-ipc"} {
+			if slices.Contains(parts, unwanted) {
+				t.Errorf("agent profile contains %s", unwanted)
+			}
+		}
+		if !slices.Contains(parts, f.ours) {
+			t.Errorf("own launcher settings missing from profile: %q", parts)
+		}
+		if slices.Contains(parts, f.theirs) || slices.Contains(parts, filepath.Join(f.dir, "secret.key")) {
+			t.Errorf("closed file named as a bind source: %q", parts)
+		}
+		return nil
+	}
+	a, e, st := WrapAgent(plan, argv, env)
+	separator := slices.Index(a, "--")
+	if st.State != AgentActive || !checked || a[0] != "/usr/bin/bwrap" || separator < 0 || !slices.Equal(a[separator+1:], argv) || !slices.Contains(e, AgentEnv+"=1") {
+		t.Fatalf("%+v %v %v (checked %v)", st, a, e, checked)
+	}
+}
+
+func TestLinuxAgentProbeRetries(t *testing.T) {
+	realBwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Skip("no bwrap to install into the fake PATH")
+	}
+	realTrue, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	if sup := linuxAgentProbe(); sup.OS != "linux" || sup.Bwrap != "" || sup.Why == "" {
+		t.Fatalf("without bwrap: %+v", sup)
+	} else if st := AgentSupport(sup); st.State != AgentUnavailable || st.Why == "" {
+		t.Fatalf("without bwrap: %+v", st)
+	}
+	for name, target := range map[string]string{"bwrap": realBwrap, "true": realTrue} {
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sup := linuxAgentProbe(); sup.Bwrap == "" || sup.Why != "" {
+		t.Fatalf("installed after the first failure: %+v", sup)
+	}
+	if err := os.Remove(filepath.Join(dir, "bwrap")); err != nil {
+		t.Fatal(err)
+	}
+	if sup := linuxAgentProbe(); sup.Bwrap != "" || sup.Why == "" {
+		t.Fatalf("removed after a success: %+v", sup)
+	}
+}
+
+// Linux applies the same home and working-directory refusals as Darwin before constructing its mount views.
+func TestLinuxAgentRefuses(t *testing.T) {
+	f := newAgentFixture(t)
+	if _, err := LinuxAgent("bwrap", AgentPlan{DataDirs: []string{f.home}, Home: f.home}); err == nil || !strings.Contains(err.Error(), "home") {
+		t.Errorf("home: %v", err)
+	}
+	if _, err := LinuxAgent("bwrap", AgentPlan{DataDirs: []string{filepath.Dir(f.home)}, Home: f.home}); err == nil {
+		t.Error("above the home: no error")
+	}
+	project := filepath.Join(f.dir, "code", "app")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LinuxAgent("bwrap", AgentPlan{DataDirs: []string{f.dir}, Home: f.home, Cwd: project}); err == nil || !strings.Contains(err.Error(), "工作目录") {
+		t.Errorf("project inside: %v", err)
+	}
+	for _, workspace := range []string{"assistant", "health", "guest/x"} {
+		cwd := filepath.Join(f.dir, workspace)
+		if err := os.MkdirAll(cwd, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinuxAgent("bwrap", AgentPlan{DataDirs: []string{f.dir}, Home: f.home, Cwd: cwd}); err != nil {
+			t.Errorf("%s: %v", workspace, err)
+		}
+	}
+	if _, err := LinuxAgent("bwrap", AgentPlan{DataDirs: []string{filepath.Join(f.home, "missing")}, Home: f.home}); err == nil {
+		t.Error("no data directory: no error")
+	}
+}
+
+// A large data directory is refused before bwrap sees its 9000-argument limit. The Check hook must not run: this is an
+// early profile error, not a preflight failure or an unwrapped start that later records a stale success.
+func TestLinuxAgentArgumentLimit(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "state")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3000; i++ {
+		name := filepath.Join(dir, "public-"+strconv.Itoa(i))
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := AgentPlan{DataDirs: []string{dir}, Home: home}
+	if _, err := LinuxAgent("bwrap", plan); err == nil || !strings.Contains(err.Error(), "9000") {
+		t.Fatalf("argument limit: %v", err)
+	}
+	plan.Probe = func() Support { return Support{OS: "linux", Bwrap: "bwrap"} }
+	plan.Check = func(string) error {
+		t.Fatal("preflight ran despite the argument-count error")
+		return nil
+	}
+	argv := []string{"/bin/echo", "hello"}
+	if got, _, st := WrapAgent(plan, argv, nil); st.State != AgentSkipped || !strings.Contains(st.Why, "9000") || !slices.Equal(got, argv) {
+		t.Fatalf("%+v %q", st, got)
 	}
 }
 

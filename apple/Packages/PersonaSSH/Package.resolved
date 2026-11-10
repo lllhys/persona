@@ -1,6 +1,15 @@
 {
-  "originHash" : "2ba9bbd2318b2d9a97971fd8f048b1485f2f9931d8700cc2ad0026070011eea6",
+  "originHash" : "5243800ea2b2ab1aeb7def275282133812eab557cd0abcb6bffc97b4108590c3",
   "pins" : [
+    {
+      "identity" : "marqueeglow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/szupzj18/MarqueeGlow",
+      "state" : {
+        "revision" : "2da5a991387838030be5d943abe288289466c76f",
+        "version" : "0.1.0"
+      }
+    },
     {
       "identity" : "networkimage",
       "kind" : "remoteSourceControl",

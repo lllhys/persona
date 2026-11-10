@@ -43,25 +43,7 @@ func (s *Service) modelPurpose(ctx context.Context, id string, providers []Model
 	p.Fields = []string{"provider", "model"}
 	p.ProviderIDs = []string{}
 	for _, v := range providers {
-		compatible := v.Kind == p.Kind
-		if p.Kind == "launcher" && v.Kind == "api" { // a direct Messages API provider starts Claude on its gateway (#2455)
-			compatible = messagesAPI(v.API)
-		}
-		if p.Kind == "api" && v.Kind == "launcher" {
-			for _, l := range stored {
-				if v.ID == "launcher."+l.Name {
-					compatible = messagesAPI(l.API)
-					break
-				}
-			}
-		}
-		if p.Kind == "plugin" {
-			compatible = v.ID == p.ID
-		}
-		if compatible && p.Kind == "launcher" && len(v.Machines) > 0 && p.MachineID != "" {
-			compatible = slices.Contains(v.Machines, p.MachineID)
-		}
-		if compatible {
+		if s.modelProviderCompatible(p, v, stored) {
 			p.ProviderIDs = append(p.ProviderIDs, v.ID)
 		}
 		if v.ID == p.Effective.Provider {
@@ -81,7 +63,9 @@ func (s *Service) modelPurpose(ctx context.Context, id string, providers []Model
 	}
 	l := s.requestCtxLang(ctx)
 	p.Status = modelUnverified
-	if !slices.Contains(p.ProviderIDs, p.Effective.Provider) {
+	if scope := s.purposeScopeStatus(ctx, l, p.Effective.Provider, p.MachineID); p.Kind == "launcher" && scope != "" {
+		p.Status = scope // the provider is out of the main chat's computer's scope: why it does not run there
+	} else if !slices.Contains(p.ProviderIDs, p.Effective.Provider) {
 		p.Status = mc(l, "status_provider_incompatible")
 		if p.Kind == "api" && strings.HasPrefix(p.Effective.Provider, "legacy.") && s.legacyModelConfig(ctx, p.Effective.Provider).BaseURL == "" {
 			p.Status = mc(l, modelNoAPIStatus)

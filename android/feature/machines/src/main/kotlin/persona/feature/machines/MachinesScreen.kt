@@ -39,8 +39,14 @@ internal fun MachinesScreen(
     var renaming by remember(machineId) { mutableStateOf(false) }
     // The hub renames computers (feature machine_rename); a linked hub's computer is renamed on that hub.
     val renames = MachineRenameFeature in LocalHubFeatures.current
-    val machines by model.sessions.machines.collectAsStateWithLifecycle()
+    val allMachines by model.sessions.machines.collectAsStateWithLifecycle()
     val sessions by model.sessions.sessions.collectAsStateWithLifecycle()
+    // The list is the current assistant's computers (docs/assistant/managers.md "Clients"); one computer's page is
+    // that computer's, whichever assistant it belongs to (a link or a notification opens it as it is).
+    val assistant = currentAssistant()
+    val machines = remember(allMachines, assistant, machineId) {
+        if (machineId != null) allMachines else allMachines.filter { assistant.ownsOn(it.id, it.manager) }
+    }
     val machine = machines.firstOrNull { it.id == machineId }
     val acting = actions?.state?.collectAsStateWithLifecycle()?.value ?: MachineActionsState()
     // An offline machine has no launchers; they are read again when it comes online (after "Reconnect").
@@ -53,7 +59,10 @@ internal fun MachinesScreen(
         if (info != null && showsDeploy(info)) MachineDeployLine(info, info.id in acting.deployStarting, actions?.let { { it.deploy(info.id) } })
     }
     var selection by rememberSaveable(machineId, state.range) { mutableStateOf<Long?>(null) }
-    val metrics = state.dashboard?.machines.orEmpty().associateBy { it.machineId }
+    // The dashboard's are every manager's: only the ones of a listed computer, or of one the list doesn't know at all.
+    val known = remember(allMachines) { allMachines.mapTo(HashSet()) { it.id } }
+    val listed = remember(machines) { machines.mapTo(HashSet()) { it.id } }
+    val metrics = state.dashboard?.machines.orEmpty().filter { it.machineId in listed || it.machineId !in known }.associateBy { it.machineId }
     val ids = (machines.map { it.id } + metrics.keys).distinct()
     val online = ids.count { metrics[it]?.online ?: machines.firstOrNull { m -> m.id == it }?.online ?: false }
     val attention = metrics.values.count { alerts(it.current(state.now), it.system?.cores).isNotEmpty() }
@@ -110,13 +119,7 @@ internal fun MachinesScreen(
                     navigator.navigate(MachineDetailRoute(id))
                 }
             }
-            // Several managers (docs/assistant/managers.md step 4): the computers under the manager they belong to.
-            val byManager = roster?.groups(ids) { id -> machines.firstOrNull { it.id == id }?.manager }
-            if (byManager == null) items(ids, key = { it }, contentType = { "machine" }) { card(it) }
-            else byManager.forEach { group ->
-                item("manager-${group.id}", contentType = "manager") { JManagerHeader(group, count = group.items.size) }
-                items(group.items, key = { "${group.id}:$it" }, contentType = { "machine" }) { card(it) }
-            }
+            items(ids, key = { it }, contentType = { "machine" }) { card(it) }
         } else {
             val metric = state.history?.metrics ?: MachineMetrics(machineId, machine?.online ?: false, machine?.system)
             val system = metric.system ?: machine?.system

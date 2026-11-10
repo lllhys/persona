@@ -25,7 +25,13 @@ const (
 	DecisionOutcome = "outcome"
 	DecisionAgent   = "agent"
 	DecisionThread  = "thread"
+	// DecisionReported: the main conversation told the owner the outcome of a concern (#3561); Choice is what it told
+	// them. Written only by ReportConcern, which closes the concern with it.
+	DecisionReported = "reported"
 )
+
+// ErrNotConcern: the todo is not a concern (only a concern's outcome is reported).
+var ErrNotConcern = errors.New("the todo is not a concern")
 
 // TodoDecisionRow is one call the user made on a todo (#1618). SupersedesID names the earlier decision this one
 // replaces; SupersededBy is filled in when listing: the newest decision that supersedes this one, empty while it is
@@ -80,6 +86,9 @@ func (d *DB) InsertTodoDecision(ctx context.Context, r TodoDecisionRow) (inserte
 		return false, err
 	}
 	defer conn.Release()
+	if r.Source == DecisionReported {
+		return false, errors.New("a report is written by ReportConcern")
+	}
 	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		var one int
 		err := tx.QueryRow(ctx, `SELECT 1 FROM todos WHERE id = $1 FOR UPDATE`, r.TodoID).Scan(&one)
@@ -115,6 +124,57 @@ func (d *DB) InsertTodoDecision(ctx context.Context, r TodoDecisionRow) (inserte
 		return false, ErrTodoNotFound
 	}
 	return inserted, err
+}
+
+// ReportConcern writes r, the report of a concern's outcome to the owner (Source DecisionReported), and closes the
+// concern with it (DoneByReported, reason the report) in one transaction: a concern is never closed without its report,
+// and a report is never written on one left open. A concern already closed keeps its close and gains the report
+// (closed is false then). ErrTodoNotFound when it is gone, ErrNotConcern when it is not a concern.
+func (d *DB) ReportConcern(ctx context.Context, r TodoDecisionRow, reason string) (row *TodoRow, closed bool, err error) {
+	if r.Source != DecisionReported {
+		return nil, false, errors.New("a concern's report has source reported")
+	}
+	conn, err := d.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Release()
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		var cur TodoRow
+		err := tx.QueryRow(ctx, `SELECT `+todoColumns+` FROM todos WHERE id = $1 FOR UPDATE`, r.TodoID).Scan(todoDest(&cur)...)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrTodoNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if cur.Kind != KindConcern {
+			return ErrNotConcern
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO todo_decisions (id, todo_id, question, choice, reason, source, source_machine,
+				source_session, source_message, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			r.ID, r.TodoID, r.Question, r.Choice, r.Reason, r.Source, r.SourceMachine, r.SourceSession, r.SourceMessage,
+			r.CreatedAt); err != nil {
+			return err
+		}
+		at := r.CreatedAt
+		if cur.DoneAt == nil {
+			closed = true
+			cur.DoneAt, cur.DoneBy, cur.DoneReason, cur.StartError = &at, DoneByReported, reason, ""
+		}
+		cur.UpdatedAt = at
+		if _, err := tx.Exec(ctx, `UPDATE todos SET done_at = $2, done_by = $3, done_reason = $4, start_error = $5, updated_at = $6
+			WHERE id = $1`, cur.ID, cur.DoneAt, cur.DoneBy, cur.DoneReason, cur.StartError, cur.UpdatedAt); err != nil {
+			return err
+		}
+		row = &cur
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return row, closed, nil
 }
 
 // SetTodoDecisionSupersedes marks decision id of todoID as superseding the earlier decision supersedesID ("" clears

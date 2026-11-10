@@ -22,6 +22,7 @@
     <string name="chat_delivery_dialog_open">先にコンピューターのダイアログに対応してください</string>
     <string name="chat_delivery_op_id_reused">このメッセージの送信IDは使用済みです</string>
     <string name="chat_delivery_invalid">メッセージの内容が要件を満たしていません</string>
+    <string name="chat_delivery_out_of_scope">このモデルプロバイダーはこのコンピューターで使う設定になっていません。設定 › モデルプロバイダー で使うコンピューターを変更できます。</string>
     <string name="chat_delivery_refused">コンピューターがこのメッセージを受け付けませんでした</string>
     <string name="chat_delivery_delivered_waiting">配信済み、チャット履歴を待っています</string>
     <string name="chat_delivery_cancel">送信を取消</string>
@@ -414,6 +415,9 @@
     <string name="chat_work_thought">思考</string>
     <string name="chat_content_copy">コピー</string>
     <string name="chat_content_show_all">すべて表示</string>
+    <string name="chat_content_copied">コピーしました</string>
+    <string name="chat_content_quote_more">すべて表示</string>
+    <string name="chat_content_quote_less">折りたたむ</string>
     <string name="chat_content_full_text">全文</string>
     <string name="chat_content_image">チャットの画像</string>
     <plurals name="chat_content_collapse_steps">

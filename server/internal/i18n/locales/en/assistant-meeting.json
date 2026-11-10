@@ -1,0 +1,21 @@
+{
+  "bad_default_role": "meeting_attendance_default must be off, listener or participant.",
+  "forbidden": "This device can’t do this. Use a device with full access.",
+  "too_large": "The request is too large: at most {size}.",
+  "no_recording": "There is no upload of this recording yet. Upload it, then send again.",
+  "deleted": "This recording was deleted.",
+  "bad_json": "The request isn’t valid JSON: {error}",
+  "bad_from": "from must be a whole number, 0 or more.",
+  "too_many_segments": "At most {max} sentences a request.",
+  "bad_time": "Each sentence’s start and end must be numbers.",
+  "not_attending": "Persona doesn’t attend this recording.",
+  "live_gap": "Sentences are missing before this one. Send again from {next}.",
+  "live_full": "This recording has all the live sentences it can keep. Send no more for it.",
+  "bad_ask_id": "id must be a UUID.",
+  "bad_ask_field": "{field} has the wrong type.",
+  "question_too_long": "The question is over {max} characters.",
+  "no_question": "Send a question, or the time you tapped (at).",
+  "op_id_reused": "This id was already used for another question.",
+  "asks_full": "This meeting already has {max} questions.",
+  "ask_busy": "Two questions are being answered now. Ask again once one is answered."
+}

@@ -42,10 +42,12 @@ jobs:
         run: python3 -m pip install -r scripts/ci/requirements.txt
       - name: Expose the Swift toolchain's plist converter
         run: |
-          plutil -help >/dev/null
-          echo "$SWIFT_PATH" >> "$GITHUB_PATH"
-        env:
-          SWIFT_PATH: /usr/share/swift/usr/bin
+          swift_bin="$(dirname "$(readlink -f "$(command -v swift)")")"
+          if [ ! -x "$swift_bin/plutil" ] && [ -x /usr/share/swift/usr/bin/plutil ]; then
+            swift_bin=/usr/share/swift/usr/bin
+          fi
+          "$swift_bin/plutil" -help >/dev/null
+          echo "$swift_bin" >> "$GITHUB_PATH"
       - name: Install workflow validator
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Scripts and docs checks

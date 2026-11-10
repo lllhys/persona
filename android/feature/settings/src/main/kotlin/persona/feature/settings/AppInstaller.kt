@@ -1,7 +1,6 @@
 package persona.feature.settings
 
 import android.app.Activity
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
@@ -78,10 +77,7 @@ internal object AppInstaller {
                             apk.inputStream().use { it.copyTo(output) }
                             session.fsync(output)
                         }
-                        val result = Intent(context, InstallResultActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            .putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
-                        val pending = PendingIntent.getActivity(context, sessionId, result, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-                        session.commit(pending.intentSender)
+                        session.commit(installResultCallback(context, sessionId).intentSender)
                     }
                 } catch (error: Exception) {
                     installer.abandonSession(sessionId)

@@ -18,6 +18,8 @@ struct ClipboardOfferTests {
         #expect(!ClipboardOffer.shouldOffer(enabled: true, seen: 5, now: 5, hasContent: true), "nothing new was copied")
         #expect(!ClipboardOffer.shouldOffer(enabled: true, seen: 4, now: 5, hasContent: false), "the copy was cleared")
         #expect(!ClipboardOffer.shouldOffer(enabled: true, seen: nil, now: 5, hasContent: true), "no baseline yet")
+        #expect(!ClipboardOffer.shouldOffer(enabled: true, seen: 4, now: 5, hasContent: true, assistive: true),
+                "VoiceOver / Switch Control can't reach the toast's button: the computer page is the way")
     }
 
     @Test func picksTheLastComputerThatCanTakeIt() {

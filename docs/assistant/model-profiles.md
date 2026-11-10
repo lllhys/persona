@@ -42,7 +42,7 @@ A tier is Persona's equivalent of a Paseo Agent profile: a named launch preset (
   - Checked before the approval card: the tier name, that the launcher is plain `claude`, a provider added in Persona that runs as a launcher, or one a computer lists (the lists are asked again before refusing, so a launcher just added to an rc file is not refused), the model ID, the effort and the description.
   - The card shows each profile's tier before → after. Approval saves at the revision the card was made from, and only what the card showed: profiles edited in the meantime (or templates not yet saved, made again from a configuration changed since) fail with a conflict and nothing is overwritten. Only the tiers are checked, and only the edited tier's model, so a deleted provider or another tier's old model does not block a tier edit.
 - **No permission mode** in a tier: a budget switch must never change what an Agent may do, and `agent_start` takes no permission mode. Permission stays explicit on the New Agent form and the plan card.
-- **No silent fallback**: an unknown tier, or one whose launcher a computer lacks, fails with the reason; it never starts on another model.
+- **No silent fallback**: an unknown tier, or one whose launcher a computer lacks, fails with the reason; it never starts on another model. This is the rule for resolving an Agent preset. It does not define or disable the headless assistant's bounded transient recovery (#3204), which uses the current launcher's ordered `/model` list, not this unordered set of named presets.
 
 ## Edit and add profiles
 

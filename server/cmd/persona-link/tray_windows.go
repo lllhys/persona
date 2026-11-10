@@ -159,7 +159,7 @@ func (h trayHost) Pair(raw, machine string) (string, error) {
 	if err != nil {
 		return "", pairError(err)
 	}
-	_ = link.Poke(h.e.configPath(), link.PokeCheck) // a running persona-link reads the new credential within seconds anyway
+	_ = link.Poke(h.e.configPath(), link.PokeCheck) // a running persona-link moves to the new credential within seconds anyway, connected or not
 	return c.Machine, nil
 }
 

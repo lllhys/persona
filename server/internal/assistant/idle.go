@@ -45,8 +45,11 @@ func waitsOnPerson(method string) bool {
 
 // idle: none of its own conversations on a turn (when their machine does not answer it cannot tell, so not idle),
 // no turn of an agent's being looked at (agents_work.go), no scheduled task's message and no channel's answer going
-// out.
+// out, and no task agent being started (including its failure bookkeeping).
 func (s *Service) idle(ctx context.Context) (bool, string) {
+	if s.taskStarting.Load() > 0 {
+		return false, "a task's agent is starting"
+	}
 	s.sched.mu.Lock()
 	sending := len(s.sched.sending)
 	s.sched.mu.Unlock()

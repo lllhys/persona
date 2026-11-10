@@ -1,0 +1,7 @@
+**这是主对话**：Example user平时都在这里找你，接着之前聊过的事往下做。
+现在的方向（主管对话，id：名字）：
+- lead_a：Persona 产品
+- lead_b：基建
+派活时属于哪个方向，就用 task_plan 的 supervisor 交给那个主管督办。
+
+（快照）

@@ -88,7 +88,7 @@ class AssistantManagersShotsTest {
 
     private val res get() = ApplicationProvider.getApplicationContext<Context>().resources
 
-    @Test fun theSwitcherAndAnOfflineManagersComposer() {
+    @Test fun switchingAndAnOfflineManagersComposer() {
         val hub = Hub()
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
@@ -118,9 +118,8 @@ class AssistantManagersShotsTest {
         // Nothing is queued for it: the empty state says so instead of 「连上后继续发送」.
         assertTrue(rule.onAllNodesWithText("家里离线，能看历史，暂时不能发消息。").fetchSemanticsNodes().isNotEmpty())
         assertEquals(0, rule.onAllNodesWithText("发出的内容会先保存在本机，连上后继续发送。").fetchSemanticsNodes().size)
-        // The installed ones only, the default first.
-        val chips = listOf("助手", "工作", "家里").map { rule.onNode(hasText(it) and hasClickAction()).fetchSemanticsNode().boundsInRoot.left }
-        assertEquals(chips.sorted(), chips)
+        // The page draws no chips: no manager's name is a button on it (the sidebar's switcher lists them).
+        assertEquals(0, rule.onAllNodes(hasText("工作") and hasClickAction()).fetchSemanticsNodes().size)
         assertEquals(0, rule.onAllNodesWithText("测试").fetchSemanticsNodes().size)
         val dir = File(System.getProperty("persona.shots") ?: "build/managers-shots").also { it.mkdirs() }
         fun capture(name: String) {
@@ -133,22 +132,21 @@ class AssistantManagersShotsTest {
             capture("offline-${s.key}-${if (d) "dark" else "light"}")
         }
         assertTrue(hub.sent.isEmpty())
-        // Picking another one: the choice moves (the requests then name it), the composer is back.
+        // Switching to another one: the choice moves (the requests then name it), the composer is back.
         style = AppStyle.Glass; dark = false
-        rule.onNode(hasText("工作") and hasClickAction()).performClick()
+        AssistantManagerChoice.pick("m-3fa21c")
         rule.waitForIdle()
         assertEquals("m-3fa21c", AssistantManagerChoice.current.value.manager)
         assertEquals(0, rule.onAllNodesWithText(offline).fetchSemanticsNodes().size)
         capture("online-glass-light")
         // The default: no header at all.
-        rule.onNode(hasText("助手") and hasClickAction()).performClick()
+        AssistantManagerChoice.pick("assistant")
         rule.waitForIdle()
         assertNull(AssistantManagerChoice.current.value.manager)
         assertNull(AssistantManagerChoice.header("hub"))
-        // One manager: no switcher, the page as before.
+        // One manager: the page as before.
         shown = one
         rule.waitForIdle()
-        assertEquals(0, rule.onAllNodes(hasText("助手") and hasClickAction()).fetchSemanticsNodes().size)
         capture("single-glass-light")
     }
 

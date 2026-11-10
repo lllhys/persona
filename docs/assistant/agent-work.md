@@ -125,7 +125,7 @@ Apply in order; on a match, do not call the model:
 ### Model
 
 - Purpose `agent.triage`, "Session Triage" (**Settings › Model Settings**, under "Information filtering"; defaults to inheriting the inexpensive Inbox triage model).
-- Input: Agent name, directory / project, the user's request for this turn (`lastTurn` ask), final reply (first and last 1500 characters), other working Agents on the same computer (name + short id), current time.
+- Input: Agent name, directory / project, the user's request for this turn (`lastTurn` ask), final reply (first and last 1500 characters), other working Agents on the same computer (name + short id), current time, and up to 20 resolved user question/answer pairs from the session's latest 100 interactions, newest first. Each question and answer is capped at 200 runes. Non-question interactions, assistant-authored answers, cancellations and deferrals (including localized canned pause/wait/hold answers) are excluded. A history read failure leaves triage retryable. This history is decision context, not permission to send an automatic wake.
 - JSON output (`server/internal/prompts/agents/triage.md`):
 
   ```json
@@ -139,7 +139,8 @@ Apply in order; on a match, do not call the model:
 
 - Decision principles in the prompt:
   - An optional offer at the end such as "Would you also like me to…?" does not mean blocked. If the task is complete, it is `done`; include the offer in the conclusion.
-  - If the next step is **pushing code, deploying / releasing, sending messages / comments to others, or merging / modifying someone else's MR / PR**, always classify it as `blocked · user` and ask whether to proceed, regardless of what the Agent says it is waiting for (see "Safety boundary").
+  - Only an unanswered request for a user decision, information, or action can be `blocked · user`. Arrangements, status reports, and acknowledgments are not questions. `questions[].question` must quote the final reply verbatim: a question ending in `?` / `？` after ignoring trailing Markdown, quotes, brackets, emoji or an answer annotation such as `(y/n)`, or an explicit request. Code rejects invented or paraphrased questions, and an authorization/login link is a separate `user` case even without a question.
+  - **Pushing code, deploying / releasing, sending messages / comments to others, or merging / modifying someone else's MR / PR** still receives no automatic wake unless it is approved (see "Safety boundary"). Blocking automation does not invent a request for permission.
   - If uncertain whether the task is complete, use `unsure`, not `done`.
 
 ### Where the conclusion goes
@@ -147,6 +148,29 @@ Apply in order; on a match, do not call the model:
 - The `session_work` table ("Storage" below), sent with the session list as `work`;
 - When done: add `完成：<结论>` ("Completed: <conclusion>") to the knowledge-base project timeline for this directory (`kbAgentDone` used to record the last words of every turn; now it records the conclusion when available);
 - Replace the "Completed" push body with the conclusion; the main chat's live snapshot adds "Done" and "Waiting" sections ("What Persona knows" below).
+
+## Closeout
+
+A closeout is a small record an Agent ends a turn with, so that a stopped session answers "done or not, merged or not, deployed or not, what is missing" without anyone reading its transcript or asking it (#3612). It is the Agent's own claim; nothing in it has been checked by the hub.
+
+```text
+<closeout status="done|not_done|blocked" merged="yes|no|n/a" deployed="yes|no|n/a">
+did: <what changed, one sentence; up to three such lines>
+artifact: <pr|commit|branch|doc|build|url> <reference>
+verified: <what was run or measured and its reading, or "untested">
+missing: <what it still needs from someone, if anything>
+waiting: <for status="blocked": who or what it waits for>
+</closeout>
+```
+
+- **Reading it** (`server/internal/closeout`): the last block in the final reply counts. The attribute names, the line keys and the status values are fixed; the text after each colon is in the user's language. A block with no status, or one that is not `done`, `not_done` or `blocked`, is no closeout. Bounds: three `did` lines of 200 characters, five artifacts, 300 characters for `verified` and `missing`, 120 for `waiting`. `n/a` and an unsaid `merged` / `deployed` are left empty.
+- **Asking for it** (the `closeout` switch, off by default): when an Agent's Stop hook fires, the node holds the stop once (`decision: block`, `server/internal/node/closeout_stop.go`) if all of these hold: the session has Persona's own hooks (sessions the user started in a terminal only report and are never held); it is not an assistant conversation, a subagent or a review's reviewer; the stop is not already a held one (`stop_hook_active`); the last reply is not empty, not a model API error and has no closeout; and the turn changed files or ran commands (a `tool_use` of `Edit`, `Write`, `MultiEdit`, `NotebookEdit` or `Bash` since the turn's prompt, read from the last 2 MiB of the transcript). The node then asks the manager (`agents.closeout.check`, 5 seconds), which answers with the reason only while the main switch and `closeout` are on (`server/internal/assistant/agents_closeout.go`, prompt `prompts/agents/closeout_required.md`). The Agent is told to repeat its conclusion with a closeout and to start nothing new. A turn that cannot be read, a manager that does not answer, and an Agent that ignores the request all end as before: at most one held stop per turn. The work event `closeout_asked` records each one.
+- **Triage** reads the closeout from the final reply before it asks the model. `status="done"` is `done` by rule (`by: "rule"`, no model call), with the first `did` line as the list line. With `not_done` or `blocked` the model is still asked what the turn waits for, and the closeout is kept on the result; when the Agent says `not_done` and the model reads the reply as done, the Agent's word wins and the turn stays untriaged (Unread), as any turn nobody can call finished.
+- **Where it goes**: `work.closeout` on the session ("Protocol" below). The session lists carry only where it stands (`status`, `merged`, `deployed`, `waiting`, `missing`); `did` and `verified` come with the session itself.
+- **Supervision messages** carry the closeout of a task's Agent as its own lines, marked as the Agent's claim that nobody checked, with the block taken out of "what it said last" (`supervise_digest.go`, `prompts/assistant/supervise.md`); the supervisor is told to verify merged, deployed and verified as for any report.
+- **Checked by the hub** (`checkCloseout`): when the closeout names a GitHub pull request by its link, triage looks at it with the deploy check that deliveries use (`deploy_check.go`: the pull request's merge, and whether the running hub contains the merge commit) and keeps the result beside the claim as `closeout.checked {merged, deployed}`, each `yes`, `no` or absent when it could not tell. `deployed` is about the running hub, so it is known only for the hub's own repository; for another repository only `merged` is. A closeout that says merged or deployed when the check says it is not is never `done`: the turn stays untriaged (Unread) with the closeout and the finding kept. Supervision messages show the finding under the closeout.
+- **Delivery**: a reply with a closeout and no delivery line of its own (`docs/assistant/todos.md` "Delivery") states its delivery through the closeout: deployed `yes` is live, merged `yes` is merged and not live, merged `no` with a pull request is held at the PR, and a done closeout that says neither is "nothing to ship". A delivery line in the same reply wins.
+- **Not done yet** (follow-ups of #3612): the snapshot still shows only the work line; no client draws the closeout or has the switch; a `not_done` closeout has no list state of its own; Codex has no held stop (a closeout it writes is read all the same); Agents learn the form only when a stop is held.
 
 ## Automatic actions
 
@@ -223,10 +247,11 @@ Persona **sends to Agents on its own** only four kinds of message, none introduc
 3. The answer the user selected on a card;
 4. After the auth relay completed the authorization link it stopped at ([auth-relay.md](../operations/auth-relay.md)): go on with what it was doing.
 
-Any next step involving **pushing code, deploying / releasing, messaging others, or touching someone else's MR / PR** can only become "Waiting for your decision":
+Any next step involving **pushing code, deploying / releasing, messaging others, or touching someone else's MR / PR** must not receive an unapproved automatic wake:
 
-- The prompt requires the model to classify these next steps as `blocked · user` (also when `wait.risky` is true);
-- Code fallback: if `wait.then` / `line` contains push, deploy, `部署` (deploy), `发布` (release), `上线` (go live), merge, `合并` (merge), `发消息` (send a message), `回复` (reply), `评论` (comment), testflight, release, `发送` (send), `删除` (delete), `购买` / `付费` / `续费` / `充值` (spend), or `生产` / production, do not register a wakeup. Instead, ask on a card, "After 'X', it plans to 'Y'. Should it proceed?";
+- The prompt marks such waits with `wait.risky`; without an approval the hub registers no wakeup and does not invent a question for the user. A card still requires an actual unanswered request in the Agent's reply; missing request evidence is left uncertain, not labeled done.
+- Code fallback: if `wait.then` / `line` contains push, deploy, `部署` (deploy), `发布` (release), `上线` (go live), merge, `合并` (merge), `发消息` (send a message), `回复` (reply), `评论` (comment), testflight, release, `发送` (send), `删除` (delete), `购买` / `付费` / `续费` / `充值` (spend), or `生产` / production, do not register a wakeup unless the same wait and step are approved;
+- An approval comes from the user's "Do it once it's ready" on a card the Agent asked, or from a task that authorizes the step (#3246). The wake then goes out with the approval, and no second card is opened;
 - When the user chooses "Do it" on the card, the Agent receives the user's answer, which counts as user authorization.
 
 **A step its task already asked for is not asked again** (#3246, `agents_work_authorized.go`): before the card goes up, the hub reads the title and notes of the Agent's open to-do (supervised or not). When the to-do authorizes the step, the hub treats it as the user's "Do it once it's ready": no card and no push, a normal wakeup once the wait is due, the line `等「X」，任务已授权，好了就去「Y」`, and the work event `auto_approved` (to-do id, whether supervised, wait, step) as the trace. The wake tells the Agent that its task authorized the step. A new wait (the next release node) is checked the same way, so it is not asked again either. The to-do authorizes the step only when every risky word in it passes:
@@ -235,7 +260,7 @@ Any next step involving **pushing code, deploying / releasing, messaging others,
 - Pushing its own branch (push, `推送`, `推到`): allowed for any to-do.
 - Merging, releasing, deploying (`合入`, `发布`, `上线`, `部署`, merge, release…): only when the to-do text contains the same word and no negation (`不要`, `别`, `禁止`, don't…) precedes it in the same clause.
 
-With no open to-do, with the wake switch off, with more than one question, or with an authorization link, the card goes up as before.
+With no open to-do, or with a step its to-do does not authorize, the hub neither wakes it nor opens a card of its own: a card only carries a question the Agent actually wrote (#3290). With the wake switch off nothing is woken either, and a card the Agent wrote still goes up. With more than one question or an authorization link, the task does not auto-approve the step.
 
 ## Avoid conflicting with manual user actions
 
@@ -263,10 +288,11 @@ Users enable them under **Settings › Session Triage**. The switches are stored
 | `transient_retry` Continue after transient errors (#3208) | Automatically send continuation after transient model API errors ("Transient errors: automatic continuation") | Agent's model. **On by default**, independent of the main switch |
 | `wake` Scheduled wakeups | Wake Agents waiting for deployment / CI / another Agent so they check for themselves | Agent's model (one turn per wakeup) |
 | `tool_loop` Detect tool loops | Offer to interrupt an agent repeating tool calls, excluding polling | Triage model (at most three checks per turn) |
+| `closeout` Ask for a closeout | Hold an Agent's stop once when a turn that did work ends without a closeout ("Closeout") | Agent's model (one more turn when the closeout is missing) |
 | `reply_reminder` Remind when seen, unanswered (#5096) | One push when an Agent asking the user has waited `reply_reminder_minutes` (default 30) since they looked ([agent-states.md](../protocol/agent-states.md) "Awaiting your reply") | None: rules only. **On by default**, independent of the main switch |
 
 - Subswitches work only when the main switch is on (but `reply_reminder` and `transient_retry`). Disabling a switch takes effect immediately: Persona-created cards are removed, and queued retries / wakeups are not sent.
-- `GET / PUT /api/v1/agents/triage` (`{enabled, auto_continue, wake, decide, tool_loop, reply_reminder, reply_reminder_minutes, transient_retry}`, forwarded by the hub to the manager); changes broadcast `{"type":"agents.triage"}`. A PUT without `tool_loop`, `reply_reminder`, `reply_reminder_minutes` (or with minutes 0) or `transient_retry` keeps their values for older apps; negative minutes go back to the default 30. While the saved switches cannot be read, such a PUT saves their defaults.
+- `GET / PUT /api/v1/agents/triage` (`{enabled, auto_continue, wake, decide, tool_loop, closeout, reply_reminder, reply_reminder_minutes, transient_retry}`, forwarded by the hub to the manager); changes broadcast `{"type":"agents.triage"}`. A PUT without `tool_loop`, `closeout`, `reply_reminder`, `reply_reminder_minutes` (or with minutes 0) or `transient_retry` keeps their values for older apps; negative minutes go back to the default 30. While the saved switches cannot be read, such a PUT saves their defaults.
 - A `GET` whose first read of the database fails answers `503` with an `error` in the request's language (Chinese, English or Japanese) saying why, instead of returning the defaults as if they were the saved switches (#4553). Failures are not cached: the next request reads again. Switches once read or saved stay cached in memory; `manager.json`'s initial values apply only when the database really has no setting. Triage itself still falls back to the defaults when its own read fails, and `PUT` saves as before.
 - `agents.triage` in the manager's `manager.json` (`docs/operations/config.md` ("manager.json"); in hub.json before 2026-11-06) now retains limits (`max_retries` default 5, `retry_base_seconds` default 15, `max_wakes` default 6, `settle_seconds` default 15);
   its triage switches are initial values only when settings have never been saved in the App (omitted means off). The manager reads this section itself and lays it over the hub's handshake reply (`assistantwire.Hello.Agents`); the hub no longer reads or sends it.
@@ -299,10 +325,13 @@ For tasks dispatched from the main chat (`internal/assistant/tasks_follow.go`), 
          "agent":{"machine_id":"…","session_id":"…","label":"…"},
          "link":{"url":"…","expires_at":"…"},
          "artifacts":[{"kind":"pr","ref":"https://github.com/…/pull/1"}],
+         "closeout":{"status":"done|not_done|blocked","waiting":"…","did":["…"],"merged":"yes|no","deployed":"yes|no",
+                     "verified":"…","missing":"…","checked":{"merged":"yes|no","deployed":"yes|no"}},
          "turn_at":"…","at":"…","by":"rule|model"}
 ```
 
 - While working, only `{"phase":"working"}`; pending interactions use `{"phase":"blocked","on":"user","line":<question>}`; sessions not triaged omit `work`.
+- `closeout`: what the Agent said of its own work as the turn ended ("Closeout"); `merged` and `deployed` are absent when they do not apply or were not said. Session lists omit `did` and `verified`.
 - `resets_at`: the turn stopped on a subscription's usage limit that resets then ("Usage limits"): on `external` the wait for it, on the card after the automatic continuations when it resets.
 - `GET /api/v1/agents/work/stats?hours=24`: evaluation metrics (below).
 

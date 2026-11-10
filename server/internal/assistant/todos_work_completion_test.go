@@ -198,7 +198,7 @@ func TestCompletedTodoDropsLiveAndRestoredCards(t *testing.T) {
 			c := stopped("s1", "Which test should I run?")
 			c.UpdatedAt = time.Now()
 			f.setSessions("box", c)
-			f.triage = `{"phase":"blocked","on":"user","line":"Choose a test","questions":[{"question":"Which test?","options":[{"label":"Unit tests"},{"label":"Integration tests"}]}]}`
+			f.triage = `{"phase":"blocked","on":"user","line":"Choose a test","questions":[{"question":"Which test should I run?","options":[{"label":"Unit tests"},{"label":"Integration tests"}]}]}`
 			triage(t, s, "s1")
 			cardID := entryOf(t, s, "s1").InteractionID
 			if cardID == "" {

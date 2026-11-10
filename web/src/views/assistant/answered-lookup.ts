@@ -59,8 +59,8 @@ export function answeredHere(s: Session, waiting: ReadonlySet<string>, answered:
 }
 
 /** The sessions lookup with that applied. */
-export function answeredLookup(sessions: Session[] | Record<string, Session[]>, interactions: Interaction[], answered: Record<string, AnsweredCard>): SessionLookup {
-  const base = makeSessionLookup(sessions);
+export function answeredLookup(sessions: Session[] | Record<string, Session[]> | SessionLookup, interactions: Interaction[], answered: Record<string, AnsweredCard>): SessionLookup {
+  const base = typeof sessions === "function" ? sessions : makeSessionLookup(sessions);
   const done = answeredBy(answered);
   if (!done.size) return base;
   const waiting = new Set(interactions.map((ix) => key(ix.machine_id, ix.session_id)));

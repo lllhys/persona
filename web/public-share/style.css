@@ -1,0 +1,24 @@
+* { box-sizing: border-box; }
+html { color-scheme: light; background: var(--page); color: var(--ink); font-family: var(--share-font); }
+html.dark { color-scheme: dark; }
+body { margin: 0; font-size: var(--share-body); line-height: var(--share-leading); }
+#viewer { max-width: var(--share-page-width); margin-inline: auto; padding: var(--share-page-space); }
+.public-masthead { margin-bottom: var(--share-space-xxl); padding-bottom: var(--share-space-xl); border-bottom: var(--share-line) solid var(--line-strong); }
+.public-eyebrow { color: var(--ai); font-size: var(--share-caption); font-weight: var(--share-emphasis); margin-bottom: var(--share-space-s); }
+h1 { font-size: var(--share-display); letter-spacing: var(--share-tracking); line-height: var(--share-display-leading); margin: 0 0 var(--share-space-m); }
+h2, h3 { font-size: var(--share-heading); margin: 0; }
+h4 { margin-bottom: 0; }
+p { color: var(--ink-2); margin-block: var(--share-space-s); }
+.public-meta { display: flex; flex-wrap: wrap; gap: var(--share-space-l); font-size: var(--share-caption); color: var(--ink-2); margin-top: var(--share-space-l); }
+.public-message { display: grid; grid-template-columns: var(--share-viewer-columns); gap: var(--share-message-gap); padding: var(--share-space-l); border-radius: var(--share-radius); }
+.public-user { background: var(--inset); box-shadow: var(--shadow-hairline); }
+.public-role { font-size: var(--share-caption); color: var(--ink-2); padding-top: var(--share-space-xs); }
+.public-assistant .public-role { color: var(--ai); }
+.public-message > .share-work { grid-column: var(--share-work-column); }
+.public-state { padding: var(--share-space-xl); }
+.public-footer { color: var(--ink-3); font-size: var(--share-caption); border-top: var(--share-line) solid var(--line); margin-top: var(--share-space-xxl); padding-top: var(--share-space-xl); }
+.public-button { width: fit-content; min-height: var(--share-tap); border: var(--share-line) solid var(--line-strong); border-radius: var(--share-control-radius); padding: var(--share-space-s) var(--share-space-l); background: var(--surface); color: var(--ink); font: inherit; white-space: nowrap; cursor: pointer; }
+.public-button:hover { background: var(--hover); }
+.public-button:disabled { opacity: var(--share-disabled); cursor: default; }
+button:focus-visible, summary:focus-visible { outline: var(--share-focus) solid var(--accent-ink); outline-offset: var(--share-focus); }
+.public-sensitive { color: var(--orange); font-size: var(--share-caption); font-weight: var(--share-emphasis); padding: var(--share-space-s) var(--share-space-m); border-radius: var(--share-control-radius); background: var(--inset); box-shadow: var(--shadow-hairline); width: fit-content; max-width: 100%; }

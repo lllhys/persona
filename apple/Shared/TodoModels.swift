@@ -83,6 +83,7 @@ nonisolated extension TaskState {
         case .needsYou: StateName.needsYou.text
         case .unread: StateName.unread.text
         case .working: StateName.working.text
+        case .waiting: StateName.taskWaiting.text
         case .followup: StateName.followUp.text
         case .notStarted: String(localized: "Not started")
         case .failed: String(localized: "Didn't Start")
@@ -94,10 +95,11 @@ nonisolated extension TaskState {
         case .needsYou: 0
         case .unread: 1
         case .working: 2
-        case .followup: 3
-        case .notStarted: 4
-        case .done: 5
-        case .failed: 6
+        case .waiting: 3
+        case .followup: 4
+        case .notStarted: 5
+        case .done: 6
+        case .failed: 7
         }
     }
 
@@ -106,7 +108,7 @@ nonisolated extension TaskState {
         case .done: StatusPalette.idle
         case .needsYou: StatusPalette.needsYou
         case .unread: StatusPalette.unread
-        case .working: StatusPalette.working
+        case .working, .waiting: StatusPalette.working
         case .followup: StatusPalette.idle
         case .notStarted: StatusPalette.idle
         case .failed: StatusPalette.idle
@@ -243,17 +245,21 @@ nonisolated enum TodosLogic {
      * 2. Needs you: an attached agent needs the user (a question or an approval)
      * 3. Unread: an attached agent finished and the user has not looked yet
      * 4. Working: an attached agent is working or starting
+     * 4.5 Waiting: an attached agent ended its turn but waits to be woken (`Session.waitsToBeWoken`, #3274)
      * 5. Follow-up: every attached agent is idle (seen, not running, or failed to start)
      * 6. Not started: no attached agent
      */
     public static func todoStatus(_ todo: TodoItem, lookup: SessionLookup? = nil) -> TaskState {
-        let states: [AgentState] = todo.agents.filter { $0.releasedAt == nil }.map { agent in
+        var waiting = false
+        let states: [AgentState] = todo.agents.filter { $0.releasedAt == nil }.compactMap { agent in
             if let error = agent.startError, !error.isEmpty { return .idle }
             guard let session = lookup?(agent.machineID, agent.sessionID) else { return .offline }
             if session.state == .needsYou || session.state == .unread { return session.state }
-            return session.starting == true ? .working : session.state
+            if session.starting == true { return .working }
+            if session.waitsToBeWoken { waiting = true; return nil }
+            return session.state
         }
-        return TaskState(todo: todo, agents: states)
+        return TaskState(todo: todo, agents: states, waiting: waiting)
     }
 
     /**

@@ -21,8 +21,8 @@ val Session.canTerminal: Boolean get() = !hasSource || capabilities?.terminal ==
 /** Join a Codex app-server thread live: offered until it is attached. */
 val Session.canAttach: Boolean get() = hasSource && capabilities?.attach == true && !attached
 
-/** Permission mode and effort change on a running Claude session the phone may write to, Persona's included. */
-val Session.canChangeModes: Boolean get() = isLive && isClaude && canSend
+/** A declared modes capability wins; an older hub that omits it keeps the agent-based rule. */
+val Session.canChangeModes: Boolean get() = isLive && canSend && (capabilities?.modes ?: isClaude)
 /**
  * Only the effort changes, among the session's own [Session.efforts]: a Codex thread the hub drives through its
  * app-server (the hub lists the levels only then; the iOS `Session.setsEffortOnly`).
@@ -87,10 +87,13 @@ fun Session.resumeCommand(cwd: String = this.cwd, id: String = sourceThreadId?.t
     return (cwd.takeIf(String::isNotBlank)?.let { "cd -- ${quote(it)} && " } ?: "") + "$command ${quote(id)}"
 }
 
-/** Where an agent was opened (#2526): a botmux session is a Feishu group's topic, a herdr pane a terminal. */
+/** Where an agent was opened (#2526): a botmux session is a Feishu group's topic, a herdr or Tern pane a terminal. */
 enum class AgentSource { Feishu, Terminal }
 
-/** The terminal host a pane id names (`orca:…`, `botmux:…`), herdr for a bare id; empty without a pane (web `sessionHost`). */
+/**
+ * The terminal host a pane id names (`orca:…`, `tern:…`, `botmux:…`), herdr for a bare id; empty without a pane (web
+ * `sessionHost`).
+ */
 val Session.hostKind: String
     get() {
         val pane = paneId?.takeIf(String::isNotEmpty) ?: return ""
@@ -98,14 +101,17 @@ val Session.hostKind: String
         return if (kind in HOST_KINDS) kind else "herdr"
     }
 val Session.isBotmux: Boolean get() = hostKind == "botmux"
+/** A pane of Tern: its tab is renamed in Tern, not herdr (the rename dialogs say so, as on iOS). */
+val Session.isTern: Boolean get() = hostKind == "tern"
 /** Null for the rest (Orca, runtimes, apps), which carry no source label (iOS `Session.source`). */
 val Session.agentSource: AgentSource?
     get() = when (hostKind) {
         "botmux" -> AgentSource.Feishu
-        "herdr", "herdr-core" -> AgentSource.Terminal
+        "herdr", "herdr-core", "tern" -> AgentSource.Terminal
         else -> null
     }
-private val HOST_KINDS = setOf("orca", "herdr-core", "botmux")
+// The kinds a pane id may be prefixed with: keep in step with Kinds in server/internal/host/host.go.
+private val HOST_KINDS = setOf("orca", "herdr-core", "tern", "botmux")
 
 val READ_ONLY = CoreText.of(Key.SessionReadOnly)
 private const val READ_ONLY_PREFIX = "仅查看：" // i18n-ignore: the node's prefix it strips

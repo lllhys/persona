@@ -68,6 +68,7 @@
     <string name="agents_range_running">実行中</string>
     <string name="agents_range_all">すべて</string>
     <string name="agents_range_history">履歴</string>
+    <string name="agents_grouping_current">グループ化：%1$s</string>
     <string name="agents_grouping_repo">リポジトリ別</string>
     <string name="agents_grouping_state">状態別</string>
     <string name="agents_grouping_todo">ToDo別</string>
@@ -232,9 +233,12 @@
     <string name="agents_dialog_delete">削除</string>
     <string name="agents_dialog_rename_space">スペース名を変更</string>
     <string name="agents_dialog_rename_space_text">herdrのワークスペース名も変更されます。</string>
+    <string name="agents_dialog_rename_space_text_tern">Ternのこのセッション名も変更します。</string>
     <string name="agents_dialog_rename_text">タブ名はherdrに同期されます。セッション名はClaudeの/renameで変更され、Macのclaude --resumeにも表示されます。</string>
+    <string name="agents_dialog_rename_text_tern">タブ名はTernに同期されます。セッション名はClaudeの/renameで変更され、Macのclaude --resumeにも表示されます。</string>
     <string name="agents_dialog_save">保存</string>
     <string name="agents_dialog_tab_name">タブ名（herdrのタブ）</string>
+    <string name="agents_dialog_tab_name_tern">タブ名（Ternのタブ）</string>
     <string name="agents_dialog_space_name">スペース名</string>
     <string name="agents_dialog_session_name">セッション名</string>
     <string name="agents_space_actions">スペースの操作</string>

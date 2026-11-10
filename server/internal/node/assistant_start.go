@@ -184,9 +184,9 @@ func (n *Node) spawnAssistant(id, cwd, launcher string, resume, spare bool, opti
 	return n.spawnClaude(id, cwd, launcher, resume, spare, options...)
 }
 
-func (n *Node) claudeAssistantMCPAndTools(id, cwd string) (mcpJSON string, toolFlags []string) {
+func (n *Node) claudeAssistantMCPAndTools(id, cwd string, legacyMCP bool) (mcpJSON string, toolFlags []string) {
 	if guest := n.guestOf(id); guest != nil { // assistant_guest.go: nothing else of the below
-		return n.guestMCPAndTools(id, guest)
+		return n.guestMCPAndTools(id, guest, legacyMCP)
 	}
 	// Per-process MCP config: the assistant-only tools (ask_user, agents_*, lark_*…) and the conversation they act for.
 	servers := map[string]any{"persona": map[string]any{
@@ -197,9 +197,9 @@ func (n *Node) claudeAssistantMCPAndTools(id, cwd string) (mcpJSON string, toolF
 	for name, s := range extra {
 		servers[name] = s
 	}
-	mcp, _ := json.Marshal(map[string]any{"mcpServers": compat.AddMCPAliases(servers)})
+	mcp, _ := json.Marshal(map[string]any{"mcpServers": compat.MCPRegistrationServers(servers, legacyMCP)})
 	allow = append(allow, healthReportRules(cwd)...) // healthdeny.go
-	toolFlags = []string{"--mcp-config", string(mcp), "--allowedTools", strings.Join(append([]string{n.assistantTools()}, allow...), ",")}
+	toolFlags = []string{"--mcp-config", string(mcp), "--allowedTools", strings.Join(append([]string{n.assistantTools(legacyMCP)}, allow...), ",")}
 	// One --disallowedTools with a word per rule (it takes several, up to the next flag): a path may hold a comma.
 	if len(deny) > 0 {
 		deny = []string{strings.Join(deny, ",")}
@@ -254,7 +254,10 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 	if hooks != "" {
 		args = append(args, "--plugin-dir", hooks)
 	}
-	_, toolFlags := n.claudeAssistantMCPAndTools(id, cwd)
+	// Snapshot the connection capability once for both runtime paths and their permission lists.
+	// Resumes retain aliases because their history may contain calls under the old namespace.
+	legacyMCP := resume || !n.hubSupportsPersonaContracts()
+	_, toolFlags := n.claudeAssistantMCPAndTools(id, cwd, legacyMCP)
 	args = append(args, toolFlags...)
 	model := execution.Model
 	if model == "" && resume && execution.Fingerprint != "" && n.guestOf(id) == nil {
@@ -289,9 +292,11 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 		releaseGates()
 		gateEnv, releaseGates = nil, func() {} // no commands to gate: it has no Bash
 	}
+	cleanupMCP := func() {}
 	started := false
 	defer func() {
 		if !started {
+			cleanupMCP()
 			releaseGates()
 		}
 	}()
@@ -311,9 +316,9 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 		mcpConfig := map[string]any{"mcpServers": map[string]any{"persona": map[string]any{
 			"command": n.bin, "args": []string{"mcp"}, "env": map[string]string{"PERSONA_ASSISTANT": "1", "PERSONA_SESSION_ID": id},
 		}}}
-		compat.AddMCPAliases(mcpConfig["mcpServers"].(map[string]any))
+		compat.MCPRegistrationServers(mcpConfig["mcpServers"].(map[string]any), legacyMCP)
 		start := sdkStart{id: id, cwd: cwd, model: model, permissionMode: startMode, resume: resume, mcp: mcpConfig,
-			allowedTools: strings.Join(append([]string{n.assistantTools()}, healthReportRules(cwd)...), ","), deny: n.healthDenyRules(cwd), settings: settings, plugin: hooks, compaction: &compaction}
+			allowedTools: strings.Join(append([]string{n.assistantTools(legacyMCP)}, healthReportRules(cwd)...), ","), deny: n.healthDenyRules(cwd), settings: settings, plugin: hooks, compaction: &compaction}
 		var err error
 		if cmd, first, err = n.sdkCommand(bridge, launcher, start, env); err != nil {
 			return nil, err
@@ -322,6 +327,10 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 		shell, err := interactiveShell()
 		if err != nil {
 			return nil, err
+		}
+		args, cleanupMCP, err = assistantCLIMCPFlags(args)
+		if err != nil {
+			return nil, fmt.Errorf("prepare assistant MCP config: %w", err)
 		}
 		cmd = n.assistantCLICommand(shell, launcher, cwd, args, env)
 	}
@@ -348,7 +357,7 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 	started = true
 	p := &assistantProc{id: id, agent: "claude", launcher: launcher, cwd: cwd, cmd: cmd, stdin: stdin, exited: make(chan struct{}), ready: make(chan struct{}),
 		stderrDone: make(chan struct{}), born: time.Now(), lastActive: time.Now(), mode: startMode, canBypass: startMode == proto.ModeBypass, model: execution, fingerprint: n.executionFingerprint(launcher, execution),
-		instructions: instructions, fallback: fallback, compactIdleAt: compaction.idle(), declaredWindow: compaction.declared()}
+		instructions: instructions, fallback: fallback, personaMCPOnly: !legacyMCP, compactIdleAt: compaction.idle(), declaredWindow: compaction.declared()}
 	if first != nil {
 		p.runtime = proto.AssistantRuntimeAgentSDK
 		if err := p.write(first); err != nil {
@@ -369,6 +378,7 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 	go n.readAssistant(p, stdout)
 	go func() {
 		_ = cmd.Wait()
+		cleanupMCP()
 		releaseGates()
 		liveAssistants.Delete(p)
 		close(p.exited)
@@ -381,11 +391,17 @@ func (n *Node) spawnClaude(id, cwd, launcher string, resume, spare bool, options
 		if wasSpare {
 			n.spare = nil
 		}
+		var recovery *assistantTurnRecovery
 		if n.procs[id] == p {
 			delete(n.procs, id)
+			recovery = n.recoveries[id] // a current process that exits without a result must not leave a working placeholder
 		}
 		n.mu.Unlock()
 		if wasSpare {
+			return
+		}
+		if recovery != nil {
+			n.finishAssistantRecoveryOnExit(p, recovery)
 			return
 		}
 		n.emitDelta(id, "")

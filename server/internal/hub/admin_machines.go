@@ -43,7 +43,7 @@ type adminMachine struct {
 	HubID        string             `json:"hub_id,omitempty"`  // the hub it is reached through now
 	Paths        []pathInfo         `json:"paths,omitempty"`   // every way to it (devices/paths.go)
 	// State: active (running), pending_add (in hub.json, connects after a restart), pending_remove (gone from
-	// hub.json, still running until the restart).
+	// hub.json, still running until the restart). One its manager keeps is out of hub.json and active (machines_kept.go).
 	State string `json:"state"`
 }
 
@@ -72,7 +72,9 @@ func (h *Hub) adminMachines() []adminMachine {
 		listed[m.ID] = true
 		state := "active"
 		mm := h.localMachine(m.ID)
-		if disk != nil && !onDisk[m.ID] && (mm == nil || !mm.derived) {
+		// Gone from hub.json: removed there, until the restart. Not one its manager keeps, which left hub.json for
+		// that manager's own list (machines_kept.go), nor one only a member hub has.
+		if disk != nil && !onDisk[m.ID] && h.keptBy(m.ID) == "" && (mm == nil || !mm.derived) {
 			state = "pending_remove"
 		}
 		a := adminMachineFrom(m, state)

@@ -62,6 +62,10 @@ export interface ConnectorPrompt {
   user_code?: string;
   interval?: number;
   hint?: string;
+  /** Where this step's hint points at (the provider's console, to create the app); the page opens it in a new tab. */
+  link?: string;
+  /** link's button label (the hub localizes it). */
+  link_text?: string;
   error?: string;
   done?: boolean;
   account?: string;

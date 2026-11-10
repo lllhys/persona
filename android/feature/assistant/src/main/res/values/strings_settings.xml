@@ -3,7 +3,7 @@
 <resources>
     <!-- A name the user or the hub gave, shown as it is. -->
     <string name="assistant_settings_plain" translatable="false">%1$s</string>
-    <string name="assistant_settings_title">Assistant</string>
+    <string name="assistant_settings_title">Assistant profile</string>
     <string name="assistant_settings_summary">Persona runs on “%1$s”.</string>
     <string name="assistant_settings_load_failed">Can\'t read the assistant\'s settings. Check the connection, then pull down to retry.</string>
     <string name="assistant_settings_retry">Retry</string>
@@ -37,7 +37,7 @@
     <string name="assistant_settings_you_header">About you</string>
     <string name="assistant_settings_notes">About me</string>
     <string name="assistant_settings_notes_filled">Filled in</string>
-    <string name="assistant_settings_notes_from_hub">From manager config</string>
+    <string name="assistant_settings_notes_from_hub">From assistant config</string>
     <string name="assistant_settings_notes_empty">Not filled in</string>
     <string name="assistant_settings_memory">Memory</string>
     <string name="assistant_settings_memory_none">None</string>
@@ -67,7 +67,7 @@
     <string name="assistant_settings_reach_phone_subtitle">Asks you and notifies you on your phone</string>
     <string name="assistant_settings_reach_caption">Anything that acts on your behalf, like sending a Lark message, sending mail or adding an event, asks you on your phone first.</string>
     <string name="assistant_settings_notes_intro">Tell Persona about yourself: where your code lives, which tools you use for work data, machines or folders to leave alone, how you like updates. It reads this at the start of every new chat; changes apply to new chats.</string>
-    <string name="assistant_settings_notes_hub_notice">Persona is reading what the manager\'s config file (manager.json) says for now. Once you save here, this takes over.</string>
+    <string name="assistant_settings_notes_hub_notice">Persona is reading what the assistant\'s config file (manager.json) says for now. Once you save here, this takes over.</string>
     <string name="assistant_settings_notes_placeholder">For example: code is under ~/code; draft my weekly report before Friday evening.</string>
     <string name="assistant_settings_notes_unsaved_title">About me isn\'t saved</string>
     <string name="assistant_settings_notes_unsaved_text">Save your changes before leaving?</string>

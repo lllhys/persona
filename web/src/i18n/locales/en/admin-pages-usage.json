@@ -8,7 +8,7 @@
   "minutes": "{count} min",
   "settings_footer": "An account seen both on a computer and at a gateway shows once, with both sources named.",
   "sources": "Sources ({count})",
-  "footer": "The key lives only in the manager's manager.json on the hub's machine (mode 0600); this page and the API never send it back, and it has to be typed again if the address changes. A read sends two read-only requests: the account list and the stored allowances (refresh=false).",
+  "footer": "The key lives only in the assistant's manager.json on the hub's machine (mode 0600); this page and the API never send it back, and it has to be typed again if the address changes. A read sends two read-only requests: the account list and the stored allowances (refresh=false).",
   "empty_title": "No sources yet",
   "empty_detail": "Add a relay or another compatible gateway and its accounts show up in the sidebar's usage bars. With no sources everything stays as it was.",
   "status_off": "Off",

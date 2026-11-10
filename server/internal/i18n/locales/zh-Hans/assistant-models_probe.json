@@ -15,6 +15,7 @@
   "status_other": "网关返回 {status}",
   "said": "{head}：{said}",
   "models_unreadable": "网关的模型列表格式认不出来",
+  "models_not_found": "找不到模型列表接口（404），不代表连接测试失败。可以保留已有模型或手动填写模型 ID",
   "models_pagination": "无法读完模型列表：分页无效或页数过多",
   "response_unfinished": "Responses 请求未成功完成"
 }

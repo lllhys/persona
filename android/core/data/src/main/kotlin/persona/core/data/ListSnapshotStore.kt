@@ -18,9 +18,9 @@ import kotlinx.serialization.json.decodeToSequence
 /** Atomic, pairing-scoped snapshots. Failed reads never delete or replace the original file. */
 class ListSnapshotStore(private val directory: File) {
     private val lock = Mutex()
-    suspend fun read(key: String): String? = withContext(Dispatchers.IO) { lock.withLock {
+    suspend fun read(key: String, maxBytes: Long = Long.MAX_VALUE): String? = withContext(Dispatchers.IO) { lock.withLock {
         val file = File(directory, snapshotHash(key))
-        if (file.exists()) file.readText() else null
+        if (file.exists() && file.length() <= maxBytes) file.readText() else null
     } }
     /** Decode only the first window, including when an older app left a full history snapshot. */
     @OptIn(ExperimentalSerializationApi::class)
@@ -49,9 +49,10 @@ class ListSnapshotStore(private val directory: File) {
 internal fun snapshotHash(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
-internal suspend inline fun <reified T> ListSnapshotStore?.restore(key: String): T? {
+/** A file over [maxBytes] is skipped before it is read, and left as it is. */
+internal suspend inline fun <reified T> ListSnapshotStore?.restore(key: String, maxBytes: Long = Long.MAX_VALUE): T? {
     var result: T? = null
-    quietly { this?.read(key)?.let { result = JsonCodec.decodeFromString<T>(it) } }
+    quietly { this?.read(key, maxBytes)?.let { result = JsonCodec.decodeFromString<T>(it) } }
     return result
 }
 

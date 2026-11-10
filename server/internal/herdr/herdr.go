@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,8 @@ type Client struct {
 	trips episode
 	// noServer backs off the CLI while it, too, finds no server (call).
 	noServer cliBackoff
+	// lists keeps a `herdr session list` that found nothing running while that cannot have changed (sessionlist.go).
+	lists listMemo
 	// snapshotCut is separate from transport failures: successful smaller calls do not end a truncation streak.
 	snapshotCut atomic.Bool
 	now         func() time.Time // the clock note reads; nil: time.Now (tests set it)
@@ -268,20 +271,38 @@ func (c *Client) rpcOnce(ctx context.Context, method string, params any, out any
 	if params == nil {
 		params = struct{}{}
 	}
-	id := fmt.Sprintf("persona:%d", c.seq.Add(1))
-	req, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
+	req, err := json.Marshal(request{ID: "persona:" + strconv.FormatInt(c.seq.Add(1), 10), Method: method, Params: params})
 	if err != nil {
 		return err
 	}
 	if _, err := conn.Write(append(req, '\n')); err != nil {
 		return fmt.Errorf("herdr %s: %w", method, err)
 	}
-	line, err := readLine(bufio.NewReaderSize(conn, 64<<10), maxLine)
+	r := answerReaders.Get().(*bufio.Reader)
+	r.Reset(conn)
+	line, err := readLine(r, maxLine) // a copy: r goes back to the pool
+	r.Reset(nil)
+	answerReaders.Put(r)
 	if err != nil {
 		return fmt.Errorf("herdr %s: %w", method, err)
 	}
 	return decodeResponse(method, line, out)
 }
+
+// request is one call as herdr reads it: the bytes json.Marshal made of a map of the same three keys (sorted, so in this
+// order), without building the map.
+type request struct {
+	ID     string `json:"id"`
+	Method string `json:"method"`
+	Params any    `json:"params"`
+}
+
+// answerReaders are the readers calls read herdr's answer through. Every call is a connection of its own, and a node
+// makes about 15 a minute for each resting Claude (pane.read every 5 s, pane.process_info every 15 s): a new 64 KiB
+// reader each was most of what the node allocated at rest. 16 KiB holds a pane read or process info whole; a bigger
+// answer (a snapshot) only grows the copy readLine makes. Small, because the resting reads of many agents come due
+// together and the pool keeps a reader for each.
+var answerReaders = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, 16<<10) }}
 
 // ErrTruncated: herdr's answer stopped short. herdr 0.9.4 on macOS writes an answer to its socket in one go, and
 // past the socket's 8192-byte buffer the rest is lost: a big answer (60 colored lines of a wide pane, a session

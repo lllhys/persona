@@ -38,6 +38,9 @@ type quickMeta struct {
 	model    string
 	surface  string // the client it runs in (transcript.Meta.Surface)
 	lastText string
+	// answer is the latest turn's answer from its first words on (transcript.Meta.TurnAnswer); "" when the tail read
+	// held none of its words.
+	answer string
 	// asks is what lastText asks the user (transcript.AskOf), when no message came in after it (#5096).
 	asks string
 	// lastTextAt is when the agent last wrote text (botmux's sentinel included: it said something, it is no probe).
@@ -269,6 +272,9 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 	}
 	rewound := tail.Settle(&tm)
 	m.title, m.cwd, m.model, m.lastText, m.first, m.activity, m.queue = tm.Title, tm.Cwd, tm.Model, tm.LastText, first, tm.LastActivity, tm.Queue
+	if tm.LastText != "" {
+		m.answer = tm.TurnAnswer()
+	}
 	m.start = start
 	if identity.IsAssistantDir(start) || start != "" && identity.IsAssistantDir(m.cwd) {
 		// An assistant or health conversation is where it started: its space, CLAUDE.md, memory and resume project.
@@ -289,7 +295,7 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 		if !rewound && prev.size > 0 && prev.size >= off && prev.size <= st.Size() {
 			// Nothing written since the last read is out of the tail: no newer words. Not after a turn in the tail was
 			// gone back over: the last read's words may be that turn's.
-			m.lastText = prev.lastText
+			m.lastText, m.answer = prev.lastText, prev.answer
 		} else {
 			m.lastText = lastWordsBefore(f, off)
 		}

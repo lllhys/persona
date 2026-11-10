@@ -10,7 +10,8 @@ import { usageLimitLabel } from "../lib/usage-limit";
 import { plainMarkdown } from "../lib/plain-markdown";
 import { composing } from "../lib/send-history";
 import { useAgentSessions } from "../lib/sessions";
-import { dropTodo, refresh, refreshTodos, useStore } from "../lib/store";
+import { useScoped } from "../lib/current-assistant";
+import { dropTodo, refresh, refreshTodos, useStore, withTaskRows } from "../lib/store";
 import {
   addTodoDecision,
   createTodo,
@@ -62,10 +63,11 @@ import { useFolded } from "../lib/use-folded";
 import { stateName } from "../lib/state-labels";
 import { answeredLookup } from "./assistant/answered-lookup";
 import { Empty, Segmented } from "./assistant/parts";
+import { OfflineState, useShownOffline } from "./ManagerParts";
 import { TodoCalendar, type CalendarSlot } from "./TodoCalendar";
 import { dayKey, isCalendarMode, parseDayKey, startOfDay, type CalendarMode } from "../lib/todo-calendar";
 import type { Route } from "../lib/router";
-import { ReviewBadge, ReviewChecklist } from "./assistant/Supervision";
+import { LatestReport, ReviewBadge, ReviewChecklist } from "./assistant/Supervision";
 import { TodoStageBar } from "./TodoStageBar";
 import { TodoAskLine, TodoAskPanel } from "./TodoAsk";
 import { TaskCompletionCheck } from "./TaskCompletionCheck";
@@ -117,15 +119,26 @@ export function TodosView({
   onToggleSidebar?: () => void;
 }) {
   const owner = useSyncExternalStore(subscribeCredentialOwner, credentialOwner, credentialOwner);
-  const todos = useStore((s) => s.todos);
+  // with several assistants, the current one's to-dos (docs/assistant/managers.md "Clients"); a link to another assistant's
+  // to-do still opens it, without switching
+  const everyTodo = useStore((s) => s.todos);
+  const ownTodos = useScoped(everyTodo);
+  const todos = useMemo(() => {
+    const linked = selectedId && !ownTodos.some((x) => x.id === selectedId) ? everyTodo.filter((x) => x.id === selectedId) : [];
+    return linked.length ? [...ownTodos, ...linked] : ownTodos;
+  }, [everyTodo, ownTodos, selectedId]);
   const todosLoaded = useStore((s) => s.todosLoaded);
   const todosError = useStore((s) => s.todosError);
+  // the current assistant offline (several assistants): the hub's merged list leaves it out, so none here means it
+  // couldn't answer; the page says so instead of the empty one
+  const offline = useShownOffline();
   const machines = useStore((s) => s.machines);
   const interactions = useStore((s) => s.interactions);
   const allSessions = useAgentSessions();
   const answered = useStore((s) => s.answered);
   // a card answered here stops its agent's "Needs you" at once, not at the hub's next push (#4186)
-  const lookup = useMemo(() => answeredLookup(allSessions, interactions, answered), [allSessions, interactions, answered]);
+  const taskRows = useStore((s) => s.taskRows);
+  const lookup = useMemo(() => answeredLookup(withTaskRows(makeSessionLookup(allSessions), taskRows), interactions, answered), [allSessions, taskRows, interactions, answered]);
 
   const [activeId, setActiveId] = useState<string | undefined>(selectedId);
   const [search, setSearch] = useState("");
@@ -367,7 +380,11 @@ export function TodosView({
         </div>
       </header>
 
-      {calendarOn ? (
+      {calendarOn && offline && todosLoaded && todos.length === 0 ? (
+        <div className="flex min-h-0 flex-1 items-start justify-center bg-page">
+          <OfflineState offline={offline} className="py-14" />
+        </div>
+      ) : calendarOn ? (
         <div className="flex min-h-0 flex-1">
           <div className={cx("flex min-h-0 min-w-0 flex-1 flex-col bg-page", selectedTodo && "max-md:hidden")}>
             <TodoCalendar
@@ -470,7 +487,9 @@ export function TodosView({
                 {todosError}
               </Empty>
             ) : filteredUncompleted.length === 0 && filteredCompleted.length === 0 ? (
-              search.trim() ? (
+              offline && todos.length === 0 ? (
+                <OfflineState offline={offline} ring="ring-surface" className="py-14" />
+              ) : search.trim() ? (
                 <Empty icon="search" title={t("todos.no_match_title")}>
                   {t("todos.no_match_body")}
                 </Empty>
@@ -886,6 +905,7 @@ const DOT_STATE: Record<TodoStatus, AgentState> = {
   usage_limit: "idle",
   unread: "unread",
   working: "working",
+  waiting: "working",
   follow_up: "idle",
   done: "offline",
   not_started: "offline",
@@ -1340,7 +1360,7 @@ function TodoDetail({
         ? "idle"
       : shown === "unread"
         ? "unread"
-        : shown === "working"
+        : shown === "working" || shown === "waiting"
           ? "working"
           : shown === "follow_up"
             ? "idle"
@@ -1407,9 +1427,10 @@ function TodoDetail({
       {/* Due date, reminder, priority (#1683) */}
       <TodoPlanEditor todo={todo} />
       <ReviewChecklist todo={todo} />
+      <LatestReport todo={todo} />
 
-      {/* Stage Bar (#2776): progress from plan to verified, from the hub's todo; nothing on hubs that don't send it. */}
-      <TodoStageBar stage={todo.stage} prURL={todo.pr_url} className="mt-4" />
+      {/* Code task stages from the hub; general tasks show only their PR/MR link, when present. */}
+      <TodoStageBar stage={todo.stage} stageKind={todo.stage_kind} prURL={todo.pr_url} className="mt-4" />
 
       {todo.origin && <TaskCompletionCheck todo={todo} />}
 

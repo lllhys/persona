@@ -110,7 +110,8 @@ describe("an inbox item's chat of another manager", () => {
     await act(async () => ask.click());
     await vi.waitFor(() => expect(calls.some((c) => c.url.endsWith("/assistant/conversations"))).toBe(true));
     expect(calls.find((c) => c.url.endsWith("/assistant/conversations"))!.header).toBe("m-1");
-    expect(chosenManager()).toBe("m-1");
+    // the summary opens as itself: the current assistant stays
+    expect(chosenManager()).toBeNull();
     // the conversation's own requests go there too
     expect(managerHeaderFor("/assistant/conversations/s-sum/feed")).toBe("m-1");
   });

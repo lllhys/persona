@@ -31,7 +31,7 @@ export function upsertTaskCards(previous: TaskCardMetadata[], incoming?: TaskCar
 
 /** Legacy hubs keep their audit events. Fold those events into the same plan-slot identities. `everyTodo`: the main
  *  conversation watches every task (docs/assistant/unified-entry.md), so each to-do gets a row there, whatever its origin,
- *  and its Progress counts what the To-dos page counts (#3331). */
+ *  and its In progress entry counts what the To-dos page counts (#3331). */
 export function taskCardSlots(conversation: string, metadata: TaskCardMetadata[], feed: FeedItem[], plans: Record<string, TaskPlan>, todos: Todo[], everyTodo = false): TaskCardMetadata[] {
   const slots = new Map<string, TaskCardMetadata>();
   const linked = new Map<string, string>();
@@ -106,15 +106,11 @@ export function taskMeter(todo?: Todo, lead?: Session): { value: number; total: 
   return { value: counts.value, total: counts.total };
 }
 
-/** Where a Progress row stands, by the To-dos page's rule (lib/todo-triage `todoBucket`, #3331): a task is open, shelved
- *  (folded, not counted) or closed (a task the hub no longer sends counts as closed). A plan task with no to-do yet is
- *  `start` while its plan waits for the user's Start: the To start entry lists and counts it, so Progress does not. */
+/** Where an In progress row stands, by the To-dos page's rule (lib/todo-triage `todoBucket`, #3331): a task is open,
+ *  shelved (folded, not counted) or closed (a task the hub no longer sends counts as closed). A plan task with no to-do
+ *  yet is `start` while its plan waits for the user's Start: its plan is one Needs you row (#3387), so In progress has
+ *  none of it. */
 export function cardBucket(card: TaskCardMetadata, todo: Todo | undefined, plans: Record<string, TaskPlan>, lookup: SessionLookup | undefined, now: number, restoredAt = 0): TodoBucket | "start" {
   if (card.todo_id) return todo ? todoBucket(todo, lookup, now, restoredAt) : "closed";
   return card.plan_id && plans[card.plan_id]?.state === "open" ? "start" : "closed";
-}
-
-/** How many tasks of a conversation's plans wait for the user's Start (the plans still open). */
-export function tasksToStart(conversation: string, plans: Record<string, TaskPlan>): number {
-  return Object.values(plans).reduce((n, plan) => n + (plan.conversation === conversation && plan.state === "open" ? plan.tasks.length : 0), 0);
 }
