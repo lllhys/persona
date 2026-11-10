@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
@@ -82,10 +83,16 @@ class ExtensionShowcaseShotsTest {
 
     private fun out(): File = File(System.getProperty("persona.shots") ?: "build/extension-showcase-shots").also { it.mkdirs() }
 
-    private fun capture(name: String) {
+    private fun capture(name: String, page: ExtensionView) {
         rule.waitForIdle()
-        // markdown is parsed off the main thread (the renderer's own coroutine), which waitForIdle does not wait for
-        if (name.contains("markdown") || name.contains("detail")) repeat(3) { Thread.sleep(200); rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
+        // markdown is parsed off the main thread (the renderer's own coroutine), which waitForIdle does not wait for:
+        // wait until each block's last paragraph is drawn (it was a fixed 3 x 200 ms sleep). The ceiling only bounds a
+        // parse that never ends; a busy runner may take longer than the old sleep, which then saved a half-drawn page.
+        if (name.contains("markdown") || name.contains("detail")) {
+            val words = page.sections.flatMap { it.items }.filter { it.type == "markdown" }.map { lastWords(it.text.orEmpty()) }
+            rule.waitUntil(timeoutMillis = 5_000) { words.all { rule.onAllNodes(hasText(it, substring = true)).fetchSemanticsNodes().isNotEmpty() } }
+            rule.waitForIdle()
+        }
         val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
         val background = bitmap.getPixel(1, 1)
         var other = 0
@@ -93,6 +100,10 @@ class ExtensionShowcaseShotsTest {
         File(out(), "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue("$name drew nothing", other > 50)
     }
+
+    /** The first words of a markdown block's last paragraph (`**Item 03**\n\nNote 3.` -> `Note 3`): drawn once the block is parsed. */
+    private fun lastWords(markdown: String): String =
+        Regex("[\\p{L}\\p{N}][\\p{L}\\p{N} ]*").find(markdown.trim().substringAfterLast("\n\n"))!!.value.trim()
 
     private fun compact(name: String) = name == "card" || name.startsWith("card-") || name.startsWith("widget-") || name.startsWith("shortcut-")
 
@@ -131,7 +142,7 @@ class ExtensionShowcaseShotsTest {
         }
         for (s in AppStyle.entries) for (d in listOf(false, true)) for (p in pages.keys) {
             name = p; dark = d; style = s
-            capture("showcase-$p-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+            capture("showcase-$p-${s.name.lowercase()}-${if (d) "dark" else "light"}", pages.getValue(p))
         }
     }
 }
