@@ -143185,6 +143185,121 @@
           }
         }
       }
+    },
+    "Waiting for the agents on this computer to go idle…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for the agents on this computer to go idle…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このコンピューターのエージェントがアイドルになるのを待っています…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待这台电脑上的 Agent 空闲…"
+          }
+        }
+      }
+    },
+    "Sending Persona to this computer…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending Persona to this computer…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personaをこのコンピューターに送信しています…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在把 Persona 传到这台电脑…"
+          }
+        }
+      }
+    },
+    "Restarting Persona on this computer…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restarting Persona on this computer…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このコンピューターのPersonaを再起動しています…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在重启这台电脑上的 Persona…"
+          }
+        }
+      }
+    },
+    "Waiting for Persona to reconnect and confirm its version…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for Persona to reconnect and confirm its version…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personaが再接続してバージョンを確認するのを待っています…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待 Persona 重新连接并确认版本…"
+          }
+        }
+      }
+    },
+    "Not connected yet: version mismatch. Reconnect first; then Redeploy updates the node to the hub's version" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not connected yet: version mismatch. Reconnect first; then Redeploy updates the node to the hub's version"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ接続できません。バージョンが一致しません。先に再接続してください。その後「再デプロイ」でノードをハブと同じバージョンに更新できます"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没连上，版本不一致。先重新连接，之后用「重新部署」把 node 更新到和 hub 同一版"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
