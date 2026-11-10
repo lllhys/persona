@@ -90,19 +90,37 @@ func (b *inboxBook) applyMigrated(id string, things []connector.InboxThing, now 
 			continue
 		}
 		if open != nil {
+			wrote := false
 			switch {
 			case open.Last != t.Last:
 				prev := seenOf(open)
 				b.roundWrite(open)
+				wrote = true
 				fillMigrated(open, t)
 				b.noteReceived(open, prev, nil)
+				if t.Tier != "" {
+					b.noteTriaged(open)
+				}
 				open.Read = false
 				changed = append(changed, open)
 			case blocksDiffer(open, t.Extra):
 				// The same move, read further (a chat's read position) or read again (a document's rows): blocks only.
 				b.roundWrite(open)
+				wrote = true
 				setBlocks(open, t.Extra)
 				changed = append(changed, open)
+			}
+			if t.Tier != "" && (open.Tier != string(t.Tier) || open.Reason != t.Why) {
+				// The connector's rules decide this one (a new move, or the rules changed since it was tiered): it is
+				// tiered here, not by the model, as a generic connector item is (fillMigrated, applyConnector).
+				if !wrote {
+					b.roundWrite(open)
+				}
+				setRuleTier(open, t)
+				b.noteTriaged(open)
+				if !containsItem(changed, open) {
+					changed = append(changed, open)
+				}
 			}
 			index.note(open) // its blocks may be another thread's now
 			if t.Read && !open.Read {
@@ -131,6 +149,9 @@ func (b *inboxBook) applyMigrated(id string, things []connector.InboxThing, now 
 		}
 		fillMigrated(it, t)
 		b.noteReceived(it, inboxSeen{}, nil)
+		if t.Tier != "" {
+			b.noteTriaged(it)
+		}
 		b.add(id, it)
 		b.roundNew(it)
 		index.note(it)
@@ -139,12 +160,17 @@ func (b *inboxBook) applyMigrated(id string, things []connector.InboxThing, now 
 	return changed
 }
 
-// fillMigrated sets an item from a thing with Extra; an open chat item keeps where it started.
+// fillMigrated sets an item from a thing with Extra; an open chat item keeps where it started. A thing whose
+// connector's rules decided its tier gets it here, as a generic connector item does (fillConnectorItem): the item is
+// tiered without the model, and a rule the connector sends again as the tier changes re-tiers it (applyMigrated).
 func fillMigrated(it *InboxItem, t connector.InboxThing) {
 	it.Kind, it.Title, it.Sender, it.Preview, it.Context = t.Kind, t.Title, t.Sender, t.Preview, t.Context
 	it.UpdatedAt, it.Last, it.Rules = t.At, t.Last, t.Rules
 	it.Avatar, it.Count = t.Extra.Avatar, max(t.Extra.Count, 1)
 	setBlocks(it, t.Extra)
+	if t.Tier != "" {
+		setRuleTier(it, t)
+	}
 }
 
 func setBlocks(it *InboxItem, x *connector.ThingExtra) {

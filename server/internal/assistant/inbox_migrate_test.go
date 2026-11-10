@@ -100,3 +100,44 @@ func TestExtensionThingFallbackTier(t *testing.T) {
 		t.Fatalf("held back: %+v", status)
 	}
 }
+
+// A migrated connector's thing whose rules decided its tier is filed with it, without the model: the same contract a
+// generic connector thing has (InboxThing.Tier), for items that keep the hub's own blocks. A rule changed for the same
+// move re-tiers the open item, the next move follows the rules again, and a user's policy for the chat still wins.
+func TestMigratedThingRuleTier(t *testing.T) {
+	ctx := context.Background()
+	h := muteHub(t)
+	p := &extensionLark{}
+	h.addConnector(p, false)
+	now := time.Now()
+	larkExtra := func(legacy, start string) *connector.ThingExtra {
+		return &connector.ThingExtra{Source: "lark", Account: "feishu", AccountName: "飞书", LegacyID: legacy, Count: 1, StartedAt: now,
+			Lark: rawJSON(InboxLark{AccountID: 1, FeedID: "10", StartPosition: start})}
+	}
+	p.things = []connector.InboxThing{{Thread: "chat:10", Kind: KindDM, Title: "Alice", Preview: "P2 告警", At: now, Last: "5",
+		Tier: connector.TierNoise, Why: "Muted in Feishu", Extra: larkExtra("lark:10:5", "5")}}
+	h.collectInbox(ctx, roundPoll)
+	it := h.inbox.items["lark:10:5"]
+	if it == nil || it.Connector != nil || it.Lark == nil {
+		t.Fatalf("item: %+v", it)
+	}
+	if it.Tier != TierNoise || it.Reason != "Muted in Feishu" || it.TriagedAt != it.Last {
+		t.Fatalf("the rule tier is not applied: %+v", it)
+	}
+
+	// The rules changed since it was tiered (the chat was unmuted): the open item is re-tiered at once.
+	p.things[0].Tier, p.things[0].Why = connector.TierAction, "Needs you"
+	h.collectInbox(ctx, roundPoll)
+	if it.Tier != TierAction || it.Reason != "Needs you" || it.TriagedAt != it.Last {
+		t.Fatalf("the rule tier is not updated: %+v", it)
+	}
+
+	// The next move follows the rules, and the user's policy for the chat has the last word in the same round.
+	setPolicyFor(t, h, InboxPolicy{Source: "lark", Tag: "chat", Value: "10", Name: "Alice", Tier: TierFYI})
+	p.things[0].At, p.things[0].Last, p.things[0].Extra = now.Add(time.Minute), "6", larkExtra("lark:10:6", "6")
+	p.things[0].Tier, p.things[0].Why = connector.TierNoise, "Muted in Feishu"
+	h.collectInbox(ctx, roundPoll)
+	if it.Tier != TierFYI || it.TriagedAt != it.Last {
+		t.Fatalf("the policy does not win: %+v", it)
+	}
+}
