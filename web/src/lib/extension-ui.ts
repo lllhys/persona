@@ -484,7 +484,7 @@ export function pushPage(stack: readonly UIPage[], push: UIPush, ui: string): UI
 /** The icons UI version 6 adds (docs/extensions/extensions.md "UI version 6"), on a row, a metric, a tile, a row action and a nav_page. */
 export const NEW_ICONS_6 = [
   "home", "sofa", "light", "power", "fan", "thermometer", "droplet", "lock", "unlock", "door", "window", "camera", "video", "play",
-  "pause", "stop", "speaker", "tv", "plug", "battery", "bolt", "sun", "moon", "cloud", "rain", "snow", "wind", "leaf", "car",
+  "pause", "stop", "speaker", "music", "tv", "plug", "battery", "bolt", "sun", "moon", "cloud", "rain", "snow", "wind", "leaf", "car",
   "location", "robot", "wifi", "shield", "trend_up", "trend_down", "wallet", "bank", "heart", "plus", "minus", "trash", "edit",
   "refresh", "share", "info",
 ] as const;

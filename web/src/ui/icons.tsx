@@ -148,6 +148,7 @@ const P: Record<string, React.ReactNode> = {
   video: <g><path d="m16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.94a.5.5 0 0 0-.76-.43L16 10.5" /><rect x="2" y="6" width="14" height="12" rx="2" /></g>,
   pause: <g><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></g>,
   speaker: <g><rect x="5" y="2" width="14" height="20" rx="2" /><circle cx="12" cy="14" r="4" /><path d="M12 6h.01" /></g>,
+  music: <g><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></g>,
   tv: <g><rect x="2" y="7" width="20" height="15" rx="2" /><path d="m17 2-5 5-5-5" /></g>,
   plug: <g><path d="M12 22v-5M9 8V2M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" /></g>,
   battery: <g><rect x="2" y="7" width="16" height="10" rx="2" /><path d="M22 11v2M6 11v2" /></g>,

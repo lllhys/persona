@@ -147321,6 +147321,99 @@
           }
         }
       }
+    },
+    "Create the playlist “%@” with %lld songs and play it on the iPhone?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Create the playlist “%1$@” with %2$lld song and play it on the iPhone?"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Create the playlist “%1$@” with %2$lld songs and play it on the iPhone?"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%1$@」を %2$lld 曲のプレイリストとして作成し、iPhone で再生しますか？"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建歌单「%1$@」（%2$lld 首）并在 iPhone 上播放？"
+          }
+        }
+      }
+    },
+    "Create the playlist “%@” with %lld songs on the iPhone?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Create the playlist “%1$@” with %2$lld song on the iPhone?"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Create the playlist “%1$@” with %2$lld songs on the iPhone?"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%1$@」を %2$lld 曲のプレイリストとして作成しますか？"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建歌单「%1$@」（%2$lld 首）？"
+          }
+        }
+      }
+    },
+    "Invalid parameters; nothing will be created." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid parameters; nothing will be created."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パラメータが無効です。何も作成されません。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "参数无效，不会创建任何内容。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

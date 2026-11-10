@@ -251,4 +251,29 @@ struct PhoneSystemToolsTests {
         #expect(MediaTool.searchURL(service: "youtube", query: "a&b")?.absoluteString == "https://www.youtube.com/results?search_query=a%26b")
         #expect(MediaTool.searchURL(service: "other", query: "x") == nil)
     }
+
+    @Test func aPlaylistDraftIsCheckedBeforeTheCard() throws {
+        let args = JSONValue.object([
+            "name": .string(" Road Trip "),
+            "songs": .array([.string("Midnight City M83"), .string("Outro M83")]),
+            "play": .bool(true),
+        ])
+        let draft = try MediaTool.PlaylistDraft.parse(args)
+        #expect(draft.name == "Road Trip" && draft.songs.count == 2 && draft.play && draft.note == nil)
+        let summary = MediaTool.playlistConfirmation(args)
+        #expect(summary.contains("Road Trip") && summary.contains("2"))
+        #expect(try MediaTool.PlaylistDraft.parse(.object([
+            "name": .string("Quiet"),
+            "songs": .array([.string("Song")]),
+            "play": .bool(false),
+        ])).play == false)
+        #expect((try? MediaTool.PlaylistDraft.parse(.object([
+            "name": .string(""),
+            "songs": .array([.string("Song")]),
+        ]))) == nil)
+        #expect((try? MediaTool.PlaylistDraft.parse(.object([
+            "name": .string("Empty"),
+            "songs": .array([]),
+        ]))) == nil)
+    }
 }

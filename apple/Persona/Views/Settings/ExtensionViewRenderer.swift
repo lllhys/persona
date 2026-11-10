@@ -155,6 +155,8 @@ enum ExtensionUIStyle {
         case "tag": Theme.Icon.label
         case "search": Theme.Icon.search
         case "settings": Theme.Icon.settings
+        case "speaker": Theme.Icon.voiceSpeaking
+        case "music": Theme.Icon.music
         default: Theme.Icon.plugins
         }
     }

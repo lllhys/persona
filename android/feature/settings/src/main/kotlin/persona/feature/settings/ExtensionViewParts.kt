@@ -98,6 +98,7 @@ internal object ExtensionIcons {
         "pause" -> PhIcons.Pause
         "stop" -> PhIcons.Stop
         "speaker" -> PhIcons.SpeakerHigh
+        "music" -> PhIcons.MusicNote
         "tv" -> PhIcons.Television
         "plug" -> PhIcons.Plug
         "battery" -> PhIcons.BatteryHigh

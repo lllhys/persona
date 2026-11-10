@@ -20,7 +20,7 @@ cursor-text desktop device-mobile door dots-three dots-three-vertical drop envel
 fingerprint flag folder folder-simple funnel-simple gauge gear gear-six git-branch git-diff globe-simple hand hand-palm
 hard-drives hash heart hourglass-medium house image info kanban key keyboard laptop leaf lightbulb lightning link-simple
 list-checks lock-simple lock-simple-open magnifying-glass map-pin microphone microphone-slash minus monitor moon
-moon-stars note-pencil paper-plane-right paper-plane-tilt paperclip pause pencil-simple phone-disconnect play plug
+moon-stars music-note note-pencil paper-plane-right paper-plane-tilt paperclip pause pencil-simple phone-disconnect play plug
 plugs-connected plus power prohibit push-pin puzzle-piece qr-code question quotes robot rocket-launch scan seal-question
 share-network shield shield-check shield-warning sidebar-simple sliders-horizontal snowflake sparkle speaker-high
 spinner-gap squares-four stack star stop sun target television terminal terminal-window thermometer timer translate

@@ -32,6 +32,7 @@ struct ExtensionUIv3Tests {
         #expect(rows[0].icon == "doc" && rows[1].avatar?.text == "A" && rows[2].thumbnail?.aspect == ExtensionThumbnailAspect.wide)
         #expect(ExtensionUIStyle.icon("doc") == Theme.Icon.pluginDoc && ExtensionUIStyle.icon("hologram") == Theme.Icon.plugins)
         #expect(ExtensionUIStyle.icon("plugin") == Theme.Icon.plugins && ExtensionUIStyle.icon("extension") == Theme.Icon.plugins)
+        #expect(ExtensionUIStyle.icon("music") == Theme.Icon.music && ExtensionUIStyle.icon("speaker") == Theme.Icon.voiceSpeaking)
     }
 
     @Test func aPushOpensItsPageWithoutAskingTheExtension() async throws {

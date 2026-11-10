@@ -2132,7 +2132,7 @@ Still no arbitrary values: colors are named, icons a fixed set, text sizes two m
 | `field` | `earliest`, `latest` (date / time / datetime), `detail` | Bounds written like `value` (`earliest ≤ latest`); a line of help under any field |
 | `TextStyle` | `title`, `headline` | A section's big title and a small heading (at most 200 characters) |
 | `Color` | `red orange amber yellow green teal blue indigo purple pink gray` | On `Badge.color`, `row.icon_color`, `metric.icon_color`, `empty.icon_color`, `Tile.color`, `ChartSeries.color`, `Spark.color` only, never on text. `tone` is a meaning (good / caution / bad), `color` only a category: one object never has both. A chart's series colors differ |
-| `NavIcon` | 45 more (`home`, `light`, `power`, `thermometer`, `camera`, `lock`, `trend_up`, …) | Also `metric.icon`. Each app maps every name to its own icon |
+| `NavIcon` | 46 more (`home`, `light`, `power`, `thermometer`, `camera`, `lock`, `music`, `trend_up`, …) | Also `metric.icon`. Each app maps every name to its own icon |
 
 Field names starting with `~` are the hub's (below) and refused in an extension's view.
 

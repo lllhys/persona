@@ -102,6 +102,8 @@ struct PhoneToolsTests {
             "phone_shortcuts_run",
             "phone_media_play",
             "phone_media_control",
+            "phone_music_create_playlist",
+            "phone_music_snapshot",
             "phone_media_open",
             "phone_home_list",
             "phone_home_control",
