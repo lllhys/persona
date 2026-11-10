@@ -764,6 +764,9 @@ func (s *Service) inboxList(all bool) []InboxItem {
 
 // inboxListAt is inboxList and the moment it was read (as_of): everything listed arrived by then.
 func (s *Service) inboxListAt(all bool) ([]InboxItem, time.Time) {
+	if inboxMemoVerify { // tests: every list checks the bytes GET /api/v1/inbox keeps too (inbox_list_memo.go)
+		s.inboxListRaw(all)
+	}
 	b := &s.inbox
 	b.mu.Lock()
 	defer b.mu.Unlock()

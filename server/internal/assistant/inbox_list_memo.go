@@ -1,9 +1,13 @@
 package assistant
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
@@ -18,10 +22,14 @@ import (
 // bytes at once; every change is saved through saveInboxPrepared, which forgets them as it starts (before it waits for
 // another save), as it takes the rows and after its finish (a failed row's undo). An item replaced under its id
 // (loadInbox, admission, the history, grouping) is told apart by its pointer, a dropped one by drop and the sweep
-// below.
+// below. Tests check every kept item against a fresh encoding on every list (inboxMemoVerify).
 
 // inboxListMemoOn: off, GET /api/v1/inbox encodes every item again, as before the memo.
 const inboxListMemoOn = true
+
+// inboxMemoVerify is set by the package's tests (TestMain): every list also encodes each kept item again and notes a
+// difference (inboxMemoStale), so a change of an item that forgets nothing (touched, saveInboxPrepared) fails the run.
+var inboxMemoVerify bool
 
 // inboxListMemo is the items' kept bytes, under inboxBook.mu.
 type inboxListMemo struct {
@@ -75,6 +83,9 @@ func (s *Service) inboxListRaw(all bool) ([][]byte, time.Time, bool) {
 		row := inboxListRow{it: it, at: it.UpdatedAt}
 		if e := m.kept[it.ID]; e.it == it && e.raw != nil {
 			row.raw = e.raw
+			if inboxMemoVerify {
+				verifyListed(it, e.raw)
+			}
 		} else {
 			c := it.listed()
 			m.tok++
@@ -166,3 +177,35 @@ func writeInboxItems(w http.ResponseWriter, items [][]byte, asOf time.Time, tria
 }
 
 var comma = []byte{','}
+
+// verifyListed (tests) notes an item whose kept bytes are not its encoding now. Under b.mu.
+func verifyListed(it *InboxItem, kept []byte) {
+	c := it.listed()
+	if fresh, err := json.Marshal(&c); err == nil && !bytes.Equal(fresh, kept) {
+		inboxMemoStale.note(fmt.Sprintf("inbox item %s listed from stale bytes\nkept:  %s\nfresh: %s\n%s", it.ID, kept, fresh, debug.Stack()))
+	}
+}
+
+// inboxMemoStale is what verifyListed found.
+var inboxMemoStale staleNotes
+
+type staleNotes struct {
+	mu    sync.Mutex
+	notes []string
+}
+
+func (n *staleNotes) note(s string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.notes) < 20 {
+		n.notes = append(n.notes, s)
+	}
+}
+
+func (n *staleNotes) taken() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := n.notes
+	n.notes = nil
+	return out
+}

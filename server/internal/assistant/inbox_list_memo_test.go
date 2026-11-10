@@ -175,6 +175,7 @@ func TestInboxListUnchangedAllocations(t *testing.T) {
 		items[i].ID = fmt.Sprintf("%s-%03d", items[i].ID, i)
 	}
 	h := memoInbox(t, items)
+	inboxMemoVerify = false
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/inbox?sources=all", nil)
 	h.Service.ServeHTTP(&discardWriter{h: http.Header{}}, r)
 	const runs = 50
