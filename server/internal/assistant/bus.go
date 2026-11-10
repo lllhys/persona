@@ -642,6 +642,11 @@ func (w *recorder) Lang() i18n.Lang {
 }
 
 func (w *recorder) Header() http.Header { return w.header }
+
+// Grow makes room for n more bytes of body: a route that knows its answer's size and writes it in pieces
+// (writeInboxItems) then fills one buffer instead of growing it step by step.
+func (w *recorder) Grow(n int) { w.body.Grow(n) }
+
 func (w *recorder) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK

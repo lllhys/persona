@@ -148,12 +148,18 @@ func (s *Service) saveInboxUndo(ctx context.Context, changed []*InboxItem, undo 
 }
 
 // saveInboxPrepared can stage a detached row and publish its committed effects under mu before saving is released.
-// prepare runs under mu; finish runs there after the store answers, including when every row succeeded.
+// prepare runs under mu; finish runs there after the store answers, including when every row succeeded. Every change
+// of an item reaches the database here, so this is also where GET /api/v1/inbox forgets the changed items' kept bytes
+// (inbox_list_memo.go): first, before waiting for another save, so a GET meanwhile lists what memory holds; as the rows
+// are taken; and after finish, which may undo a change.
 func (s *Service) saveInboxPrepared(ctx context.Context, changed []*InboxItem, prepare func(*InboxItem) *InboxItem, finish func(map[string]bool)) map[string]bool {
 	b := &s.inbox
 	if len(changed) == 0 {
 		return nil
 	}
+	b.mu.Lock()
+	b.forgetListed(changed)
+	b.mu.Unlock()
 	if !b.loaded.Load() { // not read yet: what is stored stays as it is (inboxReady)
 		s.logf("inbox: %d changed items not saved: what is stored was not read", len(changed))
 		return nil
@@ -161,6 +167,7 @@ func (s *Service) saveInboxPrepared(ctx context.Context, changed []*InboxItem, p
 	var told []assistantwire.InboxChangedItem
 	b.saving.Lock()
 	b.mu.Lock()
+	b.forgetListed(changed)
 	rows := make([]db.InboxRow, 0, len(changed))
 	now := time.Now()
 	for i, it := range changed {
@@ -192,6 +199,7 @@ func (s *Service) saveInboxPrepared(ctx context.Context, changed []*InboxItem, p
 	if finish != nil {
 		b.mu.Lock()
 		finish(failed)
+		b.forgetListed(changed)
 		b.mu.Unlock()
 	}
 	b.saving.Unlock()
