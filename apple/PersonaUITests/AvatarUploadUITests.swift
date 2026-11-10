@@ -3,7 +3,7 @@ import XCTest
 
 /// New from Photo end to end (#2405) against mock_hub.py with MOCK_LOOK_UPLOADS=demo: the crop sheet opened with a
 /// portrait picture (`-showAvatarCrop`), dragged, uploaded and chosen; then the avatar made deleted with the button in
-/// its card's corner, and only that one (the mock's demo upload, 豆豆, stays).
+/// its card's corner, and only that one (the mock's demo upload, 「豆豆」, stays).
 /// Real touches: the crop sits in a Form, which scrolls, and a drag on the picture must move the picture, not the sheet.
 /// `PERSONA_MOCK_HUB_NO_FILES` (a second mock with MOCK_LOOK_UPLOAD_FILES=fail): made but not downloaded, Try Again.
 /// `PERSONA_LOOK_APPEARANCE` light / dark, `PERSONA_LOOK_LANGUAGE` (en, zh-Hans, ja), `PERSONA_LOOK_SHOTS` a folder for
@@ -110,7 +110,7 @@ final class AvatarUploadUITests: XCTestCase {
         XCTAssertTrue(app.buttons["persona-delete-confirm"].waitForExistence(timeout: 5), "no confirmation")
         XCTAssertTrue(title(app, "豆豆").exists, "the confirmation is not about 豆豆")
         dismissConfirmation(app)
-        // Choosing 豆豆 would download it first: give a wrong choice the time to land.
+        // Choosing 「豆豆」 would download it first: give a wrong choice the time to land.
         let unchosen = expectation(for: NSPredicate(format: "selected == false"), evaluatedWith: made)
         XCTAssertEqual(XCTWaiter.wait(for: [unchosen], timeout: 3), .timedOut, "the delete button chose its card")
         XCTAssertFalse(demo.isSelected)

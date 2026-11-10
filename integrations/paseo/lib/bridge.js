@@ -23,6 +23,9 @@ const LIST_MAX = 300 // sessions listed at most (those running or waiting always
 const REFRESH_DELAY = 120 // ms: a watched agent's timeline is read again this long after it moved
 const LAST_TEXT_DELAY = 3000 // ms: an agent's last words are read again this long after it changed
 const PAGES_MAX = 10 // directory pages read at connect (200 agents each)
+// Whole timelines kept at most (the most recently read; a watched agent's stays whatever the count): each is an
+// agent's whole conversation, and the directory holds up to PAGES_MAX x 200 agents.
+export const TIMELINES_MAX = 16
 const EVENTS = ['agent_permission_request', 'agent_permission_resolved', 'providers_snapshot_update', 'status.daemon_config_changed']
 const TIMEOUT = Symbol('timeout')
 
@@ -51,7 +54,7 @@ export function createPaseoBridge(deps = {}, options = {}) {
   const echoes = new Map() // Paseo message id → the client_msg_id the phone sent it with
   const lastTexts = new Map() // agent id → its last words (agents whose content is not a transcript)
   const lastTextTimers = new Map()
-  const timelines = new Map() // agent id → { key, at, tl, history } (the last whole read)
+  const timelines = new Map() // agent id → { key, at, tl, history } (the last whole read), the least recently read first
   const canonical = new Map() // path → the path with symbolic links resolved (canon)
   let runtimeOn = false
   let awayTimer
@@ -387,13 +390,31 @@ export function createPaseoBridge(deps = {}, options = {}) {
   async function timeline(agent) {
     const key = `${agent.updatedAt}|${agent.status}`
     const c = timelines.get(agent.id)
-    if (c && c.key === key && (agent.status !== 'running' || Date.now() - c.at < 500)) return c
+    if (c && c.key === key && (agent.status !== 'running' || Date.now() - c.at < 500)) {
+      keepTimeline(agent.id, c)
+      return c
+    }
     const res = await fetchTimeline(agent.id)
     const tl = timelineItems(res.entries, { maxSeq: res.window?.maxSeq, running: isRunning(res.agent ?? agent), echoes })
     const out = { key, at: Date.now(), tl, history: history(agent.id, res.epoch), epoch: res.epoch }
-    timelines.set(agent.id, out)
+    keepTimeline(agent.id, out)
     if (tl.lastText) lastTexts.set(agent.id, tl.lastText)
     return out
+  }
+
+  /**
+   * An agent's timeline as the most recently read; beyond TIMELINES_MAX, the least recently read go, except those of
+   * the agents the phone watches (read again and again while it does).
+   */
+  function keepTimeline(agentId, t) {
+    timelines.delete(agentId)
+    timelines.set(agentId, t)
+    if (timelines.size <= TIMELINES_MAX) return
+    const watched = new Set([...watches.values()].map((w) => w.agentId))
+    for (const id of timelines.keys()) {
+      if (timelines.size <= TIMELINES_MAX) break
+      if (!watched.has(id)) timelines.delete(id)
+    }
   }
 
   const isRunning = (a) => a?.status === 'running' || a?.status === 'initializing' || Boolean(a?.activeTurn)
@@ -874,7 +895,7 @@ export function createPaseoBridge(deps = {}, options = {}) {
     runtime: rt,
     paseo,
     /** Tests: the bridge's view. */
-    state: { agents, bySession, watches, asks, handedBack, echoes, get launchers() { return launchers } },
+    state: { agents, bySession, watches, asks, handedBack, echoes, timelines, get launchers() { return launchers } },
   }
 }
 

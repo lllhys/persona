@@ -715,3 +715,11 @@ A successful token check does not prove the subsequent device-token exchange suc
 ## An op receipt keeps the hub's answer and the digest covers the body (#2459)
 
 A write under an op id can be repeated only unchanged: the hub replays the answer it kept for that id (a refusal included) and answers `409 op_id_reused` when the body changed. So a retry after a gap keeps the id and the request as they were, which means a start that may have reached the hub cannot reopen its form; a retry after a refusal needs a new id. Another request of the same flow, such as the Codex start with a prompt, has its own id. A repeat can also come back `202 {"state":"pending"}` or `{"state":"unknown"}`, which `res.ok` reads as success, so a caller that needs the real answer has to look at `state`.
+
+## A control meant to look like the chips must reuse the chip's class (#2999)
+
+#2920 drew the Assistant's Pending / Progress / Agents entries as a new three-column grid of 36 px rounded rectangles with
+14 px type, next to the dock's 32 px "All" / task capsules, and they read as heavy buttons. The capsule was a local
+constant inside `TaskDock`, so nothing pointed the new code at it. Shared look lives in one exported class
+(`DOCK_CAPSULE`) used by every chip that should match; tests assert the classes are shared and the e2e measures the rendered
+height against 2 rem in a real browser.

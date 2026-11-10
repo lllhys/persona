@@ -85,3 +85,14 @@ Android 的目标断言应读取 expected，以后 iOS 跟进时补上比较键�
 ## 新增用例
 
 按主题追加用例并更新规则表，保证两个领域的 name 唯一。先编造输入并独立写 expected，再用真实实现对照；未知档位、空列表、交叉筛选、屏蔽例外和时间相等应分别覆盖。发现当前实现与新规则冲突时，明确标 compatibility 和 ios_expected，并写明谁需要跟进，不能悄悄改 expected。提交前检查 UTF-8、2 空格缩进和隐私扫描。
+
+## Hand to AI memory (`handoff_memory.json`)
+
+Hand to AI remembers, per source, the target an item was last handed to (#2121; `docs/assistant/inbox.md` "Item actions"). Every app follows the same rules:
+
+- `keys`: the source key is the item's `source`, `|`, and the most specific non-empty mute option, in the order `repo`, `chat`, `sender` (`tag:value`). An item without one has no key and no memory.
+- `resolve`: a remembered target is preselected and marked Last time.
+  - A remembered Agent that is no longer listed resolves to the main chat, with `gone` set so the app says so once.
+  - Nothing remembered, or an unreadable value, gives `null`: the platform's own default.
+  - Cases with `needs_new_chat` apply only where New Chat is a target.
+- `recency`: one entry per source, latest first, at most `limit` sources.

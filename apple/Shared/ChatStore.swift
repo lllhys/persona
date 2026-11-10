@@ -120,9 +120,9 @@ nonisolated struct Turn: Identifiable, Hashable, Sendable {
     var trailing: [ChatRow] = [] // notices that belong to the turn (e.g. "interrupted")
     /// Background tasks that woke the agent during this exchange (their notices).
     var wakes: [Item] = []
-    /// Everything from the first wake on, for the "Background Task Done" drawer.
-    var afterWake: [ChatRow] = []
-    /// What came after the answer (a follow-up once a background task reported back): only in the drawer.
+    /// The latest wake has not produced an answer yet: its continuation is live, even after its rows move into `ordered`.
+    var hasPendingWake = false
+    /// What came after the answer (a follow-up once a background task reported back).
     var tail: [ChatRow] = []
     /// Everything the agent did in arrival order, answer included.
     var steps: [ChatRow] = []
@@ -150,30 +150,16 @@ nonisolated struct Turn: Identifiable, Hashable, Sendable {
     }
     var interimCount: Int { process.filter { if case .assistant = $0 { true } else { false } }.count }
 
-    /// Background tasks split an exchange into runs (before the first wake, after each one), each ending in the
-    /// agent's words. The answer is the latest of those, so the chat always ends on the newest words (#3783: the
-    /// longest used to be, and a short reply after a wake showed while it streamed, then went into the drawer once its
-    /// line came). What comes before it folds into one work line (wakes and earlier words included); the drawer lists
-    /// every run from the first wake on (`afterWake`). Work after the latest words, while no new ones came yet, shows
-    /// only in the drawer (`tail`).
+    /// A wake continues the same exchange; its tools and narration join the ordinary execution summary. Until new
+    /// words arrive, `hasPendingWake` keeps them in the summary rather than promoting the earlier narration to a
+    /// separate answer (#2796).
     mutating func pickAnswerAcrossWakes() {
         let all = ordered
-        var candidates: [Int] = []
-        var last: Int?
-        for (i, r) in all.enumerated() {
-            switch r {
-            case .notice(let n) where n.wake == true:
-                if let l = last { candidates.append(l) }
-                last = nil
-            case .assistant: last = i
-            default: break
-            }
-        }
-        if let l = last { candidates.append(l) }
-        let pick = candidates.last
-        // What the user sent stays with the exchange (their pictures too: they sit above the message they came with).
-        if let first = all.firstIndex(where: { if case .notice(let n) = $0 { n.wake == true } else { false } }) {
-            afterWake = Array(all[first...]).filter { !$0.isUserInput }
+        var pick: Int?
+        hasPendingWake = false
+        for (i, row) in all.enumerated() {
+            if case .notice(let n) = row, n.wake == true { pick = nil; hasPendingWake = true }
+            if case .assistant = row { pick = i; hasPendingWake = false }
         }
         guard let pick else { return }
         tail = all[(pick + 1)...].filter { !$0.isUserInput }

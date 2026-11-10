@@ -236,6 +236,12 @@ struct ChatsView: View {
     private func barMoved(_ y: ClosedRange<CGFloat>) {}
     #endif
     @State private var showNew = false
+    #if os(iOS)
+    @State private var personalEntry = PersonalAgentEntryModel()
+    private var showsPersonalEntry: Bool { personalEntry.isAvailable(for: model.api) }
+    #else
+    private var showsPersonalEntry: Bool { true }
+    #endif
     /// The ⋯ menu's actions, kept current by the list (not observed: see `AgentsListMenu`).
     @State private var menuActions = AgentsListMenu.Actions()
     @StoredValue("dev.machineFilter") private var machineFilter = ""
@@ -278,7 +284,7 @@ struct ChatsView: View {
         SplitNavigation(path: pushing, destinations: AgentsDestinations()) {
             AgentsList(path: $path, spaceAt: $spaceAt, query: $query, searching: $searching,
                        searchedBeforePush: $searchedBeforePush, showNew: $showNew, menuActions: menuActions, ownsTop: ownsTop,
-                       beginSearch: beginSearch)
+                       showsPersonalEntry: showsPersonalEntry, beginSearch: beginSearch)
                 #if os(iOS) || os(visionOS)
                 .environment(header)
                 #endif
@@ -313,8 +319,11 @@ struct ChatsView: View {
                         ToolbarItem(placement: .principal) { ConnectionTitle() }
                         // On the Mac the shell shows it, next to its sidebar button (MacShell).
                         ToolbarItem(placement: .topBarLeading) { AgentsListMenu(actions: menuActions) }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button { openFromList(PersonalAgentsRoute()) } label: { Label("Personal Agents", systemImage: Theme.Icon.personalAgents) }
+                        if showsPersonalEntry {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button { openFromList(PersonalAgentsRoute()) } label: { Label("Personal Agents", systemImage: Theme.Icon.personalAgents) }
+                                    .accessibilityIdentifier("agents.personal")
+                            }
                         }
                         ToolbarItem(placement: .topBarTrailing) {
                             Button { showNew = true } label: { Label("New Session [Chats View 58e21b]", systemImage: Theme.Icon.compose) }
@@ -394,6 +403,11 @@ struct ChatsView: View {
             SplitPlaceholder(symbol: Theme.Icon.agents, title: String(localized: "Choose an Agent"),
                              message: String(localized: "Click an agent in the list on the left to open its chat here."))
         }
+        #if os(iOS)
+        .tabActiveTask(id: model.api.map { PersonalAgentEntryModel.Connection($0) }) {
+            await personalEntry.watch(model.api)
+        }
+        #endif
         // While searching the field rises into the bar the shell's floats over: the bar makes way (the field has its
         // own Cancel), as a system search takes the navigation bar, and comes back when the search closes (TestFlight 70:
         // the field was drawn under ☰, the switch and New Session). A result opened closes the search before the push
@@ -581,6 +595,7 @@ private struct AgentsList: View {
     var menuActions: AgentsListMenu.Actions
     /// A phone: the page's own top (`AgentsHeader`), not the system's search.
     var ownsTop: Bool
+    var showsPersonalEntry: Bool
     var beginSearch: () -> Void
 
     @State private var searchClose = SearchCloseWatcher()
@@ -1335,7 +1350,7 @@ private struct AgentsList: View {
     #if os(iOS)
     @ViewBuilder private var groupingPills: some View {
         AgentsGroupingMenu()
-        if shell != nil { AgentsPersonalPill { openFromList(PersonalAgentsRoute()) } }
+        if shell != nil, showsPersonalEntry { AgentsPersonalPill { openFromList(PersonalAgentsRoute()) } }
     }
     #endif
 

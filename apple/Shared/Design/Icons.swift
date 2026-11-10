@@ -41,6 +41,8 @@ extension Theme {
         static let workflow = "flowchart"
         static let pinned = "pin.fill"
         static let unchecked = "circle"
+        /// Some of a group picked (the inbox's Select, #2059).
+        static let partlyChecked = "minus.circle.fill"
         static let uncheckedBox = "square"
         static let todo = "checklist"
         /// Recent, or waiting to come back (reconnecting, last used).

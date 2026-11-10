@@ -1,7 +1,9 @@
 package persona.feature.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
@@ -270,7 +272,9 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().testTag("assistant-tray-bar"), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+        // Content-width chips at the leading edge, like the old All / task chips; a large font scrolls rather than wraps.
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("assistant-tray-bar"),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalAlignment = Alignment.CenterVertically) {
             for (tray in AssistantTray.entries) AssistantTrayEntry(stringResource(when (tray) {
                 AssistantTray.Pending -> R.string.chat_tray_pending
                 AssistantTray.Progress -> R.string.chat_tray_progress
@@ -285,7 +289,7 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                 AssistantTray.Agents -> AssistantTrayTone.Agents
             }, state.expanded == tray,
                 stringResource(if (state.expanded == tray) R.string.chat_tray_expanded else R.string.chat_tray_collapsed),
-                { state.toggle(tray) }, Modifier.weight(1f).testTag("assistant-entry-${tray.name.lowercase()}"),
+                { state.toggle(tray) }, Modifier.testTag("assistant-entry-${tray.name.lowercase()}"),
                 enabled = true)
         }
     }

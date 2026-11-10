@@ -227,8 +227,6 @@ struct TurnTests {
         #expect(a.tail.isEmpty) // nothing after the newest words
         #expect(a.ordered.last?.id == "6#0")
         #expect(a.process.contains { $0.id == "3#0" }) // the summary: in the work line
-        #expect(a.afterWake.first?.id == wake.id && a.afterWake.count == 3) // the drawer: every run from the wake on
-
         // Woken, at work, no words yet: the words before stay the answer until new ones come; the new work is in the
         // drawer (its chip runs).
         blocks = ChatBlock.build(ChatStore.buildRows(Array(items.prefix(5))))
@@ -486,7 +484,6 @@ struct TurnTests {
         guard case .turn(let t) = blocks.last else { Issue.record("no turn"); return }
         #expect(t.ordered.contains { if case .image(let i) = $0 { i.id == "m#1" } else { false } })
         #expect(!t.tail.contains { if case .image = $0 { true } else { false } })
-        #expect(!t.afterWake.contains { if case .image = $0 { true } else { false } })
     }
 
     @Test func contextTagRoundTrips() {

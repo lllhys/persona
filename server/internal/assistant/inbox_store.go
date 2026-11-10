@@ -18,8 +18,10 @@ import (
 // within inboxForget.
 type inboxStore interface {
 	PutInboxItem(ctx context.Context, id string, data []byte, updatedAt time.Time, doneAt *time.Time) error
-	InboxItems(ctx context.Context, doneSince time.Time) ([][]byte, error)
+	// InboxItems hands each open item, and each one done since doneSince, to each (raw is valid only during the call).
+	InboxItems(ctx context.Context, doneSince time.Time, each func(raw []byte) error) error
 	DoneInboxItems(ctx context.Context, q db.InboxDoneQuery) ([]db.InboxRow, error)
+	DoneInboxDays(ctx context.Context, zone string, connectors bool) ([]db.InboxDay, error)
 	DoneInboxItemsByID(ctx context.Context, ids []string) ([][]byte, error)
 	PurgeInboxItems(ctx context.Context, doneBefore time.Time) (int64, error)
 	DeleteInboxSource(ctx context.Context, source string, ids []string) ([]string, error)
@@ -80,7 +82,16 @@ func (s *Service) loadInbox(ctx context.Context) bool {
 	}
 	now := time.Now()
 	s.purgeInboxHistory(ctx, st, now)
-	rows, err := st.InboxItems(ctx, now.Add(-inboxForget))
+	// Each row is decoded straight from the driver's buffer (json.Unmarshal copies every string and json.RawMessage it
+	// keeps), so the rows' bytes are never all held besides the items; nothing is taken in until the read has ended.
+	var loaded []*InboxItem
+	err := st.InboxItems(ctx, now.Add(-inboxForget), func(raw []byte) error {
+		var it InboxItem
+		if json.Unmarshal(raw, &it) == nil && it.ID != "" {
+			loaded = append(loaded, &it)
+		}
+		return nil
+	})
 	if err != nil {
 		s.logf("inbox: load: %v", err)
 		return false
@@ -90,15 +101,12 @@ func (s *Service) loadInbox(ctx context.Context) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.larkAccount = cfg.LarkAccount
-	for _, raw := range rows {
-		var it InboxItem
-		if json.Unmarshal(raw, &it) == nil && it.ID != "" {
-			if _, have := b.items[it.ID]; have {
-				continue // newer in memory than in the database
-			}
-			b.stored(&it)
-			b.items[it.ID] = &it
+	for _, it := range loaded {
+		if _, have := b.items[it.ID]; have {
+			continue // newer in memory than in the database
 		}
+		b.stored(it)
+		b.items[it.ID] = it
 	}
 	return true
 }

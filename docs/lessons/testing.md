@@ -226,6 +226,7 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   Use in-app constant-speed scrolling (`AutoScroller`, `-showFileAutoScroll`) and frame counting (`FrameMeter`), opened from an idle session (running sessions redraw each second behind it).
 - Alerts with input: typing raises the keyboard and moves the alert upward; immediately tapping Save misses (alert remains, nothing happens, looking like failed save; 2026-11-01 `AssistantTitlesTests` nearly prompted an app change).
   Pause after typing, tap, then confirm the alert disappeared. Input caret placement is unpredictable; before clearing, tap the field's right edge to place it at the end.
+- A form button can report `isHittable` while the software keyboard still consumes its tap (#2741): `ExtensionSettingsTests` tapped Save without any config PUT, then kept swiping for a refusal that had never been produced. Dismiss the keyboard with Return before Save, preserve the draft, and verify the mock received both the refused and the corrected PUTs rather than adding more swipes or weakening the field-error assertion.
 - Run privacy scans after actual build/deployment configuration is complete: missing configuration means incomplete checks, and `clean` is not a full pass. Rescan after adding configuration.
   Fixture machine identifiers can accidentally match configured values; use neutral placeholders, not exemptions.
 - `xcrun simctl push` does not run notification service extensions (2026-11-01, Xcode 27.1 / iOS 27.0). CoreSimulatorBridge adds pushes directly to Notification Center as local notifications,
@@ -603,6 +604,7 @@ Pin the visual style, not an alternate navigation tree. A shared launch helper t
   or first apply `.accessibilityElement(children: .contain)` to the container.
   Again in an extension's machine list (#2446): the field row's `plugin-field-…` replaced each Mac's `extension-machine-setup-<id>`; the row now leaves the identifier to the list's title and switches.
 - **A `lineLimit`-cut `Text` still reads in full to XCUITest**: its label is the whole string, so "the last line is not there" never proves folding (#1666, `NewChatLayoutTests`). Assert the fold's control (Expand) and look at the screenshot.
+- **A floating action bar can cover a control XCUITest still reports as hittable** (#2732): after typing in New Agent, the photo's remove button can sit inside the Start Chat bar's frame. Move it clear with the test's slow drag, assert the frames do not intersect before tapping, then wait for Start to become enabled. A tap that happened to work once is not proof of visibility; inspect the before / after screenshots.
 - **First taps just after sheet dismissal can be swallowed** (keyboard focus is still settling). Immediately tapping a list button after form Add does nothing, with no confirmation dialog.
   Wait for sheet-field `waitForNonExistence`, tap a harmless button (Refresh) first, then the target button.
 - Icon-sized `Menu` (20 pt) often does not expand under XCUITest. Put row actions in a row of `.borderless` text buttons, clearer on both phone and Mac.

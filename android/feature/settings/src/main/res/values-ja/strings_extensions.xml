@@ -5,6 +5,7 @@
     <string name="settings_ext_dep_disabled">先に有効化が必要</string>
     <string name="settings_ext_dep_old">バージョン不足（現在%1$s）</string>
     <string name="settings_ext_dep_unknown">状態不明。もう一度プレビューしてください</string>
+    <string name="settings_ext_dep_unknown_installed">状態不明。詳細を更新してください</string>
     <string name="settings_ext_sandbox_active">サンドボックス有効</string>
     <string name="settings_ext_sandbox_inactive">サンドボックスを要求済みですが、現在は無効です</string>
     <string name="settings_ext_sandbox_off">サンドボックス未使用</string>

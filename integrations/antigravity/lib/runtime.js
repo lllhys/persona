@@ -39,6 +39,8 @@ export function createAgyRuntime(options = {}) {
   const archived = new Set() // agyId
   const lastPushedSeq = new Map() // personaId -> number
   const assistants = new Set() // personaId
+  const permissionAsks = new Map() // agyId -> Set of AbortControllers, one per permission card still on the phone
+  const cancelling = new Set() // agyId: interrupted, its turn has not ended yet
 
   const acp = new AgyAcpClient({
     bin: existsSync(agyBin) ? agyBin : 'agy',
@@ -166,18 +168,34 @@ export function createAgyRuntime(options = {}) {
     const allowOpt = opts.find((o) => o.kind === 'allow_once') || allowAlwaysOpt
     const rejectOpt = opts.find((o) => o.kind === 'reject_once') || opts.find((o) => o.kind === 'reject_always')
 
+    // A request that crossed the interrupt on the wire: ACP wants every pending one answered 'cancelled'.
+    if (cancelling.has(rawId)) return { outcome: { outcome: 'cancelled' } }
     if (shouldBypassPermission(rawId) && allowAlwaysOpt) {
       return { outcome: { outcome: 'selected', optionId: allowAlwaysOpt.optionId } }
     }
 
-    const res = await rt.ask({
-      id: interactionId(pid, tc.toolCallId || String(Date.now())),
-      kind: 'permission',
-      session_id: pid,
-      tool_name: toolName,
-      tool_input: toolInput,
-      summary: summaryOf(toolName, toolInput),
-    })
+    // Interrupt and the end of the turn withdraw the card (the SDK takes it off the phone) and agy hears 'cancelled'.
+    const ac = new AbortController()
+    let asks = permissionAsks.get(rawId)
+    if (!asks) permissionAsks.set(rawId, (asks = new Set()))
+    asks.add(ac)
+    let res
+    try {
+      res = await rt.ask({
+        id: interactionId(pid, tc.toolCallId || String(Date.now())),
+        kind: 'permission',
+        session_id: pid,
+        tool_name: toolName,
+        tool_input: toolInput,
+        summary: summaryOf(toolName, toolInput),
+      }, { signal: ac.signal })
+    } catch (err) {
+      if (ac.signal.aborted) return { outcome: { outcome: 'cancelled' } }
+      throw err
+    } finally {
+      asks.delete(ac)
+      if (asks.size === 0 && permissionAsks.get(rawId) === asks) permissionAsks.delete(rawId)
+    }
 
     if (res?.allow && allowOpt) {
       return { outcome: { outcome: 'selected', optionId: allowOpt.optionId } }
@@ -187,6 +205,15 @@ export function createAgyRuntime(options = {}) {
     }
     return { outcome: { outcome: 'cancelled' } }
   }
+
+  /** Take the session's permission cards off the phone: each one answers agy 'cancelled'. */
+  function withdrawPermissionAsks(rawId, why) {
+    const asks = permissionAsks.get(rawId)
+    if (!asks) return
+    permissionAsks.delete(rawId)
+    for (const ac of asks) ac.abort(new Error(why))
+  }
+
   function readCacheMetadata() {
     const metaFile = join(agyDir, 'cache', 'conversation_metadata.json')
     const lastFile = join(agyDir, 'cache', 'last_conversations.json')
@@ -457,6 +484,9 @@ export function createAgyRuntime(options = {}) {
       .then(() => acp.prompt(rawId, blocks))
       .catch((err) => log(`agy prompt error (${pid}): ${err.message}`))
       .finally(() => {
+        // The turn is over: a card still waiting has nothing to answer for any more.
+        cancelling.delete(rawId)
+        withdrawPermissionAsks(rawId, 'the turn ended')
         if (activeTurns.get(pid)?.token === turnToken) {
           clearInterval(pollTimer)
           activeTurns.delete(pid)
@@ -471,6 +501,8 @@ export function createAgyRuntime(options = {}) {
 
   async function interrupt(params) {
     const rawId = toAgyId(params.session_id)
+    if (activeTurns.has(toPersonaId(rawId))) cancelling.add(rawId)
+    withdrawPermissionAsks(rawId, 'interrupted')
     await acp.cancel(rawId)
   }
 
@@ -505,9 +537,13 @@ export function createAgyRuntime(options = {}) {
       void acp.ensureStarted().catch((err) => log(`agy warm start error: ${err.message}`))
       return rt.start()
     },
+    /** Resolves once agy is gone. */
     stop: () => {
       rt.stop()
-      acp.stop()
+      // A turn's transcript poll would otherwise keep running; acp.stop() fails the prompts themselves.
+      for (const turn of activeTurns.values()) clearInterval(turn.pollTimer)
+      activeTurns.clear()
+      return acp.stop()
     },
   }
 }

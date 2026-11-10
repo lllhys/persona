@@ -170,14 +170,21 @@ func TestAssistantCodexCapacity(t *testing.T) {
 	}
 }
 
+// A main conversation started through a shell launcher (not a managed one): a declared capacity caps it; one that
+// declares none gets the main target and no MAX_CONTEXT_TOKENS (#3008), since Claude Code holds the automatic window
+// to the window it knows the model to have. Its idle threshold waits for that window (TestAssistantIdleCompactFromWindow).
 func TestAssistantShellLauncherCompaction(t *testing.T) {
 	for _, tt := range []struct {
 		name, rc     string
 		window, idle int
+		max          string // the MAX_CONTEXT_TOKENS written, "" for none
+		fromWindow   bool
 	}{
-		{"large backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; command claude "$@"; }`, 400000, 300000},
-		{"small backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=128000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=128000; command claude "$@"; }`, 128000, 96000},
-		{"unknown backend", `function testproxy { export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000; command claude "$@"; }`, 200000, 150000},
+		{"large backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; command claude "$@"; }`, 400000, 300000, "1000000", false},
+		{"declared 200K backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=200000; command claude "$@"; }`, 200000, 150000, "200000", false},
+		{"small backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=128000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=128000; command claude "$@"; }`, 128000, 96000, "128000", false},
+		{"unknown backend", `function testproxy { export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000; command claude "$@"; }`, 400000, 300000, "", true},
+		{"gateway function declaring nothing", `function testproxy { ( export ANTHROPIC_BASE_URL=http://127.0.0.1:9; command claude --model opus "$@" ) }`, 400000, 300000, "", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClaudeHome(t, "read line\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
@@ -203,7 +210,93 @@ func TestAssistantShellLauncherCompaction(t *testing.T) {
 			if env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != strconv.Itoa(tt.window) || p.compactIdleAt != tt.idle {
 				t.Fatalf("settings %v, idle %d", env, p.compactIdleAt)
 			}
+			if max, _ := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"].(string); max != tt.max {
+				t.Fatalf("MAX_CONTEXT_TOKENS %q, want %q (settings %v)", max, tt.max, env)
+			}
+			if p.idleFromWindow != tt.fromWindow {
+				t.Fatalf("idle threshold from the reported window: %v, want %v", p.idleFromWindow, tt.fromWindow)
+			}
 		})
+	}
+}
+
+// Nothing declared: a Claude main conversation gets the main target without a capacity; an ordinary one keeps its
+// limits; a Codex main conversation keeps the ordinary limit, since Codex takes its compact limit as given.
+func TestAssistantUnknownCapacityPolicy(t *testing.T) {
+	fakeClaudeHome(t, "exit 0\n")
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	home := os.Getenv("HOME")
+	rc := "function testproxy { command claude \"$@\"; }\nfunction testcodex { command codex \"$@\"; }\n"
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(rc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := codexTestNode(t)
+	n.dir = t.TempDir()
+	cwd := t.TempDir()
+	for _, tt := range []struct {
+		name, launcher string
+		main           bool
+		window, idle   int
+		env            []string
+		fromWindow     bool
+	}{
+		{"claude main", "testproxy", true, 400_000, 300_000, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000"}, true},
+		{"claude ordinary", "testproxy", false, 200_000, 150_000, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000"}, false},
+		{"codex main", "testcodex", true, 200_000, 150_000, nil, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := n.assistantCompactionPolicy(tt.launcher, cwd, "", modelExecution{Model: "opus", IsMain: tt.main})
+			if c.window != tt.window || c.idle != tt.idle || c.idleFromWindow != tt.fromWindow {
+				t.Fatalf("policy %+v, want %d/%d from window %v", c, tt.window, tt.idle, tt.fromWindow)
+			}
+			if tt.env != nil && strings.Join(c.env(), " ") != strings.Join(tt.env, " ") {
+				t.Fatalf("env %q, want %q", c.env(), tt.env)
+			}
+		})
+	}
+}
+
+// The window Claude Code reports at the end of a turn caps the idle threshold of a main conversation whose capacity
+// nothing declared: a 200K model compacts at 150K while its cache is warm, a 1M one keeps 300K. A declared capacity
+// is not second-guessed, and a subagent's or helper model's entry is not the conversation's window.
+func TestAssistantIdleCompactFromWindow(t *testing.T) {
+	result := func(usage string) string { return `{"type":"result","subtype":"success","modelUsage":` + usage + `}` }
+	start := func(model string) string {
+		return `{"type":"stream_event","event":{"type":"message_start","message":{"model":"` + model +
+			`","usage":{"input_tokens":2,"cache_read_input_tokens":170000}}},"parent_tool_use_id":null}`
+	}
+	for _, tt := range []struct {
+		name       string
+		fromWindow bool
+		lines      []string
+		want       int
+	}{
+		{"1M model", true, []string{start("claude-opus-5-5"), result(`{"claude-opus-5-5":{"inputTokens":2,"cacheReadInputTokens":170000,"contextWindow":1000000}}`)}, 300_000},
+		{"200K model", true, []string{start("small-model"), result(`{"small-model":{"inputTokens":2,"cacheReadInputTokens":170000,"contextWindow":200000}}`)}, 150_000},
+		{"the conversation's model, not a helper's", true, []string{start("claude-opus-5-5"), result(`{"claude-opus-5-5":{"inputTokens":2,"cacheReadInputTokens":170000,"contextWindow":1000000},"claude-haiku-4-5":{"inputTokens":900000,"contextWindow":200000}}`)}, 300_000},
+		{"gateway renames the model: the one that read most", true, []string{start("gw/opus"), result(`{"claude-opus-5-5":{"inputTokens":2,"cacheReadInputTokens":170000,"contextWindow":1000000},"claude-haiku-4-5":{"inputTokens":3000,"contextWindow":200000}}`)}, 300_000},
+		{"no window reported", true, []string{start("x"), result(`{"x":{"inputTokens":2}}`), `{"type":"result","subtype":"success"}`}, 300_000},
+		{"declared capacity", false, []string{start("small-model"), result(`{"small-model":{"inputTokens":2,"contextWindow":200000}}`)}, 300_000},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			n := assistantNode(t)
+			const id = "11111111-2222-3333-4444-555555555555"
+			p := &assistantProc{id: id, agent: "claude", stdin: &stdinBuf{}, compactIdleAt: 300_000, idleFromWindow: tt.fromWindow}
+			n.procs[id] = p
+			n.readAssistant(p, strings.NewReader(strings.Join(tt.lines, "\n")+"\n"))
+			p.mu.Lock()
+			got := p.compactIdleAt
+			p.mu.Unlock()
+			if got != tt.want {
+				t.Fatalf("idle threshold %d, want %d", got, tt.want)
+			}
+		})
+	}
+	// It only ever goes down: a later turn reporting a larger window does not raise it again.
+	p := &assistantProc{compactIdleAt: 150_000, idleFromWindow: true}
+	if p.capIdleCompact(1_000_000) || p.compactIdleAt != 150_000 {
+		t.Fatalf("raised to %d", p.compactIdleAt)
 	}
 }
 

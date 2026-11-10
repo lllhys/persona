@@ -6,6 +6,7 @@
     <string name="settings_ext_dep_disabled">Turn it on first</string>
     <string name="settings_ext_dep_old">Version too old (now %1$s)</string>
     <string name="settings_ext_dep_unknown">Unknown state, preview again</string>
+    <string name="settings_ext_dep_unknown_installed">Unknown state, refresh details</string>
     <string name="settings_ext_sandbox_active">Sandbox is in effect</string>
     <string name="settings_ext_sandbox_inactive">Sandbox requested but not in effect</string>
     <string name="settings_ext_sandbox_off">Sandbox off</string>

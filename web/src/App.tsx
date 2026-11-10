@@ -44,28 +44,29 @@ import { ExtensionNavPage } from "./views/extensions/ExtensionSlots";
 import { useExtensionPlace } from "./lib/extension-slots";
 import { AttentionSignals } from "./lib/attention-signals";
 
-// The pages a first screen doesn't need load when they are opened (#1996), or once the browser is idle after start
+// The pages a first screen doesn't need load when they are opened (#1996), or as a link to their route is reached
 // (lib/lazy-page.ts); "Chat", Persona and "Overview" stay in the main bundle (the extensions' page too: the sidebar already has
 // ExtensionSlots for its icons).
-const AgentsView = lazyPage(() => import("./views/agents/AgentsView").then((m) => m.AgentsView));
-const WorkspaceBoard = lazyPage(() => import("./views/WorkspaceBoard").then((m) => m.WorkspaceBoard));
-const Machines = lazyPage(() => import("./views/Machines").then((m) => m.Machines));
-const TerminalPage = lazyPage(() => import("./views/terminal/TerminalPage").then((m) => m.TerminalPage));
-const MachineDetail = lazyPage(() => import("./views/machines/MachineDetail").then((m) => m.MachineDetail));
-const SpacePage = lazyPage(() => import("./views/SpacePage").then((m) => m.SpacePage));
-const Settings = lazyPage(() => import("./views/Settings").then((m) => m.Settings));
-const Health = lazyPage(() => import("./views/health/Health").then((m) => m.Health));
-const History = lazyPage(() => import("./views/assistant/History").then((m) => m.History));
-const Profile = lazyPage(() => import("./views/assistant/Profile").then((m) => m.Profile));
-const Routines = lazyPage(() => import("./views/assistant/Routines").then((m) => m.Routines));
-const Inbox = lazyPage(() => import("./views/inbox/Inbox").then((m) => m.Inbox));
-const Messages = lazyPage(() => import("./views/messages/Messages").then((m) => m.Messages));
-const Knowledge = lazyPage(() => import("./views/knowledge/Knowledge").then((m) => m.Knowledge));
-const TodosView = lazyPage(() => import("./views/Todos").then((m) => m.TodosView));
-// The command palette and the new-agent dialog are not on a first screen either: their chunks come with the idle
-// preload above, and each mounts on its first open (useOpened), so ⌘K right after start waits on the network at most once.
-const Palette = lazyPage(() => import("./views/Palette").then((m) => m.Palette));
-const NewAgent = lazyPage(() => import("./views/NewAgent").then((m) => m.NewAgent));
+const AgentsView = lazyPage(() => import("./views/agents/AgentsView").then((m) => m.AgentsView), { routes: ["agents"] });
+const WorkspaceBoard = lazyPage(() => import("./views/WorkspaceBoard").then((m) => m.WorkspaceBoard), { routes: ["workspace-board"] });
+const Machines = lazyPage(() => import("./views/Machines").then((m) => m.Machines), { routes: ["machines"] });
+const TerminalPage = lazyPage(() => import("./views/terminal/TerminalPage").then((m) => m.TerminalPage), { routes: ["terminal"] });
+const MachineDetail = lazyPage(() => import("./views/machines/MachineDetail").then((m) => m.MachineDetail), { routes: ["machine"] });
+const SpacePage = lazyPage(() => import("./views/SpacePage").then((m) => m.SpacePage), { routes: ["space"] });
+const Settings = lazyPage(() => import("./views/Settings").then((m) => m.Settings), { routes: ["settings"] });
+const Health = lazyPage(() => import("./views/health/Health").then((m) => m.Health), { routes: ["health"] });
+const History = lazyPage(() => import("./views/assistant/History").then((m) => m.History), { routes: ["history"] });
+const Profile = lazyPage(() => import("./views/assistant/Profile").then((m) => m.Profile), { routes: ["profile"] });
+const Routines = lazyPage(() => import("./views/assistant/Routines").then((m) => m.Routines), { routes: ["routines"] });
+const Inbox = lazyPage(() => import("./views/inbox/Inbox").then((m) => m.Inbox), { routes: ["inbox"] });
+const Messages = lazyPage(() => import("./views/messages/Messages").then((m) => m.Messages), { routes: ["messages"] });
+const Knowledge = lazyPage(() => import("./views/knowledge/Knowledge").then((m) => m.Knowledge), { routes: ["kb"] });
+const TodosView = lazyPage(() => import("./views/Todos").then((m) => m.TodosView), { routes: ["todos"] });
+// The command palette and the new-agent dialog are not on a first screen either, and a shortcut opens them with no link
+// to reach first: their chunks come once the browser is idle after start, and each mounts on its first open (useOpened),
+// so ⌘K right after start waits on the network at most once.
+const Palette = lazyPage(() => import("./views/Palette").then((m) => m.Palette), { idle: true });
+const NewAgent = lazyPage(() => import("./views/NewAgent").then((m) => m.NewAgent), { idle: true });
 
 // A link with the hub's token (`?token=…` or `#token=…`) signs in without the form. The token leaves the address bar
 // before anything else runs (history, bookmarks, a copied link), and is traded for this browser's own one.

@@ -66,7 +66,7 @@ the hub drops unknown tiers and leaves classification to the model.
 
 - **In the hub**: Go code implements the interfaces directly.
 - **Subprocess** (`connector/proc` ↔ `connector/serve`): first-party code whose dependencies are too large to compile into personad (Telegram's gotd; since #1704 Telegram is an extension using the process extension protocol). The hub starts the program; stdin / stdout carry the same
-  JSON-lines RPC as hub↔node (`internal/rpc`), with methods corresponding to interfaces (`init`, `status`, `archive.changes`, `inbox.collect`, `tools.call`… in `serve.go`).
+  JSON-lines RPC as hub↔node (`internal/rpc`), with methods corresponding to interfaces (`init`, `status`, `archive.changes`, `inbox.collect`, `tools.call`… in `wire.go`).
   The program calls the hub's `secrets.*` in the other direction. At registration the hub gives `proc.Conn` a static manifest (`proc.Config.Manifest`; extensions get it from their
   `persona-plugin.json`), so even connectors that have never started and are off by default can report capabilities and log in/out (#666). The program manifest returned by `init`
   (`serve.Manifest`, snake_case fields on the wire) is checked against it; mismatches are logged and the static one still wins. Built-in extension programs (the WeChat bot) must come from the same build as the hub (`version -v` matches exactly); the protocol is versioned (v2, `docs/protocol/connector-protocol.md`).

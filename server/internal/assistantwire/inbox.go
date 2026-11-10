@@ -20,6 +20,7 @@ import (
 var InboxRoutes = []string{
 	"GET /api/v1/inbox",
 	"GET /api/v1/inbox/done",
+	"GET /api/v1/inbox/done/days",
 	"GET /api/v1/inbox/{id}",
 	"POST /api/v1/inbox/{id}/done",
 	"POST /api/v1/inbox/{id}/draft",

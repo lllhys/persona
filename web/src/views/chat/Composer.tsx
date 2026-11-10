@@ -34,7 +34,7 @@ import { t } from "../../i18n";
 import type { VoiceOffer } from "./voice/VoiceParts";
 
 // Drawn only while an attached image is edited: its own chunk, fetched by the idle preload or the first edit (lib/lazy-page.ts).
-const ImageEditor = lazyPage(() => import("./ImageEditor").then((m) => m.ImageEditor));
+const ImageEditor = lazyPage(() => import("./ImageEditor").then((m) => m.ImageEditor), { idle: true });
 /** How long "Not sent yet" stays under the box after Enter was pressed while blocked. */
 const NUDGE_MS = 4000;
 

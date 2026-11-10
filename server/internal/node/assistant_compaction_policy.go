@@ -16,6 +16,10 @@ import (
 type assistantCompaction struct {
 	window, idle, capacity int
 	ownSettings            string
+	// idleFromWindow: a Claude main conversation whose capacity nothing declares. Its automatic window stays the
+	// main target (Claude Code holds it to the window it knows the model to have), and its idle threshold is capped
+	// once Claude Code reports that window (assistantProc.capIdleCompact).
+	idleFromWindow bool
 }
 
 func compactionLimits(main bool, capacity int) assistantCompaction {
@@ -149,12 +153,65 @@ func (n *Node) assistantCompactionPolicy(launcher, cwd, settings string, executi
 		}
 	}
 	capacity = smallerCapacity(capacity, settingsCapacity(settings, cwd, n.home))
-	if capacity == 0 && execution.IsMain {
+	unknown := capacity == 0
+	if unknown && execution.IsMain && isCodex {
+		// Codex takes model_auto_compact_token_limit as given, past the model's window if need be: a main conversation on
+		// a backend nobody declared keeps the ordinary limit.
 		capacity = assistantCompactWindow
 	}
+	// A Claude main conversation on an undeclared backend gets the main target and no MAX_CONTEXT_TOKENS (#3008): Claude
+	// Code clamps CLAUDE_CODE_AUTO_COMPACT_WINDOW to the window it knows the model to have, so 400K cannot outgrow a
+	// 200K model, while a guessed 200K capacity made a 1M model compact at about 167K.
 	c := compactionLimits(execution.IsMain, capacity)
 	c.ownSettings = ownSettings
+	c.idleFromWindow = unknown && execution.IsMain && !isCodex
 	return c
+}
+
+// claudeModelUsage is one model's entry in a stream-json result's modelUsage: what this process read with it and the
+// context window Claude Code holds it to.
+type claudeModelUsage struct {
+	Input         int `json:"inputTokens"`
+	CacheRead     int `json:"cacheReadInputTokens"`
+	CacheCreate   int `json:"cacheCreationInputTokens"`
+	ContextWindow int `json:"contextWindow"`
+}
+
+// reportedWindow is the context window Claude Code holds the conversation's model to, 0 when it reports none: the
+// entry of model (the model of the conversation's last reply), else the entry that read the most context (a subagent
+// or a helper model reads less than the conversation).
+func reportedWindow(usage map[string]claudeModelUsage, model string) int {
+	if u, ok := usage[model]; ok && model != "" {
+		return u.ContextWindow
+	}
+	most, window := -1, 0
+	for _, u := range usage {
+		read := u.Input + u.CacheRead + u.CacheCreate
+		if read > most || (read == most && u.ContextWindow < window) {
+			most, window = read, u.ContextWindow
+		}
+	}
+	return window
+}
+
+// capIdleCompact caps the idle threshold of a conversation whose capacity nothing declared at 75% of the window Claude
+// Code reports, as compactionLimits does for a declared capacity: on a 200K backend the main conversation still
+// compacts at 150K while its cache is warm instead of waiting for 300K it never reaches. It reports whether the
+// threshold went down; p.mu is held.
+func (p *assistantProc) capIdleCompact(window int) bool {
+	if !p.idleFromWindow || window <= 0 {
+		return false
+	}
+	limit := window / 4 * 3
+	current := p.compactIdleAt
+	if current == 0 {
+		current = assistantIdleCompact
+	}
+	if limit >= current {
+		return false
+	}
+	p.compactIdleAt = limit
+	return true
 }
 
 func (c assistantCompaction) env() []string {

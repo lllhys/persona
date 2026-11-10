@@ -33,9 +33,11 @@ import (
 // A long conversation is compacted (docs/assistant/assistant.md "Compaction"): every restart after the prompt cache expired (an hour)
 // writes the whole context again, half a million tokens for an assistant conversation that had never been compacted.
 // Claude Code compacts on its own once the context nears the auto-compact window, also under -p (tested on 2.1.314):
-// CLAUDE_CODE_AUTO_COMPACT_WINDOW lowers that from the model's 1M to 200K. Its own idle compaction only runs in
-// interactive sessions, so a process about to be let go with more than assistantIdleCompact in context is sent
-// /compact first, while its cache is still warm: the next start reads a summary instead, and nobody waits for it.
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW lowers that from the model's 1M to 200K, 400K for the main conversation, and Claude
+// Code itself keeps it within the window it knows the model to have (assistant_compaction_policy.go caps it further by
+// a declared capacity). Its own idle compaction only runs in interactive sessions, so a process about to be let go with
+// more than its idle threshold (assistantIdleCompact, assistantMainIdleCompact, lower on a smaller window) in context
+// is sent /compact first, while its cache is still warm: the next start reads a summary instead, and nobody waits for it.
 const (
 	assistantCompactWindow     = 200_000
 	assistantIdleCompact       = 150_000
@@ -94,6 +96,11 @@ type assistantProc struct {
 	runtime       string   // proto.AssistantRuntimeAgentSDK when it runs on the bridge (assistant_sdk.go), "" on the CLI
 	fallback      string   // why it runs on the CLI though asked to run on the Agent SDK
 	sdkVersion    string   // the bridge's SDK version (its ready line)
+
+	// idleFromWindow: compactIdleAt is capped by the window Claude Code reports (assistantCompaction.idleFromWindow);
+	// replyModel is the model of the conversation's last reply, whose window that is.
+	idleFromWindow bool
+	replyModel     string
 
 	// usageChecked: how far the transcript was checked for an impossible usage at the end of its turns
 	// (assistant_usage.go); 0: from the start.
@@ -484,6 +491,7 @@ func (n *Node) readAssistant(p *assistantProc, r io.Reader) {
 					Text string `json:"text"`
 				} `json:"delta"`
 				Message struct {
+					Model string `json:"model"`
 					Usage struct {
 						Input       int `json:"input_tokens"`
 						CacheRead   int `json:"cache_read_input_tokens"`
@@ -494,9 +502,10 @@ func (n *Node) readAssistant(p *assistantProc, r io.Reader) {
 			Compact struct {
 				Post int `json:"post_tokens"`
 			} `json:"compact_metadata"`
-			ParentToolUseID *string `json:"parent_tool_use_id"`
-			IsError         bool    `json:"is_error"`
-			Result          string  `json:"result"`
+			ParentToolUseID *string                     `json:"parent_tool_use_id"`
+			IsError         bool                        `json:"is_error"`
+			Result          string                      `json:"result"`
+			ModelUsage      map[string]claudeModelUsage `json:"modelUsage"`
 		}
 		if json.Unmarshal(line, &ev) != nil {
 			p.invalidateUpdateTasks()
@@ -565,6 +574,9 @@ func (n *Node) readAssistant(p *assistantProc, r io.Reader) {
 					if tokens > 0 {
 						p.context = tokens
 					}
+					if m := ev.Event.Message.Model; m != "" {
+						p.replyModel = m
+					}
 					first, p.requested = !p.requested, true
 				}
 				p.mu.Unlock()
@@ -604,11 +616,16 @@ func (n *Node) readAssistant(p *assistantProc, r io.Reader) {
 			p.mu.Lock()
 			manual := p.manual
 			p.manual = false
+			window := reportedWindow(ev.ModelUsage, p.replyModel)
+			capped, idleAt := p.capIdleCompact(window), p.compactIdleAt
 			p.compacting = false
 			p.busy = false
 			p.lastActive = time.Now()
 			p.partial.Reset()
 			p.mu.Unlock()
+			if capped {
+				n.logger.Printf("assistant %s: the model's window is %d tokens, idle compaction at %d", p.id[:8], window, idleAt)
+			}
 			if manual { // the user's /compact ended without a boundary: it did not compact
 				n.compactionEnded(p.id, compactFailure(ev.IsError, ev.Result))
 			}

@@ -335,3 +335,21 @@ func TestDescribeKeepsTheSummaryAndTheCause(t *testing.T) {
 		}
 	}
 }
+
+// A start's new tab that stopped on its shell (#2570): the hub words it with the machine (or "this computer") and
+// the shell's line, in every language, as a task's start_error and an HTTP refusal.
+func TestStartTabRefusalsAreWorded(t *testing.T) {
+	for _, code := range []string{proto.CodeShellWaiting, proto.CodeStartLineRejected} {
+		for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+			on := Sentence(lang, code, map[string]any{"machine_name": "Studio", "line": "Update now? [Y/n]"})
+			here := Sentence(lang, code, nil)
+			if !strings.Contains(on, "Studio") || !strings.Contains(on, "Update now? [Y/n]") || here == "" || strings.Contains(here, "{") {
+				t.Errorf("%s %s: %q / %q", code, lang, on, here)
+			}
+			body := LocalizedBody(http.StatusConflict, code, errors.New("node text"), lang)
+			if body["error"] != i18n.T(lang, "rpc-errors."+code) || body["error"] == "" {
+				t.Errorf("%s %s HTTP: %v", code, lang, body)
+			}
+		}
+	}
+}

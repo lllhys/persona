@@ -377,6 +377,16 @@ nonisolated struct InboxTriageStatus: Codable, Hashable, Sendable {
         var state: String
         var reason: String?
         var waiting: Int
+        /// timeout | rate_limited | login_refused | failed: this round could not read the source, so its items may be old.
+        var readError: String? = nil
+        /// The failed read in the hub's words; older hubs may omit it.
+        var readReason: String? = nil
+
+        private enum CodingKeys: String, CodingKey {
+            case source, name, state, reason, waiting
+            case readError = "read_error"
+            case readReason = "read_reason"
+        }
     }
 }
 
@@ -384,6 +394,21 @@ nonisolated struct InboxTriageStatus: Codable, Hashable, Sendable {
 nonisolated struct InboxListing: Decodable, Sendable {
     var items: [InboxItem]
     var triage: InboxTriageStatus?
+}
+
+/// A page of the hub's done history (GET /api/v1/inbox/done, #2200): done items older than the list's few days, newest
+/// done first; `next` is where the following page starts, present when this one is full.
+nonisolated struct InboxDonePage: Decodable, Sendable {
+    nonisolated struct Cursor: Codable, Sendable, Equatable {
+        var before: String
+        var beforeID: String
+        enum CodingKeys: String, CodingKey {
+            case before
+            case beforeID = "before_id"
+        }
+    }
+    var items: [InboxItem]
+    var next: Cursor?
 }
 
 extension APIClient {
@@ -402,6 +427,17 @@ extension APIClient {
     /// The same with how triage stands.
     func inboxListing(connectors: Bool = false) async throws -> InboxListing {
         try await Self.decodeInbox(request("GET", "/api/v1/inbox", query: connectors ? ["sources": "all"] : [:]))
+    }
+
+    /// A page of done items older than the list's (GET /api/v1/inbox/done, #2200), from `after` (nil: the newest).
+    func inboxDone(after cursor: InboxDonePage.Cursor?, limit: Int = 100, connectors: Bool = false) async throws -> InboxDonePage {
+        var query = ["limit": String(limit)]
+        if connectors { query["sources"] = "all" }
+        if let cursor {
+            query["before"] = cursor.before
+            query["before_id"] = cursor.beforeID
+        }
+        return try await JSON.decoder.decode(InboxDonePage.self, from: request("GET", "/api/v1/inbox/done", query: query))
     }
 
     /// Collects Feishu and mail now, then lists.

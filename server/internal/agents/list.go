@@ -49,7 +49,7 @@ func (s *Service) refreshListIndex(ctx context.Context, opts sessionlist.Options
 			continue
 		}
 		_, err := s.sessionsOf(ctx, src, false)
-		if err != nil && opts.Source == "" && s.many() {
+		if err != nil && opts.Source == "" && s.skipsFailed(src.Name()) {
 			s.logf("agents: %s: paginated sessions: %v", src.Name(), err)
 			s.listIndex.RemoveSource(src.Name()) // match legacy aggregate behavior: unavailable sources are omitted
 			continue

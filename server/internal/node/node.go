@@ -55,6 +55,13 @@ type Node struct {
 	// claudeStart, claudeReady: when set, how long a start waits for the shell to run claude, then for claude's
 	// input box, in place of claudeStartWait and claudeReadyWait (tests; claudeready.go).
 	claudeStart, claudeReady time.Duration
+	// shellSettle, shellQuiet, shellAsk: when set, how long a start waits at most for a new tab's shell to settle, how
+	// long its screen must stay the same, and how long a startup question may stay on screen, in place of
+	// shellSettleWait, shellQuietFor and shellQuestionWait (tests; shellsettle.go).
+	shellSettle, shellQuiet, shellAsk time.Duration
+	// shellPause: when set, a start pauses this long instead of watching the new tab's shell, the fixed pause before
+	// #2570 (tests whose herdr call traces have no room for the settle wait's reads; shellsettle.go).
+	shellPause time.Duration
 
 	// doctorAt replaces the places node.doctor looks at (tests; doctor_rpc.go).
 	doctorAt func() DoctorOptions
@@ -181,6 +188,8 @@ type Node struct {
 	codexStarting map[string]bool
 	// codexAbandoned: failed starts whose pane could not be closed; a retry must close it before opening another.
 	codexAbandoned map[string][]codexAbandonedStart
+	// keptStarts: the tabs of failed starts kept open for a while, by pane (shellsettle.go keepStartTab); n.mu.
+	keptStarts map[string]keptStart
 
 	expectedTokensMu sync.Mutex
 	expectedTokens   map[string]map[string]string

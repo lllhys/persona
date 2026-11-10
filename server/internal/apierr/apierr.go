@@ -209,9 +209,12 @@ var rpcFailureKeys = map[string]string{
 	"prompt_changed":           "rpc-errors.prompt_changed",
 	"attach_busy":              "rpc-errors.attach_busy",
 	proto.CodeTerminalNotReady: "rpc-errors.terminal_not_ready",
-	"node_outdated":            "rpc-errors.node_outdated",
-	"readonly_unsupported":     "rpc-errors.readonly_unsupported",
-	"assistant_in_doubt":       "rpc-errors.in_doubt",
+	// a start's new tab stopped on its shell (node/shellsettle.go, #2570)
+	proto.CodeShellWaiting:      "rpc-errors.shell_waiting",
+	proto.CodeStartLineRejected: "rpc-errors.start_line_rejected",
+	"node_outdated":             "rpc-errors.node_outdated",
+	"readonly_unsupported":      "rpc-errors.readonly_unsupported",
+	"assistant_in_doubt":        "rpc-errors.in_doubt",
 	// queued messages sent now (#6088)
 	"nothing_queued":        "rpc-errors.nothing_queued",
 	"send_now_unsupported":  "rpc-errors.send_now_unsupported",
@@ -340,6 +343,15 @@ func Sentence(l i18n.Lang, code string, data map[string]any) string {
 	switch code {
 	case "readonly_unsupported", proto.CodeDirectoryUntypable: // the request refused, with nothing to name
 		return i18n.T(l, rpcFailureKeys[code])
+	}
+	if code == proto.CodeShellWaiting || code == proto.CodeStartLineRejected { // a start's new tab (node/shellsettle.go, #2570)
+		machine, _ := data["machine_name"].(string)
+		line, _ := data["line"].(string)
+		key := "apierr-apierr." + code
+		if machine == "" {
+			key += "_here"
+		}
+		return i18n.T(l, key, i18n.Args{"machine": machine, "line": line})
 	}
 	if _, ok := codeActions[code]; !ok {
 		return ""

@@ -1,5 +1,12 @@
 # Lessons: Android
 
+## Installed extension details need their own dependency metadata (#1315)
+
+Decoding dependency and pack fields in an installation preview does not retain them in the installed detail's separate
+decoder. Keep both there and use that manager-bound response for inspection; a pack's declared member constraints are
+not proof that its members are installed or ready. Missing fields on older hubs hide the sections, while unknown
+dependency states remain explicit and ask to refresh details rather than preview another installation.
+
 ## Latest chat text needs both a stable slot and fresh Markdown (#2602)
 
 Changing only default-open flags leaves Agent running-step previews visible. Remove the preview and tool-card exceptions, keep every call in the manual trace, and key the outside reply by its turn slot rather than its changing message ID. Preserve the actual ID for menus, jumps and receipts. `produceState` retains its previous value when keys change: a stable slot can therefore briefly draw the predecessor's parsed Markdown even after the text has changed. Carry the parse's source identity and render it only when it matches the current source; show the new plain text while parsing. A regression must render running → new text → completed under the same key, not just compare pure line lists. Test every conversation type × style × appearance, manual toggles, completion folding and restored hub-fold loading. A background wake continues the same genuine user exchange: do not truncate ordered/process rows after its latest reply or divert tail tools into a noninteractive drawer. A wake after an away recap must mark the real reopened turn live, not add a second empty working placeholder.
@@ -87,6 +94,10 @@ Pitfalls in the new multi-module Android App (`android/`, `docs/android/android.
 
 ## UI and Compose
 
+- **A control meant to "look like the chips" must be the chip** (#2956). #2920 rebuilt the Assistant entries as a new row
+  (44 dp, control radius, its own padding) next to `JChip` (36 dp, chip radius), and they visibly grew. Draw such controls
+  with `JChip` / `JChipTokens`, add an optional parameter for what is missing (`dot`), and assert the rendered height
+  against `JChipTokens.height` in a Robolectric test.
 - A settings sheet must register every settings child, including Assistant configuration (#2589). Otherwise that row closes the sheet and returns to the home instead of Settings. Accepted external links must dismiss shell overlays before navigating, so their destination is actually visible. A drawer's accessibility semantics fence does not block hardware-keyboard focus; prevent focus from entering the obscured main content as well.
 - System-font TextStyle can leave lineHeight unspecified (#2589). Converting it directly through Density throws before the composer renders. Measure the actual font line with TextMeasurer when no Sp line height is provided; retain explicit style line heights where present, and test normal and large system text. Do not invent a global content line-height multiplier merely to satisfy a layout calculation.
 - Same navigation labels do not establish iPhone visual parity (#2589). Pin the iPhone default style, language, appearance, text size and source revision; distinguish custom app chrome from system List, sheet, font and icon behavior. Own the side drawer and settings sheet at shell scope, and distinguish closing Settings from popping a settings child. Keep Android's legal assets and contrast floors; adjust text hues rather than weakening tests to copy a lower-contrast system accent.

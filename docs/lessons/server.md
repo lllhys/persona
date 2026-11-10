@@ -1400,6 +1400,7 @@ A connector that folds several notifications into one thread (GitHub CI failures
 
 - `regexp`'s `ReplaceAllString` and a `strings.Replacer` return a fresh copy of the text even when nothing in it matches. Run per line of every session's last words (`transcript.AskOf`), a list-mark regexp and a Markdown replacer copied each line two or three times for nothing. Cut a fixed prefix by hand (compare it with the regexp it replaces on edge cases, `TestCutListMarkMatchesRegexp`), check for the marks before running a replacer, and use `lazyre.NewGated` for a pattern most texts lack: its string replacements give such a text back as it is.
 - An answer of thousands of rows built as one slice and one buffer (`GET /api/v1/sessions` for older clients, about 10 MB for 8,000 sessions) costs memory in proportion to the answer on every request. Encode it a row at a time into a small buffer and write that out as it fills (`writeSessionLists`); compare the bytes with the old whole encoding. Benchmark such a handler with a `ResponseWriter` that keeps nothing: an `httptest.ResponseRecorder` holds the whole body, and its growth hides what the handler itself allocates.
+- A map keyed by a text keeps the text, and a substring keeps the whole string it was cut from. `transcript.Meta.notified` kept every task notification a node had shown, whole, to know a repeat, and `taskCalls` kept ids cut from them; a node keeps one `Meta` per transcript for its uptime, so two steady heap profiles of a real corpus had 5 and 12 MB of notification text in use. Key such a set by a digest (`noticeKey`, 128 bits of SHA-256) and `strings.Clone` the pieces that are kept. Check it with `runtime.ReadMemStats` around reading many large notifications (`TestTaskNotificationsAreNotKept`, #2864), and look at a heap profile's `inuse_space`, not `alloc_space`: the copies are cheap to make and costly to keep.
 
 ## Hot paths: a whole-input check before decoding, a list copied to read a few rows (2026-11-09, #1755)
 
@@ -1549,6 +1550,11 @@ pending count to drop, pass with the rule deleted.
   page still runs, makes `jsonb_typeof('…')` or `jsonb_typeof($1)` with an unknown-typed argument fail in the whole
   database (`function jsonb_typeof(unknown) is not unique`). Every existing call passes a typed value; new SQL casts
   the argument (`$1::jsonb`) until a later migration drops the shim, once no pre-0471 build can run.
+- **The start read decodes from the driver's buffer, so an inbox type must not keep its input.** `InboxItems` hands
+  each row as `rows.RawValues()[0]`, which the next row overwrites. `encoding/json` copies every string and
+  `json.RawMessage` it keeps, so `InboxItem` holds none of the buffer; a custom `UnmarshalJSON` on any type inside it
+  must copy what it keeps too, or the items loaded share bytes the driver reuses. `TestInboxItemsAllocationBudget`
+  fails if the read starts copying rows again (6 allocations per 200-row read; collecting the rows took 616).
 
 ## Optional filesystem labels must not gate inventory (2026-11-10, #2750)
 

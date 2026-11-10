@@ -35,6 +35,15 @@ class ExtensionSettingsShotsTest {
         origin = "market:example/example-notes", form = listOf(ExtensionField("folder", title = "Folder")),
         config = buildJsonObject { put("folder", "Notes") }, secrets = listOf(ExtensionSecret("api_key", title = "API key", set = true)))
     private val weather = ExtensionDetail(HubExtension("example-weather", "Example Weather", "ui", "running", source = "hub.json", enabled = true), readOnly = true)
+    private val pack = notes.copy(extension = notes.extension.copy(id = "example-pack", name = "Example Pack"),
+        depends = listOf(
+            ExtensionDependency("base", name = "Base", version = ">=2.0.0", state = "old", installed = "1.0.0"),
+            ExtensionDependency("missing", state = "missing"),
+            ExtensionDependency("waiting", state = "not_ready"),
+            ExtensionDependency("ready", state = "ok"),
+            ExtensionDependency("disabled", state = "disabled"),
+            ExtensionDependency("future", state = "new-state")),
+        extensionPack = listOf(ExtensionPackMember("example-notes", "example", "^1.0.0"), ExtensionPackMember("other")))
 
     private fun show(detail: ExtensionDetail) {
         var style by mutableStateOf(AppStyle.Glass)
@@ -58,6 +67,19 @@ class ExtensionSettingsShotsTest {
         rule.onNodeWithText("检查更新").assertExists()
         rule.onNodeWithText("自动升级").assertExists()
         rule.onNodeWithText("卸载").assertExists()
+        if (detail.extensionPack.isNotEmpty()) {
+            rule.onNodeWithText("Base · >=2.0.0 · 版本不足（现在是 1.0.0）").assertExists()
+            rule.onNodeWithText("missing · 未安装").assertExists()
+            rule.onNodeWithText("waiting · 依赖未就绪").assertExists()
+            rule.onNodeWithText("ready · 已满足").assertExists()
+            rule.onNodeWithText("future · 状态未知，请刷新详情").assertExists()
+            rule.onNodeWithText("example-notes").assertExists()
+            rule.onNodeWithText("^1.0.0 · example").assertExists()
+            rule.onNodeWithText("other").assertExists()
+        } else {
+            rule.onNodeWithText("依赖").assertDoesNotExist()
+            rule.onNodeWithText("合集成员").assertDoesNotExist()
+        }
         if (detail.extension.source != "installed") {
             rule.onNodeWithText("检查更新").assertIsNotEnabled()
             rule.onNodeWithText("自动升级").assertIsNotEnabled()
@@ -86,6 +108,7 @@ class ExtensionSettingsShotsTest {
     @Test fun builtinVoiceInEveryStyle() = show(voice)
     @Test fun marketNotesInEveryStyle() = show(notes)
     @Test fun configuredWeatherInEveryStyle() = show(weather)
+    @Test fun installedPackInEveryStyle() = show(pack)
 
     @Test fun lifecycleWritesAndChecksDoNotSubmitDirtyConfiguration() {
         var current = notes

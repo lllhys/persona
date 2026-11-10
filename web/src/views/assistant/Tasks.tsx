@@ -1135,6 +1135,10 @@ export const TaskQuestions = memo(function TaskQuestions({ conversation }: { con
   );
 });
 
+/** The dock's capsule: "All", the task pills and the Assistant's Pending / Progress / Agents entries share one height,
+ *  radius, padding and type size, like iOS DockPillLabel (#2999). */
+export const DOCK_CAPSULE = "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-full px-3 text-[12.5px]";
+
 /** The dock: "All N" held at its left edge (it does not scroll), then a pill for each task going on (waiting first) and,
  * in the main conversation, each agent going on that no task stands for (#1113), scrolling on their own (iOS TaskDock). */
 // Failed, done and stopped tasks are not in the dock.
@@ -1160,6 +1164,8 @@ function dockTasksIn(s: State, conversation: string, plans: Record<string, TaskP
 }
 
 type AssistantTray = "pending" | "progress" | "agents";
+/** Each tray entry's mark: Pending waits on you, Progress is work under way, Agents are the sessions themselves. */
+const TRAY_DOT: Record<AssistantTray, string> = { pending: "bg-attention", progress: "bg-accent", agents: "bg-green" };
 const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
 
@@ -1280,7 +1286,31 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
           </div>}
         </section>
       )}
-      <div className="grid grid-cols-3 gap-2">{(["pending", "progress", "agents"] as const).map((key) => <button key={key} type="button" aria-expanded={tray === key} aria-controls={tray === key ? trayId : undefined} onClick={() => setTray((old) => old === key ? null : key)} className={cx("flex min-w-0 items-center gap-1 whitespace-nowrap rounded-control px-2 py-2 text-sm", tray === key ? "bg-surface shadow-card" : "bg-field hover:bg-hover")}><Icon name={key === "pending" ? "hand" : key === "progress" ? "todo" : "agent"} className={cx("shrink-0", key === "pending" && pendingCount ? "text-attention" : "text-ink-2")} /><span className="min-w-0 flex-1 truncate font-medium">{labels[key]}</span>{counts[key] > 0 && <span className="shrink-0 text-xs text-ink-2 tabular-nums">{counts[key]}</span>}</button>)}</div>
+      {/* The entries are the dock's old "All" / task capsules (DOCK_CAPSULE), content-wide at the leading edge; the
+          open tray is the selected capsule. The scroller pads by the focus ring's width and takes it back, as the
+          dock's did, so a large font scrolls sideways instead of clipping the ring. */}
+      <div className="scrollbar-none -my-1 flex min-w-0 items-center gap-2 overflow-x-auto py-1">
+        {(["pending", "progress", "agents"] as const).map((key) => {
+          const open = tray === key;
+          // An empty Pending is drawn quiet (grey) but still opens "All caught up".
+          const quiet = key === "pending" && !pendingCount;
+          return (
+            <button
+              key={key}
+              type="button"
+              data-tray-entry={key}
+              aria-expanded={open}
+              aria-controls={open ? trayId : undefined}
+              onClick={() => setTray((old) => (old === key ? null : key))}
+              className={cx(DOCK_CAPSULE, "gap-2 font-medium", open ? "bg-ink text-surface" : quiet ? "bg-field text-ink-3 hover:bg-hover" : "bg-field text-ink hover:bg-hover")}
+            >
+              <span aria-hidden className={cx("size-2 shrink-0 rounded-full", quiet ? "bg-ink-3" : TRAY_DOT[key])} />
+              <span>{labels[key]}</span>
+              {counts[key] > 0 && <span className={cx("tabular-nums", !open && "text-ink-2")}>{counts[key]}</span>}
+            </button>
+          );
+        })}
+      </div>
       {board && <TaskBoard open conversation={conversation} onClose={() => setBoard(false)} />}
     </div>
   );
@@ -1295,8 +1325,7 @@ export const TaskDock = memo(function TaskDock({ conversation }: { conversation:
   const going = useStoreRows((s) => dockTasksIn(s, conversation, plans));
   const mine = useStore((s) => s.todos.filter((t) => t.origin === conversation).length);
   if (mine === 0 && agents.length === 0) return null;
-  // "All" and the pills share one capsule (height, radius, padding, size), like iOS DockPillLabel.
-  const capsule = "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-full px-3 text-[12.5px]";
+  const capsule = DOCK_CAPSULE;
   const pill = cx(capsule, "max-w-[240px] gap-2 font-semibold");
   return (
     // Top-aligned, so a scrollbar an engine still draws under the pills cannot push "All" down from them (#1381).

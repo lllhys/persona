@@ -52,18 +52,31 @@ func Assistant(ctx context.Context, build update.Build, args []string, stdin io.
 // it, so its service does not (RestartPreventExitStatus=2).
 func Manager(ctx context.Context, build update.Build, args []string) error {
 	err := manager.Main(ctx, build, args, os.Stdout)
+	if code, done := managerExit(err, os.Stderr); done {
+		os.Exit(code)
+	}
+	return err
+}
+
+// managerExit is how Manager ends on err: a usage mistake prints what was wrong (a flag's message, when it says) and
+// the usage on stderr with exit 2, -h exits 0, a configuration mistake prints it with exit 2. done false: err is the
+// caller's to report.
+func managerExit(err error, stderr io.Writer) (code int, done bool) {
 	var ce manager.ConfigError
 	switch {
 	case errors.Is(err, manager.ErrUsage):
-		fmt.Fprint(os.Stderr, clitext.Named(manager.Usage))
-		os.Exit(2)
+		if err != manager.ErrUsage { // it says what was wrong
+			fmt.Fprintln(stderr, err)
+		}
+		fmt.Fprint(stderr, clitext.Named(manager.Usage))
+		return 2, true
 	case errors.Is(err, manager.ErrHelp):
-		os.Exit(0)
+		return 0, true
 	case errors.As(err, &ce):
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, err)
+		return 2, true
 	}
-	return err
+	return 0, false
 }
 
 // TailcatKey prints the built-in manager's tailcat key, made the first time: the computers reached over tailcat trust

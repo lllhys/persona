@@ -34,9 +34,62 @@ final class InboxStore {
 
     var open: [InboxItem] { items.filter { !$0.isDone } }
 
+    // MARK: Done's history (#2200)
+
+    /// Done items older than the list's few days, from the hub's history (GET /api/v1/inbox/done), newest done first.
+    private(set) var history: [InboxItem] = []
+    /// The hub may have more history: true until a page comes back without a next one, or a hub without it (404).
+    private(set) var historyMore = true
+    private(set) var historyLoading = false
+    @ObservationIgnored private var historyNext: InboxDonePage.Cursor?
+
+    /// One more page of Done's history (the first when Done is shown). A failure (offline) is tried again next time.
+    func loadOlderDone() {
+        guard historyMore, !historyLoading, let api = AppModel.shared.api else { return }
+        historyLoading = true
+        Task {
+            defer { historyLoading = false }
+            do {
+                let page = try await api.inboxDone(after: historyNext, connectors: Self.drawsConnectors)
+                // the default manager's (no header): stamped as the merged list stamps them, so an item in both is one key
+                let stamp = AppModel.shared.managerRoster.flatMap { $0.isMulti ? $0.defaultID : nil }
+                let items = page.items.map { it in
+                    guard it.manager == nil, let stamp else { return it }
+                    var it = it
+                    it.manager = stamp
+                    return it
+                }
+                let known = Set(history.map(\.key))
+                history += items.filter { !known.contains($0.key) }
+                historyNext = page.next
+                historyMore = page.next != nil
+            } catch let e as APIError where e.status == 404 || e.status == 405 {
+                historyMore = false // a hub from before the history: Done shows what the list has
+            } catch {}
+        }
+    }
+
+    /// Move Back on an item only the history has (done before the list's days): the hub takes it back into its list.
+    private func reopenFromHistory(_ item: InboxItem) {
+        guard let api = AppModel.shared.api?.manager(item.manager), history.contains(where: { $0.key == item.key }) else { return }
+        Haptics.tap()
+        Task {
+            do {
+                try await api.setInboxDone(item.id, false)
+                history.removeAll { $0.key == item.key }
+                reload()
+            } catch {
+                AppModel.shared.show(error)
+            }
+        }
+    }
+
     /// Entering or leaving Demo Mode: the other side's items must not show for a moment.
     func forget() {
         items = []
+        history = []
+        historyMore = true
+        historyNext = nil
         triage = nil
         error = nil
         saver.run { StateCache.save(Self.stateName, [InboxItem]()) }
@@ -227,7 +280,10 @@ final class InboxStore {
     }
 
     func setDone(_ item: InboxItem, _ done: Bool, haptic: Bool = true) {
-        guard let i = items.firstIndex(where: { $0.key == item.key }) else { return }
+        guard let i = items.firstIndex(where: { $0.key == item.key }) else {
+            if !done { reopenFromHistory(item) }
+            return
+        }
         let before = items[i]
         items[i].doneAt = done ? .now : nil
         items[i].doneBy = done ? "user" : nil

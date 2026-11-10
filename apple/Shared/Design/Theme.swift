@@ -415,6 +415,12 @@ nonisolated enum Theme {
         var extraLeading: CGFloat { max(0, lineHeight - 1.19) * size }
     }
 
+    /// How faint something is drawn that can't be acted on for now: rows that can't be picked while selecting (the
+    /// inbox's Select, #2059; the web uses the same 45%).
+    enum Fade {
+        static let unavailable: Double = 0.45
+    }
+
     /// How much of a rich card must intersect the scroll viewport before its isolated content runs.
     enum Visibility {
         static let richCardThreshold: Double = 0.01

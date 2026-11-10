@@ -38,6 +38,13 @@ interface InboxAssistantTransport {
      */
     suspend fun bulk(items: List<InboxDoneTarget>, action: InboxBulkAction): JsonObject =
         setDone(items, action != InboxBulkAction.Reopen)
+    /**
+     * One page of [manager]'s done history (`GET /api/v1/inbox/done`, #2200; null: the default manager): newest done
+     * first, from after the entry [before] / [beforeId] (both null: the newest), answering `{items, next?: {before, before_id}}`.
+     * A cursor is one manager's, so each is asked on its own. Old hubs: 404.
+     */
+    suspend fun doneHistory(manager: String?, before: String?, beforeId: String?, limit: Int = 50): JsonObject =
+        throw UnsupportedOperationException("Done history unavailable")
     suspend fun reply(itemId: String?, feedId: String?, text: String, clientId: String): JsonObject
     /** Hands an item to its manager's main chat (`POST /api/v1/inbox/{id}/handoff`), answering `{item, session}`. */
     suspend fun handOff(itemId: String, text: String, clientId: String): JsonObject =

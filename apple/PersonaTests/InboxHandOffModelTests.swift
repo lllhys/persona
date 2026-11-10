@@ -129,6 +129,9 @@ struct InboxHandOffModelTests {
         let assistant = try session("assistant", assistant: true)
         let got = InboxHandOffModel.agents([good, viewOnly, offline, offlineMachine, assistant], limit: 8) { $0.id == "m" }
         #expect(Set(got.map(\.sessionID)) == ["good"])
+        // A source's remembered Agent (#2121) passes the same test, so one that can't take it now counts as gone.
+        let takes = [good, viewOnly, offline, offlineMachine, assistant].map { s in InboxHandOffModel.takes(s) { $0.id == "m" } }
+        #expect(takes == [true, false, false, false, false])
     }
 
     @Test func aRefusedAgentSendKeepsTheItemAndSheet() async {

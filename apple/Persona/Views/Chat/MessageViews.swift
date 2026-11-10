@@ -861,66 +861,6 @@ struct NoticeRow: View {
     }
 }
 
-/// Under an answer: background tasks reported back after it. Short and quiet; tap for what the agent did next.
-struct WakeChip: View {
-    var notices: [Item]
-    var live: Bool
-    var open: () -> Void
-
-    var body: some View {
-        let summary = notices.count == 1 ? NoticeRow.wakeSummary(notices[0]) : nil
-        let failed = notices.contains { NoticeRow.wakeSummary($0).failed }
-        Button(action: open) {
-            HStack(spacing: Theme.Space.sm) {
-                if live {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    ThemedIcon(failed ? Theme.Icon.errorFilled : Theme.Icon.notification)
-                        .foregroundStyle(failed ? Theme.danger : Theme.accent)
-                }
-                Text(live ? String(localized: "Background task done · Processing") : summary?.text ?? String(localized: "\(notices.count) background tasks done"))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong)
-            }
-            .font(Theme.Font.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, Theme.Space.m)
-            .padding(.vertical, Theme.Space.sm)
-            .background(Theme.Fill.well, in: .capsule)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel("Background task done, view the messages after it")
-    }
-}
-
-/// The drawer behind a WakeChip: which tasks reported back, then what the agent did and said after.
-struct WakeDrawer<Content: View>: View {
-    @Environment(\.dismiss) private var dismiss
-    var notices: [Item]
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Space.l) {
-                    content()
-                }
-                .padding(Theme.Space.l)
-            }
-            .closesMessageBar()
-            .background(Theme.pageBackground)
-            .navigationTitle(notices.count > 1 ? String(localized: "\(notices.count) background tasks done") : String(localized: "Background Task Done"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-}
-
 /// Claude Code's "while you were away" recap: like a background task's report, one short line ("While You Were Away · 10:02 ›");
 /// the recap itself opens in a drawer. Several in a row are one line ("While You Were Away · 3 times · 10:02 ›"), the newest first
 /// in the drawer.

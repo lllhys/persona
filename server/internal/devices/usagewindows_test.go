@@ -180,6 +180,45 @@ func TestMergeUsageAccountsOrdersByThePlanWindows(t *testing.T) {
 	}
 }
 
+// An account read on computers names them (#1907): a phone or another computer cannot tell "this computer" apart from
+// the device in hand. The same account on two computers names both; a node's own say is not taken, a rename is.
+func TestUsagePollNamesTheComputersThatReadAnAccount(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	week := now.Add(3 * 24 * time.Hour)
+	machine := func(id, name string, used float64) usageSource {
+		return usageSource{id: id, name: name, online: true, ask: func(context.Context) (proto.UsageSnapshot, error) {
+			return proto.UsageSnapshot{Enabled: true, Accounts: []proto.UsageAccount{{Provider: "codex", Name: "Codex Pro", SampledAt: now,
+				Machines: []string{"what the node says"}, Windows: []proto.UsageWindow{uw("7d", 10080, used, week)}}}}, nil
+		}}
+	}
+	var u usageWindowsHub
+	u.gateways = func(time.Time) []proto.UsageAccount {
+		return []proto.UsageAccount{{Provider: "claude", Name: "seat", SampledAt: now, Sources: []string{"Relay"}, Windows: []proto.UsageWindow{uw("7d", 10080, 1, week)}}}
+	}
+	got := u.poll(context.Background(), []usageSource{machine("m2", "Studio", 10), machine("m1", "", 20)}, now)
+	if len(got) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	for _, a := range got {
+		switch a.Provider {
+		case "codex": // one account on two computers; one without a name goes by its id
+			if !a.Local || !slices.Equal(a.Machines, []string{"Studio", "m1"}) {
+				t.Errorf("codex: %+v", a)
+			}
+		case "claude":
+			if a.Local || a.Machines != nil {
+				t.Errorf("a gateway-only account names no computer: %+v", a)
+			}
+		}
+	}
+	got = u.poll(context.Background(), []usageSource{machine("m2", "Mac Studio", 10), machine("m1", "", 20)}, now.Add(usageHubFresh+time.Second))
+	for _, a := range got {
+		if a.Provider == "codex" && !slices.Equal(a.Machines, []string{"Mac Studio", "m1"}) {
+			t.Errorf("renamed: %+v", a)
+		}
+	}
+}
+
 // Every account in the answer has its own id (#1904): the clients use it as a row key, and same-name numbering follows
 // it. Two accounts of one gateway, and accounts with no reset time, used to share one.
 func TestMergeUsageAccountsGivesEveryAccountItsOwnID(t *testing.T) {

@@ -60,6 +60,7 @@ function AgentList({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
 function BoundedAgentList({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const prefs = useAgentPrefs();
+  const { sessions, loaded, error, hints } = useAgentList();
   return <div className="flex h-full flex-col">
     <Header title={t("agents-agentsview.title")} sub={t("agents-agentsview.subtitle")} onToggleSidebar={onToggleSidebar} />
     <div className="min-h-0 flex-1 overflow-y-auto"><div className={SESSION_LIST_STYLE.personalPage}>
@@ -70,6 +71,7 @@ function BoundedAgentList({ onToggleSidebar }: { onToggleSidebar: () => void }) 
         </a>
         <button type="button" aria-label={t(prefs.pins.includes(s.id) ? "agents-agentsview.unpin" : "agents-agentsview.pin")} onClick={() => updateAgentPrefs((x) => togglePin(x, s.id))} className={SESSION_LIST_STYLE.pinButton}><Icon name="pin" size={SESSION_LIST_METRICS.icon} /></button>
       </div>} />
+      {loaded && !error && !sessions.length && hints.map((h) => <p key={h} className="mb-1 px-2 text-[13px] text-ink-3">{h}</p>)}
       <RemovedAgents />
     </div></div>
   </div>;

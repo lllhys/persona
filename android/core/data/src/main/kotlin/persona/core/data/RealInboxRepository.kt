@@ -407,6 +407,29 @@ class RealInboxRepository(
         }
     }
 
+    /**
+     * One page of a manager's done history (#2200, #2576), its items as the list's records (the app's ids, the manager
+     * stamped). Kept out of the snapshot: the inbox page merges it under Done. An old hub (404) has none.
+     */
+    override suspend fun doneHistory(manager: String?, cursor: persona.feature.inbox.InboxDoneCursor?): persona.feature.inbox.InboxDonePage {
+        val transport = requireTransport()
+        val body = try {
+            transport.doneHistory(manager?.takeIf { it.isNotBlank() }, cursor?.before, cursor?.beforeId)
+        } catch (e: UnsupportedOperationException) {
+            return persona.feature.inbox.InboxDonePage()
+        } catch (e: Exception) {
+            if ((e as? persona.core.contracts.api.HubCodedFailure)?.status == 404) return persona.feature.inbox.InboxDonePage()
+            throw e
+        }
+        if (!owns(transport)) throw CancellationException("Pairing changed")
+        val data = body.array("items").mapNotNull { it as? JsonObject }.map { item ->
+            // the page is one manager's: an item it didn't stamp is still that manager's
+            if (manager.isNullOrBlank() || item["manager"] != null) item else JsonObject(item + ("manager" to JsonPrimitive(manager)))
+        }
+        val next = body.obj("next")?.let { n -> n.string("before").takeIf { it.isNotBlank() }?.let { persona.feature.inbox.InboxDoneCursor(it, n.string("before_id").ifBlank { null }) } }
+        return persona.feature.inbox.InboxDonePage(listed(data, transport), next)
+    }
+
     /** What the managers answered to a bulk action, in the app's ids, and the items it changed as the hub has them now. */
     private class BulkOutcome(val result: InboxBulkResult, val changed: List<Pair<InboxRecord, JsonObject>>)
 

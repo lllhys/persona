@@ -5,6 +5,7 @@
     <string name="settings_ext_dep_disabled">需要先启用</string>
     <string name="settings_ext_dep_old">版本不足（现在是 %1$s）</string>
     <string name="settings_ext_dep_unknown">状态未知，重新预览</string>
+    <string name="settings_ext_dep_unknown_installed">状态未知，请刷新详情</string>
     <string name="settings_ext_sandbox_active">沙箱正在生效</string>
     <string name="settings_ext_sandbox_inactive">要求了沙箱，但现在没开起来</string>
     <string name="settings_ext_sandbox_off">未启用沙箱</string>

@@ -7,7 +7,7 @@ import { getFeedState, loadFeed, type FeedItem, type TaskPlan } from "../../lib/
 import { getPanel, closePanel } from "../../lib/panel";
 import { putTodo, refresh, refreshTodos, reset, upsertSession } from "../../lib/store";
 import type { Todo } from "../../lib/todos";
-import { AssistantActionBar, FeedLineView } from "./Tasks";
+import { AssistantActionBar, DOCK_CAPSULE, FeedLineView, TaskDock } from "./Tasks";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const at = "2026-11-10T08:00:00Z";
@@ -53,6 +53,8 @@ afterEach(() => {
   delete getFeedState().taskCards[conversation];
   vi.unstubAllGlobals();
 });
+const entries = () => [...host.querySelectorAll<HTMLButtonElement>("[data-assistant-actionbar] [data-tray-entry]")];
+const entry = (key: string) => host.querySelector<HTMLButtonElement>(`[data-assistant-actionbar] [data-tray-entry="${key}"]`)!;
 const click = (label: string) => {
   const button = [...host.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
   expect(button).toBeDefined();
@@ -61,8 +63,7 @@ const click = (label: string) => {
 
 describe("Assistant task progress trays", () => {
   it("keeps three entries in order, collapses by default and replaces conversation cards with one hint", () => {
-    const entries = host.querySelector("[data-assistant-actionbar] > .grid")!;
-    expect([...entries.querySelectorAll("button")].map((button) => button.textContent)).toEqual([`${t("assistant-tasks.tray_pending")}`, `${t("assistant-tasks.tray_progress")}1`, `${t("assistant-tasks.tray_agents")}1`]);
+    expect(entries().map((button) => button.textContent)).toEqual([`${t("assistant-tasks.tray_pending")}`, `${t("assistant-tasks.tray_progress")}1`, `${t("assistant-tasks.tray_agents")}1`]);
     expect(host.querySelector("section")).toBeNull();
     expect(host.querySelectorAll("[data-dispatch-hint]")).toHaveLength(1);
     expect(host.textContent).not.toContain("Demo result");
@@ -103,7 +104,7 @@ describe("Assistant task progress trays", () => {
     const firstRound = { outcome: "decide" as const, verdict: "Choose the rollout", recommend: "Use the demo rollout", asked_at: at };
     todo = { ...todo, ask: firstRound, supervision: { ...todo.supervision!, state: "needs_user" } };
     await act(async () => putTodo(todo));
-    act(() => (host.querySelector('[data-assistant-actionbar] > .grid button') as HTMLButtonElement).click());
+    act(() => (entry("pending")).click());
     expect(host.querySelectorAll('[data-brief-row="accept"]')).toHaveLength(1);
     expect(host.textContent).not.toContain(t("assistant-tasks.review_needs_user"));
     const first = [...host.querySelectorAll("button")].find((button) => button.textContent?.trim() === t("assistant-brief.take"))!;
@@ -125,15 +126,50 @@ describe("Assistant task progress trays", () => {
     const draft: FeedItem = { id: "tray-draft", conversation, at, kind: "message", ref: "draft-ref", body: { draft: "Demo reply", text: "Demo message" } };
     getFeedState().feeds[conversation] = [...feed, draft];
     act(() => putTodo({ ...todo, supervision: { ...todo.supervision!, state: "needs_user" } }));
-    const pending = host.querySelector('[data-assistant-actionbar] > .grid button') as HTMLButtonElement;
+    const pending = entry("pending");
     act(() => pending.click());
     expect(host.querySelector('[data-testid="message-card"]')).not.toBeNull();
     expect(host.textContent).toContain(t("assistant-tasks.review_needs_user"));
-    act(() => (host.querySelector('[data-assistant-actionbar] > .grid button:last-child') as HTMLButtonElement).click());
+    act(() => (entry("agents")).click());
     click(t("assistant-tasks.all"));
     expect(writes).toEqual([]);
     act(() => upsertSession({ machine_id: "demo", session_id: "worker", title: "Demo agent", cwd: "/demo", state: "unread", status: "unread", updated_at: at }));
     click(t("lib-state-labels.unread"));
     expect(host.textContent).toContain("Demo agent");
+  });
+
+  it("draws the entries as the dock's old All / task capsules, with the open tray selected", () => {
+    const dockHost = document.createElement("div");
+    document.body.append(dockHost);
+    const dockRoot = createRoot(dockHost);
+    act(() => dockRoot.render(<TaskDock conversation={conversation} />));
+    const all = dockHost.querySelector<HTMLButtonElement>('[data-testid="task-dock-board"]')!;
+    const capsule = DOCK_CAPSULE.split(" ");
+    for (const button of [all, ...entries()]) for (const name of capsule) expect(button.classList).toContain(name);
+    act(() => dockRoot.unmount());
+    dockHost.remove();
+    // no fixed-width grid or tall rounded rectangle left over from #2920
+    expect(host.querySelector("[data-assistant-actionbar] .grid")).toBeNull();
+    for (const button of entries()) expect(button.className).not.toMatch(/rounded-control|py-2\b|flex-1/);
+    // the open tray is the selected capsule; aria-expanded / aria-controls still say which one
+    expect(entries().map((button) => button.getAttribute("aria-expanded"))).toEqual(["false", "false", "false"]);
+    act(() => entry("progress").click());
+    expect(entry("progress").getAttribute("aria-expanded")).toBe("true");
+    expect(entry("progress").classList).toContain("bg-ink");
+    expect(document.getElementById(entry("progress").getAttribute("aria-controls")!)?.tagName).toBe("SECTION");
+    expect(entry("pending").classList).not.toContain("bg-ink");
+    act(() => entry("progress").click());
+    expect(entry("progress").getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector("section")).toBeNull();
+  });
+
+  it("keeps an empty Pending quiet (grey) but still opens it", () => {
+    const pending = entry("pending");
+    expect(pending.disabled).toBe(false);
+    expect(pending.classList).toContain("text-ink-3");
+    expect(pending.querySelector("[aria-hidden]")?.classList).toContain("bg-ink-3");
+    expect(entry("progress").querySelector("[aria-hidden]")?.classList).toContain("bg-accent");
+    act(() => pending.click());
+    expect(host.textContent).toContain(t("assistant-tasks.tray_empty_pending"));
   });
 });

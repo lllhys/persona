@@ -2,7 +2,8 @@
 """Verify the actual Assistant trays using only synthetic HTTP/WS data.
 
 Build web first. Run with a loopback production preview URL and --shots <directory>.
-The test covers wide/narrow light/dark, stable live task rows, decisions and draft sends.
+The test covers wide/narrow light/dark, the entries' capsule size and selected state, stable live task rows,
+decisions and draft sends.
 """
 import argparse
 import copy
@@ -105,14 +106,45 @@ def run(args):
                         expect(page.locator("vite-error-overlay")).to_have_count(0)
                         assert not errors, errors
                         assert bar.evaluate("e => { const box = e.getBoundingClientRect(); return box.x >= 0 && box.right <= innerWidth && box.bottom <= innerHeight; }")
+                        # Reduced motion still runs 1 ms transitions (styles.css); headless Chrome draws frames only on
+                        # demand, so let two frames finish them before the shot.
+                        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
                         page.screenshot(path=str(shots / f"{width}-{theme}-{name}.png"))
 
+                    # The entries are the dock's old "All" / task capsules (#2999): one rem-based height, fully round,
+                    # content-wide in a row, and the open tray is the selected capsule.
+                    entries = bar.locator("[data-tray-entry]")
+                    expect(entries).to_have_count(3)
+                    boxes = entries.evaluate_all("""es => es.map(e => { const box = e.getBoundingClientRect(); const style = getComputedStyle(e);
+                        return { h: box.height, w: box.width, top: box.top, radius: parseFloat(style.borderTopLeftRadius), font: style.fontSize,
+                                 capsule: 2 * parseFloat(getComputedStyle(document.documentElement).fontSize) }; })""")
+                    assert all(b["h"] == b["capsule"] for b in boxes), boxes
+                    assert all(b["radius"] >= b["h"] / 2 for b in boxes), boxes
+                    assert len({b["top"] for b in boxes}) == 1 and len({b["font"] for b in boxes}) == 1, boxes
+                    assert sum(b["w"] for b in boxes) < bar.evaluate("e => e.getBoundingClientRect().width"), boxes
+                    assert entries.evaluate_all("es => es.map(e => e.getAttribute('aria-expanded'))") == ["false"] * 3
+                    print(f"  entry heights {[b['h'] for b in boxes]} px, fully round, font {boxes[0]['font']}", flush=True)
                     capture("collapsed")
+                    # keyboard: the entry takes focus and Enter toggles its tray, as a click does
+                    pending_entry = bar.locator('[data-tray-entry="pending"]')
+                    pending_entry.focus()
+                    expect(pending_entry).to_be_focused()
+                    page.keyboard.press("Enter")
+                    expect(pending_entry).to_have_attribute("aria-expanded", "true")
+                    expect(bar.locator("section")).to_have_count(1)
+                    page.keyboard.press("Enter")
+                    expect(pending_entry).to_have_attribute("aria-expanded", "false")
+                    expect(bar.locator("section")).to_have_count(0)
+                    pending_entry.blur()
                     page.locator("[data-dispatch-hint]").click()
                     expect(bar.locator("[data-task-slot]")).to_have_count(5)
                     expect(bar.get_by_text("PR #2801", exact=False)).to_be_visible()
                     expect(bar.locator('[role="progressbar"] .bg-orange')).to_have_count(1)
                     expect(bar.locator('[data-task-slot="plan:demo-plan:3"] .text-green')).to_have_count(1)
+                    progress_entry = bar.locator('[data-tray-entry="progress"]')
+                    expect(progress_entry).to_have_attribute("aria-expanded", "true")
+                    expect(progress_entry).to_have_class(re.compile(r"\bbg-ink\b"))
+                    assert progress_entry.evaluate("e => e.getBoundingClientRect().height") == boxes[1]["h"]
                     capture("progress")
                     row = bar.locator('[data-task-slot="plan:demo-plan:0"]')
                     row.evaluate("e => globalThis.originalTaskRow = e")
@@ -130,7 +162,7 @@ def run(args):
                     assert row.evaluate("e => e === globalThis.originalTaskRow")
                     expect(row.locator('[role="progressbar"]')).to_have_count(0)
                     capture("accepted-live")
-                    bar.get_by_role("button", name=re.compile("^Pending")).click()
+                    bar.locator('[data-tray-entry="pending"]').click()
                     expect(bar.get_by_role("button", name="Allow", exact=True)).to_be_visible()
                     expect(bar.locator('[data-testid="message-card"]')).to_have_count(1)
                     expect(bar.get_by_text("Prepare the next demo", exact=False)).to_be_visible()
@@ -147,7 +179,7 @@ def run(args):
                     owner.click()
                     page.wait_for_timeout(150)
                     assert any(path.endswith("/accept") and body.get("asked_at") == AT for path, body in writes), writes
-                    bar.get_by_role("button", name=re.compile("^Agents")).click()
+                    bar.locator('[data-tray-entry="agents"]').click()
                     expect(bar.get_by_text(TITLES[0], exact=True)).to_be_visible()
                     capture("agents")
                     bar.get_by_role("button", name="Working", exact=True).click()
