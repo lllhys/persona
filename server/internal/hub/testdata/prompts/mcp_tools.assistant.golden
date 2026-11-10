@@ -1545,9 +1545,10 @@
                   "default",
                   "acceptEdits",
                   "plan",
+                  "auto",
                   "bypassPermissions"
                 ],
-                "description": "permission mode; empty: the default for writable tasks. readonly=true always uses plan, overriding this field"
+                "description": "permission mode; empty: the default for writable tasks (the user's default permission mode, else Claude Code's default mode on that computer). readonly=true always uses plan, overriding this field"
               },
               "ultracode": {
                 "type": "boolean",
@@ -1678,6 +1679,81 @@
         "recommend": {
           "type": "string",
           "description": "needs_user: the option you recommend, in a line; the user's \"OK\" takes it and it goes to the task's agent"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_start_screen",
+    "description": "Read the last 30 lines of the terminal tab a task's agent did not start in, while its computer keeps that tab (a 督办 message says until when): the question the tab's shell waits on, or where the agent's own screen stopped. Only for a task of this conversation whose start is being remedied; what it shows stays here, it is not kept with the task.",
+    "input_schema": {
+      "type": "object",
+      "required": [
+        "todo_id"
+      ],
+      "properties": {
+        "todo_id": {
+          "type": "string",
+          "description": "the task's id, as the 督办 message gives it"
+        },
+        "reason": {
+          "type": "string",
+          "description": "why you look, in the user's language (optional; kept with the task's history)"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_start_keys",
+    "description": "Type into the terminal tab a task's agent did not start in, while its computer keeps that tab and no agent runs there: text as is (no enter, at most 32 characters), then keys by name (\"enter\", \"esc\", \"ctrl+c\", \"y\", \"n\", \"up\", \"down\"…, at most 8). Use it to answer the question the tab's shell waits on, or to get past where the agent's screen stopped; read the tab first with task_start_screen and again after. The keys, the text and your reason are kept with the task's history. It starts nothing: start the agent again with task_retry.",
+    "input_schema": {
+      "type": "object",
+      "required": [
+        "todo_id",
+        "reason"
+      ],
+      "properties": {
+        "todo_id": {
+          "type": "string",
+          "description": "the task's id, as the 督办 message gives it"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "text to type as is, before the keys"
+        },
+        "keys": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          },
+          "description": "keys to press after the text, by name"
+        },
+        "reason": {
+          "type": "string",
+          "description": "why these keys, in the user's language, one sentence"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_retry",
+    "description": "Start a task's agent again after it did not start: in the same tab while its computer keeps it (after task_start_keys answered what stopped it), otherwise in a new tab (a start that failed for good is reopened). At most 3 times per task; the hub never retries by itself. It returns at once; whether the agent came up arrives as a 督办 message. Only for a task of this conversation; your reason is kept with the task's history.",
+    "input_schema": {
+      "type": "object",
+      "required": [
+        "todo_id",
+        "reason"
+      ],
+      "properties": {
+        "todo_id": {
+          "type": "string",
+          "description": "the task's id, as the 督办 message gives it"
+        },
+        "reason": {
+          "type": "string",
+          "description": "why it should start now, in the user's language, one sentence"
         }
       }
     }

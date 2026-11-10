@@ -235,7 +235,9 @@ func (s *Service) takeRecommendation(ctx context.Context, id string, a acceptAsk
 	}
 	l := s.botLang(ctx)
 	msg := i18n.T(l, "assistant-reports.verdict_take_to_agent", i18n.Args{"option": a.Recommend})
-	if _, err := s.routeToTask(ctx, t.Origin, id, msg); err != nil {
+	if _, err := s.routeToTaskChecked(ctx, t.Origin, id, msg, func(cur Todo) bool {
+		return cur.DoneAt == nil && !acceptAskStale(&a, cur)
+	}); err != nil {
 		s.logf("task %s: conclusion to agent: %v", id, err)
 		return err // not recorded either: the decision is not made until it reaches the agent
 	}

@@ -207,12 +207,16 @@ internal fun InteractionForm(
                     style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
             }
             "question" -> if (question != null) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                // As on iOS (needsFooter): one single-choice question is answered by tapping an option, so it has no
+                // pages to turn; its only footer is a Submit for the "Other answer" text, once there is some.
+                if (questions.size > 1 || question.multiSelect) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     JTextButton(stringResource(R.string.chat_question_previous), { update(draft.copy(page = draft.page - 1)) }, enabled = draft.page > 0 && editable)
                     val spokenPage = stringResource(R.string.chat_question_position, draft.page + 1, questions.size)
                     Text("${draft.page + 1} / ${questions.size}", Modifier.padding(top = Tokens.Space.m).semantics { contentDescription = spokenPage })
                     val action = if (draft.page == questions.lastIndex) AnswerAction.Submit else AnswerAction.Advance
                     JTextButton(stringResource(if (draft.page == questions.lastIndex) R.string.chat_question_submit else R.string.chat_question_next), { act(action) }, enabled = enabled(action))
+                } else if (!draft.other[question.question].isNullOrBlank()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    JTextButton(stringResource(R.string.chat_question_submit), { act(AnswerAction.Submit) }, enabled = enabled(AnswerAction.Submit))
                 }
             }
             "elicitation" -> ElicitationActions(interaction, draft, editable, ::act)

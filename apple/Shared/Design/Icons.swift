@@ -566,8 +566,14 @@ extension Theme {
         static let subagentWorking = "person.2.badge.gearshape"
         /// A conversation with an agent (an Agents chat, a session quoted as context, the chats in Storage).
         static let agentChat = "bubble.left.and.text.bubble.right"
-        /// A meeting (a scheduled task's meeting prep, the suggestion to prepare one).
+        /// A meeting (a scheduled task's meeting prep, the suggestion to prepare one, a meeting recording).
         static let meeting = "person.2.wave.2"
+        /// The calendar event a meeting recording is named after (docs/apple/recording.md).
+        static let calendarEvent = "calendar.day.timeline.left"
+        /// A meeting's minutes (#2710): a key point, a decision, a question left open (action items are `todo`).
+        static let keyPoint = "text.bubble.fill"
+        static let decision = "signature"
+        static let openQuestion = "questionmark.circle.dashed"
         /// People in the knowledge base.
         static let people = "person.3"
         /// A tap on the screen, in tips and features.

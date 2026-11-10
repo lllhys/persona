@@ -33,6 +33,9 @@ func Assistant(ctx context.Context, build update.Build, args []string, stdin io.
 	// What a parent left inheritable (an older hub's listening socket) stops here, not in every node, extension and
 	// agent the manager starts. Here, not in main: the sandbox's launcher hands its descriptors on by exec.
 	osproc.SealInherited()
+	// A service of its own starts again in place (manager.RunBuiltin: a new binary, a new token): what the previous
+	// image started is this one's child then, and only this reaps it.
+	osproc.ReapInherited()
 	if identity.Getenv("PERSONA_ASSISTANT_DEPLOY") == assistant.DeployService {
 		// A service of its own (its unit says so): on its binding, waiting when the hub refuses it. Not bound is a
 		// configuration mistake: exit 2, which its unit does not restart.

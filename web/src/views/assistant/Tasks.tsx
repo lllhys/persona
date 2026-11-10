@@ -291,7 +291,7 @@ export function useRetrying(todoId: string | undefined): boolean {
 
 // ── the plan card ──
 
-const PERMISSION: Record<string, string> = { acceptEdits: t("assistant-tasks.perm_accept_edits"), plan: t("assistant-tasks.perm_plan"), bypassPermissions: t("assistant-tasks.perm_bypass"), default: t("assistant-tasks.perm_default") };
+const PERMISSION: Record<string, string> = { acceptEdits: t("assistant-tasks.perm_accept_edits"), plan: t("assistant-tasks.perm_plan"), auto: t("assistant-tasks.perm_auto"), bypassPermissions: t("assistant-tasks.perm_bypass"), default: t("assistant-tasks.perm_default") };
 
 /** A task of a started plan that did not start: why, unless its task card right below says so already (#4145). */
 function PlanTaskFailed({ task, conversation }: { task: PlanTask; conversation: string }) {

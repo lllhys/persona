@@ -122,6 +122,32 @@ describe("Assistant task progress trays", () => {
     expect(writes.filter((path) => path.includes("message"))).toEqual([]);
   });
 
+  it("removes a directly finished decision from Pending without sending or accepting anything", async () => {
+    const ask = { outcome: "decide" as const, verdict: "Choose the demo rollout", recommend: "Use the demo rollout", asked_at: at };
+    todo = { ...todo, ask, supervision: { ...todo.supervision!, state: "needs_user" } };
+    await act(async () => putTodo(todo));
+    act(() => entry("pending").click());
+    const row = host.querySelector('[data-brief-row="accept"]')!;
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([t("assistant-brief.open"), t("assistant-brief.finish"), t("assistant-brief.take")]);
+    const read = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (init?.method === "PATCH") {
+        writes.push(String(url));
+        todo = { ...todo, ask: undefined, done_at: at };
+        return new Response(JSON.stringify({ todo }), { headers: { "Content-Type": "application/json" } });
+      }
+      return read(url, init);
+    });
+    await act(async () => [...row.querySelectorAll("button")][1].click());
+    expect(host.querySelector('[data-brief-row="accept"]')).toBeNull();
+    expect(host.textContent).toContain(t("assistant-tasks.tray_empty_pending"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/\/todos\/tray-task$/);
+    const request = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "PATCH")!;
+    expect(JSON.parse(String(request[1]?.body))).toEqual({ done: true });
+    expect(writes.filter((path) => /accept|message|resume/.test(path))).toEqual([]);
+  });
+
   it("moves awaiting decisions and drafts to Pending without sending on tray/filter navigation", async () => {
     const draft: FeedItem = { id: "tray-draft", conversation, at, kind: "message", ref: "draft-ref", body: { draft: "Demo reply", text: "Demo message" } };
     getFeedState().feeds[conversation] = [...feed, draft];

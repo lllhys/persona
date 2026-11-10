@@ -44,6 +44,7 @@ final class AvatarUploadUITests: XCTestCase {
                                "-ui.scheme", env["PERSONA_LOOK_APPEARANCE"] ?? "light"]
         if let language = env["PERSONA_LOOK_LANGUAGE"] { app.launchArguments += ["-AppleLanguages", "(\(language))"] }
         app.launchPinned()
+        allowNotifications()
         let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let deny = board.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don’t Allow", "Don't Allow"])).firstMatch
         if deny.waitForExistence(timeout: 3) { deny.tap() }
@@ -150,6 +151,14 @@ final class AvatarUploadUITests: XCTestCase {
     }
 
     /// The avatars, no sheet over them; `extra` launch arguments after the pairing's.
+    /// The system's "Would Like to Send You Notifications" prompt, on a simulator where it was never answered (a freshly
+    /// booted one): while it is up the app is inactive and keeps its connection closed, so the hub's features (and with
+    /// them New from Photo and the delete buttons) never arrive. Answered the way the other UI tests do (ExtensionV3Tests).
+    @MainActor private func allowNotifications() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["允许", "Allow"] where springboard.buttons[label].waitForExistence(timeout: 3) { springboard.buttons[label].tap() }
+    }
+
     @MainActor private func launchPicker(_ hub: String, _ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
@@ -157,6 +166,7 @@ final class AvatarUploadUITests: XCTestCase {
                                "-ui.scheme", env["PERSONA_LOOK_APPEARANCE"] ?? "light"] + extra
         if let language = env["PERSONA_LOOK_LANGUAGE"] { app.launchArguments += ["-AppleLanguages", "(\(language))"] }
         app.launchPinned()
+        allowNotifications()
         return app
     }
 

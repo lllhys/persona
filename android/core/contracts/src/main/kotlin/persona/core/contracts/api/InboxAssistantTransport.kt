@@ -45,6 +45,11 @@ interface InboxAssistantTransport {
      */
     suspend fun doneHistory(manager: String?, before: String?, beforeId: String?, limit: Int = 50): JsonObject =
         throw UnsupportedOperationException("Done history unavailable")
+    /**
+     * [manager]'s done items per day (`GET /api/v1/inbox/done/days?tz=&sources=all`, #2967) in time zone [tz] (an IANA
+     * name), answering `{tz, days: [{day, count}]}`, newest first. Old hubs: 404; a zone the hub doesn't know: 400.
+     */
+    suspend fun doneDays(manager: String?, tz: String): JsonObject = throw UnsupportedOperationException("Done days unavailable")
     suspend fun reply(itemId: String?, feedId: String?, text: String, clientId: String): JsonObject
     /** Hands an item to its manager's main chat (`POST /api/v1/inbox/{id}/handoff`), answering `{item, session}`. */
     suspend fun handOff(itemId: String, text: String, clientId: String): JsonObject =

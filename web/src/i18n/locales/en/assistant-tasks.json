@@ -21,6 +21,7 @@
   "continue_failed": "Couldn't continue: {error}",
   "perm_accept_edits": "Can edit files",
   "perm_plan": "Plan first",
+  "perm_auto": "Auto",
   "perm_bypass": "Allow everything",
   "perm_default": "Ask every step",
   "plan_started_one": "Started {count} task",

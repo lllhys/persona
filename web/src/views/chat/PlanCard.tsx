@@ -32,24 +32,61 @@ export function usePlanOutOfView(scroller: RefObject<HTMLDivElement | null>, id?
     const sc = scroller.current;
     const body = sc?.firstElementChild;
     if (!sc || !body || !id) return setOut(false);
-    const check = () => {
-      const el = sc.querySelector(`[data-plan-id="${CSS.escape(id)}"]`);
-      // not drawn (the hub folded it away with the work around it): the pill is where it shows (#5602)
-      if (!el) return setOut(true);
-      const r = el.getBoundingClientRect();
-      const v = sc.getBoundingClientRect();
-      setOut(r.bottom < v.top || r.top > v.bottom);
-    };
-    check();
-    sc.addEventListener("scroll", check, { passive: true });
-    const ro = new ResizeObserver(check);
-    ro.observe(body);
-    return () => {
-      sc.removeEventListener("scroll", check);
-      ro.disconnect();
-    };
+    const find = () => sc.querySelector(`[data-plan-id="${CSS.escape(id)}"]`);
+    return typeof IntersectionObserver === "undefined" ? watchByScroll(sc, body, find, setOut) : watchByIntersection(sc, body, id, find, setOut);
   }, [scroller, id]);
   return out;
+}
+
+/** The browser says when the card enters or leaves the view, so a scroll or a growing chat queries nothing and reads no
+ *  layout (reading the rect of a card in an exchange that content-visibility skips lays that exchange out once the chat's
+ *  width changed, #2485). Edge-adjacent counts as intersecting, the same rule as the measuring fallback. The card is
+ *  looked for again only once the one watched left the DOM (the body's ResizeObserver, or its own last report when it was
+ *  redrawn at the same size), or while none is drawn. */
+function watchByIntersection(sc: Element, body: Element, id: string, find: () => Element | null, setOut: (out: boolean) => void): () => void {
+  let el: Element | null = null;
+  const current = () => el?.isConnected && el.getAttribute("data-plan-id") === id;
+  const refind = () => {
+    if (current()) return;
+    if (el) io.unobserve(el);
+    el = find();
+    // not drawn (the hub folded it away with the work around it): the pill is where it shows (#5602)
+    if (!el) return setOut(true);
+    io.observe(el);
+  };
+  // entries of a card no longer watched may still be queued: only the watched card's latest one counts
+  const io = new IntersectionObserver((entries) => {
+    const last = entries.findLast((e) => e.target === el);
+    if (!last) return;
+    if (current()) setOut(!last.isIntersecting);
+    else refind();
+  }, { root: sc });
+  refind();
+  const ro = new ResizeObserver(refind);
+  ro.observe(body);
+  return () => {
+    ro.disconnect();
+    io.disconnect();
+  };
+}
+
+/** Without IntersectionObserver (jsdom): measure the card against the view on every scroll and resize. */
+function watchByScroll(sc: Element, body: Element, find: () => Element | null, setOut: (out: boolean) => void): () => void {
+  const check = () => {
+    const el = find();
+    if (!el) return setOut(true);
+    const r = el.getBoundingClientRect();
+    const v = sc.getBoundingClientRect();
+    setOut(r.bottom < v.top || r.top > v.bottom);
+  };
+  check();
+  sc.addEventListener("scroll", check, { passive: true });
+  const ro = new ResizeObserver(check);
+  ro.observe(body);
+  return () => {
+    sc.removeEventListener("scroll", check);
+    ro.disconnect();
+  };
 }
 
 const todoStatus = (s?: string): Todo["status"] => (s === "completed" || s === "in_progress" ? s : "pending");

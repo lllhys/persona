@@ -1059,6 +1059,13 @@ let started = false;
 let inFlight: Promise<void> | null = null;
 let again = false;
 
+/** The last list the hub answered in full, as it came (before the marks were laid over it), and its validator: a
+ * reload sends it as If-None-Match, and a 304 says the hub's list is still this one (docs/protocol/protocol.md
+ * "Inbox validator"). */
+let lastList: { etag: string; items: InboxItem[]; triage: InboxTriage | null } | null = null;
+/** What a reload sends before it has a validator: a tag no list has, which asks the hub for its own. */
+const NO_LIST_TAG = 'W/"i1-"';
+
 function start() {
   if (started) return;
   started = true;
@@ -1094,8 +1101,19 @@ export function reloadInbox(): Promise<void> {
         again = false;
         const seq = beginList();
         try {
-          const r = await api<{ items?: InboxItem[]; triage?: InboxTriage }>("/inbox?sources=all");
-          set({ items: keepSameItems(state.items, withPending(r.items ?? [], seq)), triage: r.triage ?? null, loaded: true, error: "" });
+          let status = 0;
+          let etag = "";
+          const r = await api<{ items?: InboxItem[]; triage?: InboxTriage }>("/inbox?sources=all", {
+            headers: { "If-None-Match": lastList?.etag ?? NO_LIST_TAG },
+            onResponse: (headers, code) => {
+              status = code;
+              etag = headers?.get("ETag") ?? "";
+            },
+          });
+          // 304: the list is still the one kept, and the marks are laid over it again as over any list of this seq
+          const list = status === 304 ? lastList : { etag, items: r.items ?? [], triage: r.triage ?? null };
+          if (status !== 304) lastList = etag ? list : null;
+          if (list) set({ items: keepSameItems(state.items, withPending(list.items, seq)), triage: list.triage, loaded: true, error: "" });
         } finally {
           endList(seq);
         }
@@ -1645,6 +1663,7 @@ export function resetInboxForTests() {
   started = false;
   inFlight = null;
   again = false;
+  lastList = null;
   pendingDone.clear();
   listsOut.clear();
   listSeq = 0;

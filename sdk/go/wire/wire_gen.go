@@ -4375,6 +4375,8 @@ type KBDetail struct {
 	Links    []KBEntry            `json:"links,omitempty"`
 	Moments  []KBMomentRef        `json:"moments,omitempty"`
 	Segments []KBRecordingSegment `json:"segments,omitempty"`
+	// A recording's meeting minutes, once written (docs/assistant/meeting-minutes.md); kept as the hub sends them.
+	Minutes json.RawMessage `json:"minutes,omitempty"`
 }
 
 // KBMomentRef: A feed post linked to a project.

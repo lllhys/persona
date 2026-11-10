@@ -1,6 +1,6 @@
 // Pages a first screen doesn't need (App.tsx, #1996) are their own chunks, loaded on their first render or ahead of it
 // (preloadPages). Ahead of it in two ways, so only what is likely next is fetched: the few marked `idle` (the overlays a
-// shortcut opens, small parts drawn inside content; about 28 KB gzip together) once the browser is idle after start
+// shortcut opens, small parts drawn inside content; about 29 KB gzip together) once the browser is idle after start
 // (#1954, carried over from #1974), and every other page when the pointer, the focus or a finger reaches a link to one
 // of its `routes`, so its chunk is on the way before the click. A page opened another way (a menu row, a shortcut) loads
 // as it renders. A page whose chunk is in renders at once, without a round through Suspense (React.lazy suspends once

@@ -19,6 +19,7 @@
   "continue_failed": "没继续：{error}",
   "perm_accept_edits": "可以改文件",
   "perm_plan": "先出方案",
+  "perm_auto": "自动判断",
   "perm_bypass": "全部放行",
   "perm_default": "每步都问",
   "plan_started_other": "开了 {count} 个任务",

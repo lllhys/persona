@@ -11,6 +11,11 @@ var (
 // ModeBypass skips every permission prompt; a headless claude only takes it at start (--permission-mode).
 const ModeBypass = "bypassPermissions"
 
+// ClaudeDefaultModeSetting is Claude Code's permissions.defaultMode, a key of Settings › Claude Code (node
+// claudeconfig.go): the mode a session started without --permission-mode runs in. The hub reads it for a planned
+// task with no mode of its own (assistant/tasks_permission.go).
+const ClaudeDefaultModeSetting = "permissions.defaultMode"
+
 // Session statuses mirror herdr agent states, plus offline for transcripts with no live agent.
 const (
 	StatusIdle    = "idle"
@@ -350,6 +355,15 @@ const (
 	// would act on when an engine types the directory (Orca's `cd`, node/hostorca_launch.go). Nothing ran; a refusal of
 	// the request, not the launcher's fault.
 	CodeDirectoryUntypable = "directory_untypable"
+)
+
+// Codes session.modes refuses with (node/modes.go), the text in the request's language (apierr.Call). 409.
+const (
+	// CodeModesOnComputer: a Claude outside Persona's terminals (Claude's desktop app, another terminal); its mode and
+	// effort change only there. Its row's capabilities say modes: false.
+	CodeModesOnComputer = "modes_on_computer"
+	// CodeModesNotRunning: no process or pane runs the session; a message resumes it.
+	CodeModesNotRunning = "modes_not_running"
 )
 
 // TodoRef is a session's link to an active todo (docs/assistant/todos.md).

@@ -98,7 +98,8 @@ class InboxGroupsShotsTest {
         lark("h2", "旧版文档的链接", "示例同事丁", "已经迁到新地址", "fyi", ago(days(9)), doneAt = ago(days(9))))
     private val pageTwo = listOf(mail("h3", "acc2", "work@example.com", "去年的年度总结", "示例经理", "fyi", ago(days(40)), doneAt = ago(days(40))))
 
-    private class Inbox(snapshot: InboxSnapshot, prefs: InboxPreferences, val pages: List<InboxDonePage>) : InboxRepository {
+    private class Inbox(snapshot: InboxSnapshot, prefs: InboxPreferences, val pages: List<InboxDonePage>,
+                        val days: List<InboxDoneDay>? = null, val pageFor: ((InboxDoneCursor?) -> InboxDonePage)? = null) : InboxRepository {
         val asked = mutableListOf<Pair<List<InboxDoneTarget>, InboxBulkAction>>()
         val historyAsked = mutableListOf<InboxDoneCursor?>()
         val prefs = MutableStateFlow(prefs)
@@ -114,8 +115,9 @@ class InboxGroupsShotsTest {
         override suspend fun setDone(itemId: String, done: Boolean) = Unit
         override suspend fun doneHistory(manager: String?, cursor: InboxDoneCursor?): InboxDonePage {
             historyAsked += cursor
-            return pages.getOrElse(historyAsked.size - 1) { InboxDonePage() }
+            return pageFor?.invoke(cursor) ?: pages.getOrElse(historyAsked.size - 1) { InboxDonePage() }
         }
+        override suspend fun doneDays(manager: String?, zone: java.time.ZoneId) = days
         override suspend fun bulk(items: List<InboxDoneTarget>, action: InboxBulkAction): InboxBulkResult {
             asked += items to action
             return InboxBulkResult(changed = items.map { it.id })
@@ -212,6 +214,51 @@ class InboxGroupsShotsTest {
         rule.onNodeWithText("7 天前 · 1").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("旧版文档的链接").assertExists()
+    }
+
+    /**
+     * With the hub's counts per day (#3016): Done lists every group with its count, loaded or not, with no history read
+     * when it opens and no Show older at its end; Jump To goes straight to an older group, whose first page is the one
+     * before the group's end (no id), and its Show older goes on from where the hub said that page stopped.
+     */
+    @Test fun doneWithTheHubsCountsJumpsStraightToAGroup() {
+        val zone = java.time.ZoneId.systemDefault()
+        fun dayOf(at: String) = Instant.parse(at).atZone(zone).toLocalDate()
+        // The list's done items each counted on their day, then 5 more 9 days ago and 30 more 40 days ago.
+        val counted = (done.map { dayOf(it.item.doneAt!!) } + List(5) { dayOf(ago(days(9))) } + List(30) { dayOf(ago(days(40))) })
+            .groupingBy { it }.eachCount().map { (day, n) -> InboxDoneDay(day, n) }.sortedByDescending { it.day }
+        val monthEnd = persona.core.domain.inbox.InboxGroups.span("month", now, zone).second
+        val next = InboxDoneCursor(ago(days(40)), "mail:h3")
+        val inbox = Inbox(InboxSnapshot(records = open + done, interactions = listOf(card)),
+            InboxPreferences(section = "done", expanded = listOf("action", "fyi", "done")), emptyList(), counted) { cursor ->
+            if (cursor?.beforeId == null) InboxDonePage(pageTwo, next) else InboxDonePage()
+        }
+        show(inbox)
+        assertEquals(emptyList<InboxDoneCursor?>(), inbox.historyAsked)
+        for (title in listOf("刚刚处理", "昨天", "7 天前", "1 个月前")) assertHeader(title)
+        rule.onAllNodesWithText("加载更早的").assertCountEquals(0)
+        // Done's own count is all of it, as its groups add up (3 in the list, 5 and 30 older): its title and the Done chip.
+        assertTrue("Done's title and chip count 38", rule.onAllNodes(hasText("38"), useUnmergedTree = true).fetchSemanticsNodes().size >= 2)
+        rule.onNode(androidx.compose.ui.test.hasScrollToIndexAction()).performScrollToNode(hasText("1 个月前"))
+        shots("inbox-done-counted")
+        rule.onNode(androidx.compose.ui.test.hasScrollToIndexAction()).performScrollToNode(hasText("跳到"))
+        rule.onNodeWithText("跳到").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("7 天前 · 5").assertIsDisplayed()
+        rule.onNodeWithText("1 个月前 · 30").assertIsDisplayed()
+        shots("inbox-done-counted-jump", listOf(AppStyle.Glass), sheet = true)
+        rule.onNodeWithText("1 个月前 · 30").performClick()
+        rule.waitForIdle()
+        // Its own first page: before the group's end, no id; then its Show older from the hub's cursor.
+        assertEquals(listOf<InboxDoneCursor?>(InboxDoneCursor(monthEnd.toString(), null)), inbox.historyAsked)
+        rule.onNodeWithText("去年的年度总结").assertExists()
+        rule.onNode(androidx.compose.ui.test.hasScrollToIndexAction()).performScrollToNode(hasText("加载更早的"))
+        shots("inbox-done-counted-group")
+        rule.onNodeWithText("加载更早的").performClick()
+        rule.waitForIdle()
+        assertEquals(next, inbox.historyAsked.last())
+        // That page was its last: the group stops offering more.
+        rule.onAllNodesWithText("加载更早的").assertCountEquals(0)
     }
 
     @Test fun aLongPressSelectsAndGroupTicksPickWholeGroups() {

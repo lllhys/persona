@@ -144,7 +144,8 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 		} else {
 			s.Host = ""
 		}
-		s.Capabilities = &proto.SessionCapabilities{Read: true, Send: caps.Send, Interrupt: caps.Interrupt, Approve: true}
+		s.Capabilities = &proto.SessionCapabilities{Read: true, Send: caps.Send, Interrupt: caps.Interrupt, Approve: true,
+			Modes: proto.CanModes(runtimeModes(caps.Modes, rt, s))}
 		s.ReadOnlyReason, s.Attached, s.CodexRoute, s.CodexRouteNote = readOnly, false, "", ""
 		// The pane is the engine's to show (pi.go joins it with the engine's pane), not part of the runtime's row.
 		if s.PaneID != "" && validPane(s.PaneID) {
@@ -292,4 +293,14 @@ func runtimeHealth(h *runtimeConn, ix proto.Interaction) bool {
 	}
 	s, ok := h.row(ix.SessionID)
 	return ok && (s.Space == identity.SpaceHealth || identity.InHealthSpace(s.Cwd))
+}
+
+// runtimeModes is a runtime row's modes capability: the runtime declared caps.modes (the node refuses session.modes
+// otherwise, runtimes_calls.go), the row is not a subagent's, and its agent takes Claude Code's modes (claude: Orca,
+// Paseo's Claude providers) or is the runtime's own (agy). Paseo has no agent of its own: its bridge calls every agent
+// other than Claude Code and Codex "paseo" (integrations/paseo/lib/map.js appAgent), and refuses a permission mode for
+// any of them that is not Claude (bridge.js modes). So a Paseo row running Codex, opencode or any other agent gets none.
+func runtimeModes(declared bool, rt string, s proto.Session) bool {
+	own := s.Agent == rt && rt != paseoRuntimeID
+	return declared && !strings.Contains(s.SessionID, subagentSep) && (s.Agent == "claude" || own)
 }

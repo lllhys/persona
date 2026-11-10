@@ -430,6 +430,8 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
   const [toggling, setToggling] = useState(false);
   const [secret, setSecret] = useState<ExtensionSecret | null>(null);
   const [dependents, setDependents] = useState<Dependent[] | null>(null);
+  // Switching a pack off takes its members along: they are named before anything changes (#1830).
+  const [packOff, setPackOff] = useState(false);
 
   const apply = (d: HubExtensionDetail) => {
     setDetail(d);
@@ -612,9 +614,11 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
       // A switch never overwrites the unsaved configuration draft.
       wrote(n, d);
       setDependents(null);
+      setPackOff(false);
       toast(t(on ? "settings-extensions.enabled_name" : "settings-extensions.disabled_name", { name: d.name }), "ok");
     } catch (e) {
       const deps = dependentError(e);
+      setPackOff(false);
       if (!on && deps) setDependents(deps);
       else toast(t(on ? "settings-extensions.enable_failed" : "settings-extensions.disable_failed", { error: errorText(e) }), "error");
     } finally {
@@ -702,7 +706,7 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
           manager={manager}
           busy={toggling || saving}
           offline={offline}
-          onEnabled={(on) => void toggle(on)}
+          onEnabled={(on) => (!on && p.pack_members_follow && p.pack_on?.length ? setPackOff(true) : void toggle(on))}
           onAutoUpgrade={(on) => void toggleAutoUpgrade(on)}
           onUpgrade={onUpgrade}
           onUninstall={() => setRemoving(true)}
@@ -835,6 +839,11 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
         />
       )}
       {removing && p && <UninstallDialog id={p.id} name={p.name} version={p.version} pack={p.extension_pack} onClose={() => setRemoving(false)} onDone={onBack} />}
+      {packOff && p && !dependents && (
+        <Dialog open title={t("settings-extensions.disable_pack_title", { name: p.name })} onClose={() => !toggling && setPackOff(false)} footer={<><Button tone="quiet" disabled={toggling} onClick={() => setPackOff(false)}>{t("common.cancel")}</Button><Button tone="danger" busy={toggling} onClick={() => void toggle(false)}>{t("settings-extensions.disable_all")}</Button></>}>
+          <p className="text-ink-2">{t("settings-extensions.disable_pack_body", { names: (p.pack_on ?? []).map((m) => m.name || m.id).join(t("settings-extensionmarket.list_separator")) })}</p>
+        </Dialog>
+      )}
       {dependents && p && (
         <Dialog open title={t("settings-extensions.disable_dependents_title", { name: p.name })} onClose={() => !toggling && setDependents(null)} footer={<><Button tone="quiet" disabled={toggling} onClick={() => setDependents(null)}>{t("common.cancel")}</Button><Button tone="danger" busy={toggling} onClick={() => void toggle(false, true)}>{t("settings-extensions.disable_all")}</Button></>}>
           <p className="text-ink-2">{t("settings-extensions.dependents_body", { names: formatList(dependents.map((d) => d.name), NARROW_LIST) })}</p>

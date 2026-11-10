@@ -89,6 +89,9 @@ interface InboxRepository : persona.core.contracts.api.InboxRepository {
      * (null: from the newest). A hub without history answers an empty page with no next.
      */
     suspend fun doneHistory(manager: String?, cursor: InboxDoneCursor?): InboxDonePage = InboxDonePage()
+
+    /** [manager]'s done items per day in [zone] (#2967), newest first; null from a hub that doesn't count them. */
+    suspend fun doneDays(manager: String?, zone: java.time.ZoneId): List<InboxDoneDay>? = null
     suspend fun bulk(items: List<persona.core.contracts.api.InboxDoneTarget>, action: persona.core.contracts.api.InboxBulkAction): InboxBulkResult =
         error("批量处理尚未接入") // i18n-ignore: developer error for a repository without the hub
     suspend fun readDraft(target: ReplyTarget): ReplyDraft?
@@ -410,6 +413,9 @@ data class InboxPreferences(
 data class InboxDoneCursor(val before: String, val beforeId: String?)
 
 /** A page of done history: its items as records (the app's ids), and where the next page starts (null: none). */
+/** How many items were done on [day] (#2967). */
+data class InboxDoneDay(val day: java.time.LocalDate, val count: Int)
+
 data class InboxDonePage(val records: List<InboxRecord> = emptyList(), val next: InboxDoneCursor? = null)
 
 enum class InboxAiAction { Summarize, DraftReply, Handoff }

@@ -128,6 +128,8 @@ nonisolated enum Theme {
     #else
     private static let aiTintStrength = 0.14
     #endif
+    /// A line picked out for a moment in the accent's soft ground (the transcript line a minutes item's time jumped to).
+    static var accentTint: Color { accent.opacity(aiTintStrength) }
     /// The AI color at half strength: a mark of the AI's that is at work but not the lit one (a workflow phase with
     /// agents running that the run has moved past), apart from a ring (not started) and the full dot (lit).
     static var aiMuted: Color { ai.opacity(0.5) }
@@ -172,6 +174,10 @@ nonisolated enum Theme {
         static let del = Color(light: 0xC62B33, dark: 0xFF6369)
         static let addFill = Color(light: 0x30A46C, dark: 0x4CC38A).opacity(0.14)
         static let delFill = Color(light: 0xE5484D, dark: 0xFF6369).opacity(0.12)
+        /// The words that changed inside a changed line (the chat's `DiffView`), over that line's fill: the code on
+        /// them stays ≥ 4.5:1 in both appearances (about 7:1 dark, 11:1 light).
+        static let addEmphasis = Color(light: 0x30A46C, dark: 0x4CC38A).opacity(0.32)
+        static let delEmphasis = Color(light: 0xE5484D, dark: 0xFF6369).opacity(0.30)
         /// A modified file ("M"), the way editors mark it, kept apart from the working amber.
         static let changed = Color(light: 0x8A6A00, dark: 0xE3B341)
     }

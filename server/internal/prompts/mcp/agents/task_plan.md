@@ -58,9 +58,10 @@ Hand the user a plan of one or more tasks for agents on their computers, instead
               "default",
               "acceptEdits",
               "plan",
+              "auto",
               "bypassPermissions"
             ],
-            "description": "permission mode; empty: the default for writable tasks. readonly=true always uses plan, overriding this field"
+            "description": "permission mode; empty: the default for writable tasks (the user's default permission mode, else Claude Code's default mode on that computer). readonly=true always uses plan, overriding this field"
           },
           "ultracode": {
             "type": "boolean",

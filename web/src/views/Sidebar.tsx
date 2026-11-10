@@ -23,7 +23,7 @@ import { useAgentSessions, useFullAgentSessions } from "../lib/sessions";
 import { refresh, useStore } from "../lib/store";
 import { conversationTitle } from "./assistant/conversations";
 import { BREATHING, connStatus, phaseTone, type ConnPhase } from "../lib/connection";
-import { buildTodoTree } from "../lib/todo-tree";
+import { buildTodoTree, shareTree, type TodoTree } from "../lib/todo-tree";
 import { openTodoFromTag, TODO_STATUS_INFO, type TodoStatus } from "../lib/todos";
 import type { Machine, Session } from "../lib/types";
 import { Collapse, cx, EASE, Kbd, Menu, Spinner, useMenu, type MenuItem } from "../ui/atoms";
@@ -559,11 +559,14 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   // by todo waits for the first GET /todos: the socket pushes the sessions before it answers, and a tree drawn without
   // the todos puts every agent under No to-do for a moment, then moves them under their todos (#2812)
   const todosPending = shownGrouping === "todo" && !todosLoaded;
+  // each push builds the tree afresh: the nodes that come out the same keep last time's objects, so their rows' memo holds
+  const lastTodoTree = useRef<TodoTree | undefined>(undefined);
   const todoTree = useMemo(() => {
     if (shownGrouping !== "todo" || !todosLoaded) return undefined;
     const built = buildTodoTree(unpinned, machines, todos, mutes);
-    return byUpdate ? todoTreeByUpdate(built) : built;
+    return shareTree(lastTodoTree.current, byUpdate ? todoTreeByUpdate(built) : built);
   }, [unpinned, machines, shownGrouping, mutes, todos, todosLoaded, byUpdate]);
+  lastTodoTree.current = todoTree;
   const repoMachines = useMemo(() => {
     if (shownGrouping !== "repo") return [];
     const built = buildRepoMachineTree(unpinned, machines);

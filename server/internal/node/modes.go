@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 	"github.com/nwverse/persona/server/internal/screen"
@@ -241,7 +242,7 @@ func (n *Node) setModes(ctx context.Context, id, mode, effort string) error {
 	}
 	pane, err := n.paneFor(ctx, id)
 	if err != nil {
-		return fmt.Errorf("这个 Agent 没在运行：发一条消息恢复它以后再改")
+		return n.noPaneForModes(id)
 	}
 	// The /effort picker makes herdr report the agent as blocked; the hub would turn that into a "needs you" push.
 	n.mu.Lock()
@@ -269,6 +270,16 @@ func (n *Node) setModes(ctx context.Context, id, mode, effort string) error {
 	}
 	n.notifySessions()
 	return nil
+}
+
+// noPaneForModes is the refusal of a mode, effort, model or ultracode change for a session with no pane to drive. A
+// Claude running in Claude's desktop app or a terminal Persona does not drive is told to change it there: its peer
+// inbox carries messages only and a message never gives it a pane, so "send a message first" would not help (#1843).
+func (n *Node) noPaneForModes(id string) error {
+	if _, outside := n.outsideClaude(id); outside {
+		return refusal(proto.CodeModesOnComputer, i18n.T(i18n.Default, "rpc-errors.modes_on_computer"), nil)
+	}
+	return refusal(proto.CodeModesNotRunning, i18n.T(i18n.Default, "rpc-errors.modes_not_running"), nil)
 }
 
 // tuiMode reads the permission mode off the TUI's footer: the lines under the input box's bottom rule.

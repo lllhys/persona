@@ -4616,6 +4616,8 @@ export interface KBDetail {
   links?: KBEntry[];
   moments?: KBMomentRef[];
   segments?: KBRecordingSegment[];
+  /** A recording's meeting minutes, once written (docs/assistant/meeting-minutes.md); kept as the hub sends them. */
+  minutes?: unknown;
 }
 
 /**

@@ -63,8 +63,8 @@ fun JSectionHeader(
     muted: Boolean = false,
     /** Before the title: a group's tick while selecting (#2576). */
     leading: (@Composable () -> Unit)? = null,
-    /** A group inside a section (an inbox section's source or day, #2576): closer to its rows, the title a step quieter,
-     *  and a caret for whether it is open (null: none). */
+    /** A group inside a section (an inbox section's source or day, #2576): closer to its rows, the title a level below the
+     *  section's (caption, regular, in every style; as iOS and the web), and a caret for whether it is open (null: none). */
     sub: Boolean = false,
     open: Boolean? = null,
     action: (@Composable RowScope.() -> Unit)? = null,
@@ -93,7 +93,7 @@ fun JSectionHeader(
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 title,
-                style = if (sub) PersonaTheme.type.caption.copy(fontWeight = FontWeight.SemiBold)
+                style = if (sub) PersonaTheme.type.caption.copy(fontWeight = FontWeight.Normal)
                 else if (style == AppStyle.Glass) PersonaTheme.type.caption.copy(fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(14f, androidx.compose.ui.unit.TextUnitType.Sp))
                 else PersonaTheme.type.headline.copy(fontSize = androidx.compose.ui.unit.TextUnit(15f, androidx.compose.ui.unit.TextUnitType.Sp)),
                 color = if (muted) palette.ink3 else if (sub || style == AppStyle.Glass) palette.ink2 else palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,

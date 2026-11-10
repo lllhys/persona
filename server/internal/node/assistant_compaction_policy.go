@@ -13,26 +13,45 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// assistantCompaction is what a conversation's launcher declares about compaction (#3066). Persona sets no target of
+// its own: what is not declared is left to the agent, Claude Code by the model's own window, Codex by its model's
+// default.
 type assistantCompaction struct {
-	window, idle, capacity int
-	ownSettings            string
-	// idleFromWindow: a Claude main conversation whose capacity nothing declares. Its automatic window stays the
-	// main target (Claude Code holds it to the window it knows the model to have), and its idle threshold is capped
-	// once Claude Code reports that window (assistantProc.capIdleCompact).
-	idleFromWindow bool
+	// window: the declared automatic compaction window (CLAUDE_CODE_AUTO_COMPACT_WINDOW, a managed launcher's
+	// CompactWindow); capacity: the declared context window (CLAUDE_CODE_MAX_CONTEXT_TOKENS, MaxContext, the provider
+	// model's ContextWindow, Codex's model_context_window). 0: not declared.
+	window, capacity int
+	// pin: Persona writes them for the start. Only a managed launcher: its environment is Persona's, and an assistant
+	// start leaves its compact window out of the launch (perStartEnv). Any other launcher's own environment, settings
+	// and the user's settings reach the agent as they are, so nothing is written over them.
+	pin         bool
+	ownSettings string
 }
 
-func compactionLimits(main bool, capacity int) assistantCompaction {
-	window, idle := assistantCompactWindow, assistantIdleCompact
-	if main {
-		window, idle = assistantMainCompactWindow, assistantMainIdleCompact
+// codexLimit is the model_auto_compact_token_limit a Codex start passes: a managed launcher's declared window, else none
+// (the launcher's own -c and config.toml reach Codex as they are).
+func (c assistantCompaction) codexLimit() int {
+	if !c.pin {
+		return 0
 	}
-	if capacity > 0 {
-		window = min(window, capacity)
-		idle = min(idle, window/4*3)
-	}
-	return assistantCompaction{window: window, idle: idle, capacity: capacity}
+	return c.window
 }
+
+// declared is the window the launcher holds the conversation to, 0 when it declares none.
+func (c assistantCompaction) declared() int { return smallerCapacity(c.window, c.capacity) }
+
+// idle is Persona's idle /compact threshold before the agent reports its model's window: 75% of the declared window,
+// else assistantIdleCompact (assistantProc.followWindow moves it once a window is reported).
+func (c assistantCompaction) idle() int {
+	if d := c.declared(); d > 0 {
+		return idleThreshold(d)
+	}
+	return assistantIdleCompact
+}
+
+// idleThreshold: an idle conversation is compacted at 75% of its window, below where the agent compacts on its own
+// (Claude Code about 33K short of the window) and early enough to be worth it while the cache is warm.
+func idleThreshold(window int) int { return window / 4 * 3 }
 
 func smallerCapacity(a, b int) int {
 	if b > 0 && (a <= 0 || b < a) {
@@ -80,52 +99,65 @@ func codexCapacity(args []string) int {
 	return capacity
 }
 
-func settingsCapacity(arg, cwd, home string) int {
+// settingsCompaction is what a Claude settings file's env declares: the auto-compact window and the context window.
+func settingsCompaction(arg, cwd, home string) (window, capacity int) {
 	if arg == "" {
-		return 0
+		return 0, 0
 	}
 	s, err := readLauncherSettings(arg, cwd, home)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	env, _ := s["env"].(map[string]any)
-	switch v := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"].(type) {
-	case string:
-		return contextLimit(v)
-	case float64:
-		return int(v)
+	value := func(k string) int {
+		switch v := env[k].(type) {
+		case string:
+			return contextLimit(v)
+		case float64:
+			return max(int(v), 0)
+		}
+		return 0
 	}
-	return 0
+	return value("CLAUDE_CODE_AUTO_COMPACT_WINDOW"), value("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
 }
 
+// assistantCompactionPolicy is what launcher declares about compaction for a conversation in cwd (settings: Persona's
+// own settings file for the start), the same for the main conversation and every other (#3066). Several declarations
+// of one value: the smallest counts (the conservative reading where a profile, the environment and settings disagree).
 func (n *Node) assistantCompactionPolicy(launcher, cwd, settings string, execution modelExecution) assistantCompaction {
-	capacity := 0
+	var c assistantCompaction
+	declare := func(window, capacity int) {
+		c.window, c.capacity = smallerCapacity(c.window, window), smallerCapacity(c.capacity, capacity)
+	}
 	isCodex := n.agentOf(launcher) == "codex"
-	ownSettings := ""
 	configDir, codexHome := os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME")
 	if dir := n.claudeStartDir.Load(); dir != nil && *dir != "" {
 		configDir = proto.ExpandHome(*dir, n.home)
 	}
 	if l, managed := n.managedLauncher(launcher); managed {
-		capacity = providerCapacity(l, execution.Model)
+		c.pin = true
 		if isCodex {
+			declare(l.CompactWindow, providerCapacity(l, execution.Model))
 			for _, kv := range launcherEnvVars(l.Env) {
 				if kv[0] == "CODEX_HOME" {
 					codexHome = kv[1]
 				}
 			}
 		} else {
-			ownSettings = settingsArg(l.Args)
-			capacity = smallerCapacity(capacity, settingsCapacity(ownSettings, cwd, n.home))
+			// What the launch itself would set (CompactWindow, else the model's window; its env last), and its settings.
+			env := providerEnv(l, execution.Model, "", true)
+			declare(contextLimit(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]), providerCapacity(l, execution.Model))
+			c.ownSettings = settingsArg(l.Args)
+			declare(settingsCompaction(c.ownSettings, cwd, n.home))
 		}
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if p, err := n.launcherProbe(ctx, launcher); err == nil {
-			capacity = contextLimit(p.Env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
-			capacity = smallerCapacity(capacity, codexCapacity(p.Args))
-			ownSettings = settingsArg(p.Args)
-			capacity = smallerCapacity(capacity, settingsCapacity(ownSettings, cwd, n.home))
+			declare(contextLimit(p.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]), contextLimit(p.Env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]))
+			declare(0, codexCapacity(p.Args))
+			c.ownSettings = settingsArg(p.Args)
+			declare(settingsCompaction(c.ownSettings, cwd, n.home))
 			if dir := p.Env["CLAUDE_CONFIG_DIR"]; dir != "" {
 				configDir = dir
 			}
@@ -134,13 +166,13 @@ func (n *Node) assistantCompactionPolicy(launcher, cwd, settings string, executi
 			}
 		}
 		if !isCodex {
-			capacity = smallerCapacity(capacity, contextLimit(os.Getenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")))
+			declare(contextLimit(os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW")), contextLimit(os.Getenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")))
 			if configDir == "" {
 				configDir = filepath.Join(n.home, ".claude")
 			}
-			capacity = smallerCapacity(capacity, settingsCapacity(filepath.Join(configDir, "settings.json"), cwd, n.home))
+			declare(settingsCompaction(filepath.Join(configDir, "settings.json"), cwd, n.home))
 			for _, file := range []string{"settings.json", "settings.local.json"} {
-				capacity = smallerCapacity(capacity, settingsCapacity(filepath.Join(cwd, ".claude", file), cwd, n.home))
+				declare(settingsCompaction(filepath.Join(cwd, ".claude", file), cwd, n.home))
 			}
 		}
 	}
@@ -149,22 +181,13 @@ func (n *Node) assistantCompactionPolicy(launcher, cwd, settings string, executi
 			codexHome = n.codexHome()
 		}
 		if b, err := os.ReadFile(filepath.Join(codexHome, "config.toml")); err == nil {
-			capacity = smallerCapacity(capacity, codexCapacity([]string{string(b)}))
+			declare(0, codexCapacity([]string{string(b)}))
 		}
 	}
-	capacity = smallerCapacity(capacity, settingsCapacity(settings, cwd, n.home))
-	unknown := capacity == 0
-	if unknown && execution.IsMain && isCodex {
-		// Codex takes model_auto_compact_token_limit as given, past the model's window if need be: a main conversation on
-		// a backend nobody declared keeps the ordinary limit.
-		capacity = assistantCompactWindow
+	declare(settingsCompaction(settings, cwd, n.home))
+	if c.window > 0 && c.capacity > 0 && c.capacity < c.window {
+		c.window = c.capacity // no compaction window past the context window
 	}
-	// A Claude main conversation on an undeclared backend gets the main target and no MAX_CONTEXT_TOKENS (#3008): Claude
-	// Code clamps CLAUDE_CODE_AUTO_COMPACT_WINDOW to the window it knows the model to have, so 400K cannot outgrow a
-	// 200K model, while a guessed 200K capacity made a 1M model compact at about 167K.
-	c := compactionLimits(execution.IsMain, capacity)
-	c.ownSettings = ownSettings
-	c.idleFromWindow = unknown && execution.IsMain && !isCodex
 	return c
 }
 
@@ -194,28 +217,31 @@ func reportedWindow(usage map[string]claudeModelUsage, model string) int {
 	return window
 }
 
-// capIdleCompact caps the idle threshold of a conversation whose capacity nothing declared at 75% of the window Claude
-// Code reports, as compactionLimits does for a declared capacity: on a 200K backend the main conversation still
-// compacts at 150K while its cache is warm instead of waiting for 300K it never reaches. It reports whether the
-// threshold went down; p.mu is held.
-func (p *assistantProc) capIdleCompact(window int) bool {
-	if !p.idleFromWindow || window <= 0 {
+// followWindow sets the idle threshold from the window the agent reports for the conversation's model: 75% of it, or of
+// the declared window when that is smaller. It reports whether the threshold changed; p.mu is held.
+func (p *assistantProc) followWindow(reported int) bool {
+	window := smallerCapacity(p.declaredWindow, reported)
+	if window <= 0 {
 		return false
 	}
-	limit := window / 4 * 3
-	current := p.compactIdleAt
-	if current == 0 {
-		current = assistantIdleCompact
-	}
-	if limit >= current {
+	idle := idleThreshold(window)
+	if idle == p.compactIdleAt {
 		return false
 	}
-	p.compactIdleAt = limit
+	p.compactIdleAt = idle
 	return true
 }
 
+// env is what a start writes into the agent's environment and merged settings: only a managed launcher's declared
+// values (pin), none when it declares none.
 func (c assistantCompaction) env() []string {
-	env := []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + strconv.Itoa(c.window)}
+	if !c.pin {
+		return nil
+	}
+	var env []string
+	if c.window > 0 {
+		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(c.window))
+	}
 	if c.capacity > 0 {
 		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(c.capacity))
 	}

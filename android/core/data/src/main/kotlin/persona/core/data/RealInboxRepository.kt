@@ -430,6 +430,26 @@ class RealInboxRepository(
         return persona.feature.inbox.InboxDonePage(listed(data, transport), next)
     }
 
+    override suspend fun doneDays(manager: String?, zone: java.time.ZoneId): List<persona.feature.inbox.InboxDoneDay>? {
+        val transport = requireTransport()
+        val body = try {
+            transport.doneDays(manager?.takeIf { it.isNotBlank() }, zone.id)
+        } catch (e: UnsupportedOperationException) {
+            return null
+        } catch (e: Exception) {
+            // An old hub (404 / 405), or a zone it doesn't know (400): Done pages back from the newest as before.
+            if ((e as? persona.core.contracts.api.HubCodedFailure)?.status in setOf(400, 404, 405)) return null
+            throw e
+        }
+        if (!owns(transport)) throw CancellationException("Pairing changed")
+        return body.array("days").mapNotNull { day ->
+            val d = day as? JsonObject ?: return@mapNotNull null
+            val date = runCatching { java.time.LocalDate.parse(d.string("day")) }.getOrNull() ?: return@mapNotNull null
+            val count = (d["count"] as? JsonPrimitive)?.intOrNull ?: return@mapNotNull null
+            persona.feature.inbox.InboxDoneDay(date, count)
+        }
+    }
+
     /** What the managers answered to a bulk action, in the app's ids, and the items it changed as the hub has them now. */
     private class BulkOutcome(val result: InboxBulkResult, val changed: List<Pair<InboxRecord, JsonObject>>)
 

@@ -23,6 +23,7 @@ struct PersonaApp: App {
                         if let key = model.resolve(path: link.machine + "/" + link.session) { model.open(key) }
                         return
                     }
+                    if RecordingLink.matches(url) { MeetingRecorder.openRecordings(); return } // the recording's activity
                     #endif
                     if let link = ExtensionSystemLink(url: url) { model.openExtension(link); return }
                     if SentSettingsLink.matches(url) { model.openSentRecords(); return }
@@ -228,6 +229,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let automation = false
         #endif
         PhoneRecordingReceiver.shared.start()
+        #if DEBUG
+        RecordingSamples.showMeetingIfAsked() // `-showMeetingSample recording|paused|interrupted|minutes|pending`
+        #endif
         WatchSync.shared.activate()
         AppModel.shared.start()
         LiveActivityController.shared.start()
@@ -323,6 +327,20 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
+        #if os(iOS)
+        // "Recording paused" (MeetingRecorder.notifyPaused): open Recordings; coming to the front resumes it.
+        if response.notification.request.content.userInfo[RecordingLink.notificationKey] != nil {
+            nonisolated(unsafe) let done = completionHandler
+            let opened = response.actionIdentifier != UNNotificationDismissActionIdentifier
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if opened { MeetingRecorder.openRecordings() }
+                    done()
+                }
+            }
+            return
+        }
+        #endif
         guard let info = PushCrypto.notificationInfo(response.notification.request.content.userInfo) else {
             completionHandler()
             return

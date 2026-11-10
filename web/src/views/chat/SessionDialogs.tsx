@@ -13,12 +13,15 @@ import type { Session } from "../../lib/types";
 import { Button, copyText, cx, Dialog, Loading, Menu, Switch, toast, useMenu } from "../../ui/atoms";
 import { removeAgentWorktree, worktreeLoss, worktreeStatus, type WorktreeStatus } from "../../lib/worktree";
 import { Icon, type IconName } from "../../ui/icons";
-import { ModelEffortPopover } from "./ModelEffortPopover";
+import { lazyOverlay } from "../LazyOverlay";
 import { UltraMark } from "./Ultracode";
 import { t } from "../../i18n";
 import { AlwaysPermissions } from "./AlwaysPermissions";
 import { DelegatedHistory } from "./Delegated";
 import { appArchiveDeps, archiveAgent } from "../../lib/agent-archives";
+
+// the model and effort popover loads on the chip's first tap, not with every chat's header
+const ModelEffortPopover = lazyOverlay(() => import("./ModelEffortPopover").then((m) => m.ModelEffortPopover));
 
 interface SessionInfo {
   session_id?: string;

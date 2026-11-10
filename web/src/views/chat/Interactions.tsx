@@ -427,7 +427,7 @@ function PlanCard({ ix }: { ix: Interaction }) {
         )
       }
     >
-      <div className="overflow-y-auto rounded-[8px] bg-inset px-3 py-2.5 shadow-hairline" style={{ maxHeight: PLAN_MAX }}>
+      <div className="overflow-y-auto rounded-[8px] bg-inset px-3 py-2.5 shadow-hairline" style={{ maxHeight: PLAN_MAX }} data-scroll-box>
         <Markdown text={ix.plan ?? ""} small />
       </div>
     </Card>
@@ -1118,7 +1118,7 @@ export function PendingCards({ interactions, answered, delegated = [], offerNext
   return (
     <div className="flex min-h-0 shrink flex-col gap-2">
       {/* the box clips what is in it: its children keep a little room for their shadows (p-1; -m-1 gives it back) */}
-      <div data-chat-cards className={cx("-m-1 flex min-h-0 shrink flex-col overflow-y-auto overscroll-contain p-1", !done.length && !full && "hidden")}>
+      <div data-chat-cards data-scroll-box className={cx("-m-1 flex min-h-0 shrink flex-col overflow-y-auto overscroll-contain p-1", !done.length && !full && "hidden")}>
         {done.length > 0 && <div className="flex flex-col gap-2">{done}</div>}
         {count > 0 && (
           <Collapse open={full >= 1}>

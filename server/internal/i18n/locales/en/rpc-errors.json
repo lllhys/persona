@@ -24,6 +24,8 @@
   "peer_too_long": "The message is too long for the message channel. Split it into shorter messages.",
   "peer_unconfirmed": "The message was handed to this Claude session, but it hasn’t taken it yet: it may be waiting for approval on the computer, or it was dropped as a repeat. Check on the computer before sending it again.",
   "peer_command": "The message channel only delivers plain messages and doesn’t run slash commands. Type the command on the computer.",
+  "modes_on_computer": "This Claude session runs in Claude on the computer (its desktop app or another terminal). Change its mode, effort or model there.",
+  "modes_not_running": "This agent isn’t running. Send it a message to resume it, then change this.",
   "shell_waiting": "The new terminal tab stopped on a question before the agent could start. Nothing ran; the tab stays open for a few minutes so it can be answered.",
   "start_line_rejected": "The new terminal tab didn't take the start command, twice. Nothing ran; check what that shell does when it starts, then try again.",
   "directory_untypable": "This directory’s name contains a control character, such as a tab or a line break, so the agent can’t be started in it from here. Rename the directory or choose another one."

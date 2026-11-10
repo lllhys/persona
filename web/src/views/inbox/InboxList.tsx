@@ -26,6 +26,7 @@ import type { MenuAt } from "../../ui/menu-model";
 import { Icon } from "../../ui/icons";
 import { openPolicyDialog, RulesDialog } from "./PolicyDialog";
 import { isNoHover } from "../../ui/media-query";
+import { scrollBehavior } from "../../ui/stream/motion";
 import { DraftDialog } from "./InboxDialogs";
 import { TriageBanner } from "./TriageBanner";
 import { UnreadNotice } from "./UnreadNotice";
@@ -196,7 +197,7 @@ export function InboxList({ selected, picked = null, onPicked }: { selected?: { 
   const jumpTo = (group: string, key: string) => {
     if (!isOpen(group, "done")) toggle(group, "done");
     putFold(`${group}|done|${key}`, true);
-    requestAnimationFrame(() => document.querySelector(`[data-group="${CSS.escape(`${group}|done|${key}`)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    requestAnimationFrame(() => document.querySelector(`[data-group="${CSS.escape(`${group}|done|${key}`)}"]`)?.scrollIntoView({ block: "start", behavior: scrollBehavior() }));
   };
   const allChosen = shownOpen.length > 0 && shownOpen.every((it) => picked?.has(itemKey(it)));
   const pick = useCallback((it: InboxItem) => onPicked?.((p) => {

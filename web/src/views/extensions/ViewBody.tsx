@@ -18,6 +18,7 @@ import {
 } from "../../lib/extension-ui";
 import { presenceStyle, usePresence, type Present } from "../../ui/motion";
 import { Rolling } from "../../ui/Rolling";
+import { scrollBehavior } from "../../ui/stream/motion";
 import { t } from "../../i18n";
 import { Button, cx, EASE, Loading, Spinner } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
@@ -103,7 +104,7 @@ export function ViewSections({ view, embedded, compact, ...handlers }: ViewHandl
 /** Scrolls the page to a file's diff (a file tree without an action, on a page of diffs). */
 function revealDiff(path: string) {
   const el = [...document.querySelectorAll<HTMLElement>("[data-diff-path]")].find((e) => e.dataset.diffPath === path);
-  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  el?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
 }
 
 /** The side pane's title on a narrow screen: its first section's, with how many files its tree has. */

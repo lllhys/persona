@@ -220,6 +220,17 @@ The 1900 date system also has a calendar boundary (#1310): January 1 is serial 1
 - Recursive JSON duplicate checks must distinguish case-sensitive maps from protocol structs. Compare arbitrary map keys exactly; reject known struct-field aliases using Unicode simple folding (`strings.EqualFold`, as in `encoding/json`). Lowercasing every object both rejects valid configuration keys and misses long-s signature aliases.
 - Address migration must repeat target uniqueness checks after network reads under the final state lock, including the one official identity across branch and transport aliases. This was a pre-existing migration defect, not an embedded-signature regression.
 
+## User completion is not a recommendation (#3038)
+
+A `needs_user` task's direct completion is the existing to-do `PATCH {"done":true}`,
+not its ask's Accept route: Accept can send the recommendation and resume a closed
+Agent. Keep user completion's empty `done_by`; assigning `review` would allow later
+Agent activity to reopen it. A task snapshot read before a slow session lookup cannot
+authorize automatic rework or recommendation delivery after completion or reopening.
+Recheck the task immediately before dispatch, including inside a queued offline-send
+closure. Test the actual lookup boundary with a blocking fake RPC, not a fixed sleep;
+direct user messages still deliberately retain their separate reuse semantics.
+
 ## Completion reads must belong to the current turn (#6525)
 
 A model judgment can return after a resumed turn has already stopped again. Checking only the current
@@ -263,6 +274,10 @@ For embedded signatures, retain the complete envelope and verify the exact decod
 ## A socket systemd passes reaches every child unless it is taken first (2026-11-08)
 
 Sockets passed by socket activation (`LISTEN_FDS`, descriptors 3 and up) are not close-on-exec, and Go's `os/exec` does not close what is not: every process started before the hub marks them is handed the hub's listening port, and hands it on to everything it starts in turn. The hub without its edge marked them only when it first listened, and it could start the built-in manager before that; the manager, the local node, extension programs and the agents the node started then all held the hub's listening socket (several pids on `ss -tlnp` for the hub's port). Take what a process was handed first thing, before anything can start a child (`claimInherited`, `osproc.SealInherited`); hand a child a descriptor only through `exec.Cmd.ExtraFiles`. Never seal in `main` of a binary whose helper commands hand descriptors on by exec (the sandbox's launcher passes its mount data to bwrap that way).
+
+## A process that execs itself inherits its own children (2026-11-10, #2978)
+
+`syscall.Exec` keeps the pid, so every child of the old image (the update watchdog, the herdr server, bridges, the hub's manager) is the new image's child, and no `exec.Cmd` there knows it. Once one exits it stays a zombie until the process ends; `init: true` in Docker does not help, since the zombie's parent is personad, not init. The resident node, the hub and a manager all replace themselves this way, so each calls `osproc.ReapInherited` next to `osproc.SealInherited`, before it starts any child: it waits for each pid listed as its child then, never for -1, which could take a child an `exec.Cmd` waits for.
 
 ## A fixed name in the temp folder is shared on Linux (2026-11-07, #66)
 
@@ -610,6 +625,7 @@ Splitting a registry at its first colon reads `[::1]:5000` as `[`, selecting HTT
 
 - Linux `setsid` detaches the process group, not the systemd service cgroup: when node startup fails, the manager kills rollback processes in the same cgroup (#1158). Recovery must run in a separate transient user service and be ready before binary replacement. Complete its readiness handshake before acquiring the update-directory lock, or the parent waits for readiness holding the lock while recovery waits for that lock. Tests use fake `systemd-run`, never installing recovery services on the development machine.
 - A missing identity and an unavailable identity need different fallback decisions (#2910). A Linux zombie keeps both its procfs start time and its `ps -o lstart=` result, so rejecting it in `osproc.Identify` alone still lets a watchdog check count it as alive. Preserve the difference between a live exact identity, a known exited process, and an unreadable identity; only the last needs a weaker reading. Check for known exit even for older markers without exact identities. Tests can hold a deterministic zombie with `waitid(WEXITED|WNOWAIT)` after SIGKILL, then reap it during cleanup.
+- Detaching a child does not change who must reap it (#2978). `cmd.Start` then `cmd.Process.Release()` leaves a watchdog in its own session that, once it exits while the parent runs on (a canceled node commit, a failed hub exec), stays a zombie for the parent's life. Keep a background `cmd.Wait()` instead, as both update watchdogs do; an exec hands the child to the new image.
 - On macOS, reopening an already-executed signed Mach-O staging file with `O_RDWR` may cause later self-check retries to receive `SIGKILL` (#1158). Use a read-only handle for post-validation `fsync`; don't request write access just to sync. Canceled commits return before self-check. Verify busy / cancellation retries five consecutive times, not just first execution.
 - macOS UNIX socket path limits are short; test names plus default long `TMPDIR` may exceed them (#1158). Socket fixtures use a short separate `/tmp` root, or `TMPDIR=/tmp` in isolation; don't blame the updater or change production sockets.
   New tests easily repeat this: `t.TempDir()` includes the test name (and subtest name), so a socket a few levels below exceeds the limit (#2257, #2278). Linux's limit is 108 bytes and its `TMPDIR` is short; Linux-only testing misses this.
@@ -1500,6 +1516,13 @@ A Hub-only receipt requires unchanged node versions. When the user explicitly en
 
 After activating matching native and downloadable packages, reapply an enabled runtime node policy through its existing settings route so managers recheck the new pointer. A filesystem pointer change has no consumer watcher. Check the current policy first so an intervening disable is respected; a failed recheck must not produce a completed publication receipt.
 
+
+## Release status reporting is opt-in (#2671)
+
+A source validation result and a deployment result are different facts. Keep release
+logs and receipts regardless of whether GitHub accepts commit statuses. Default both
+release workers to no status writes; explicit opt-in retains all three transitions,
+including errors. Never fabricate a success to remove an old failing status.
 ## Idle wakeups: a ticker per watch, a P per core, a fallback that never waits (2026-11-09, #2590)
 
 - A goroutine with a ticker of its own per watched session looks free, but every tick wakes the scheduler, and each tick opened, stat'ed and closed the transcript whether or not it grew. Two tickers per watch (250 ms transcript, 1 s status line) made 4 watched sessions at rest cost +260 ms of CPU and +9,150 context switches a minute over none. One ticker for every watch (`watchPump`), a stat before the open (`transcript.File.Changed`, and the same gate at the start of `refresh`), and goroutines only for work that can be slow (reading new lines, reading a screen) brought it to +60 ms and +2,420. What is left is mostly the 4 Hz tick itself: wakeups of the runtime's timer thread and sysmon, not work. Keep a guard per watch (`reading`, `live.reading`) so a slow parse or screen read skips that watch's ticks, as a busy ticker did, without holding up the others; and a lock taken on a tick must be a `TryLock` (a file being paged answers "changed").
@@ -1566,6 +1589,13 @@ A regular Git HEAD can block in open despite stat succeeding. Keep project label
 - `writeMerged` decoded every manager's answer into a map, decoded each item into a map only to look for `manager`, and encoded everything again: 13 ms and 7 MB for 400 inbox items on every refetch. One `json.Valid`, then a structural scan that cuts out the top-level members and the items, writes the same bytes in 3 ms and 0.5 MB (`merged_scan.go`). Anything the scan cannot read the way decoding does goes to the old decoding, kept as `writeDecoded`: a top-level key that is escaped, non-ASCII or repeated (how a map keeps and sorts such keys is decoding's to say), a list that is neither an array nor null. Do the same for any other reader the scan replaces: `mergeList` takes the todos' ids from the scan only where a key cannot fold to `todos` or `id` (`encoding/json` matches struct fields regardless of case) and the id is plain ASCII, and decodes otherwise (`TestTodoOwnersMatchDecoding`).
 - `i18n.InboxJSON` decoded and marshaled the whole inbox list on every GET to change a few labels (17-22 ms, 4-7 MB for 400 items). What it does to a value depends on that value alone, so the hub localizes each item on its own and keeps the result by a 128-bit hash of the item's bytes, per list route, manager and language, for the items of the latest answer only (`inbox_forms.go`). Byte identity with the whole-body pass needs one more step: when anything in an answer changes, the whole answer is marshaled again, so every unchanged item and the top level are then written as `InboxReencoded` (decode with `UseNumber`, marshal) gives them. An answer whose top level is itself an item is localized whole, since `InboxJSON` then visits none of its list. Equal bytes do not show the per-item path ran, so the relay test also counts the slots kept (`TestInboxListsLocalizedAsWhole`).
 - A 2xx answer whose body was `null` made `writeMerged` panic: `json.Unmarshal` of `null` into a map leaves it nil, and the merge then assigned to it. Treat any answer that is not a JSON object, `null` included, as no answer.
+
+## Remote tests need fixtures outside the Go module (2026-11-10, #2980)
+
+When server tests read a shared fixture outside `server/`, include it in `scripts/test/test-server.sh` at the same
+relative path and create its remote parent directory. The inbox list tests read `scripts/mock/inbox_events.json`;
+copying only the Go module left them failing on the test machine. Extend the fake remote launcher test to read the
+staged fixture from the package directory, check refreshed contents, and reject a missing source before Go starts.
 
 ## Hot paths: a list encoded whole for each of its readers, a handler built for each request (2026-11-10, #2997)
 

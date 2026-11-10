@@ -29,14 +29,72 @@ object InboxGroups {
     fun timeKey(at: Instant?, now: Instant, zone: ZoneId, recent: Boolean = false): String {
         if (at == null) return "month"
         if (recent && now.toEpochMilli() - at.toEpochMilli() <= 3_600_000) return "just"
-        val days = ChronoUnit.DAYS.between(at.atZone(zone).toLocalDate(), now.atZone(zone).toLocalDate()).coerceAtLeast(0)
+        return dayKey(at.atZone(zone).toLocalDate(), now.atZone(zone).toLocalDate())
+    }
+
+    /** The time group of a whole calendar [day] seen on [today] (as [timeKey] for a moment of it; never "just"). */
+    fun dayKey(day: LocalDate, today: LocalDate): String {
+        val days = ChronoUnit.DAYS.between(day, today).coerceAtLeast(0)
         return when {
             days == 0L -> "today"
             days == 1L -> "yesterday"
-            days <= 6 -> "d:" + at.atZone(zone).toLocalDate()
+            days <= 6 -> "d:$day"
             days <= 29 -> "week"
             else -> "month"
         }
+    }
+
+    /**
+     * Done's group counts from the hub's done items per day (#2967, #3016): each day's count goes to its time group;
+     * "Just now" is [justNow] (the list holds the last hour whole) and comes out of "Today". Newest group first; groups
+     * with none are left out.
+     */
+    fun doneCounts(days: List<Pair<LocalDate, Int>>, justNow: Int, now: Instant, zone: ZoneId): List<Pair<String, Int>> {
+        val today = now.atZone(zone).toLocalDate()
+        val counts = LinkedHashMap<String, Int>()
+        days.forEach { (day, n) -> dayKey(day, today).let { counts[it] = (counts[it] ?: 0) + n } }
+        if (justNow > 0) {
+            counts["just"] = justNow
+            counts["today"] = ((counts["today"] ?: 0) - justNow).coerceAtLeast(0)
+        }
+        return counts.entries.filter { it.value > 0 }.sortedBy { timeRank(it.key, now, zone) }.map { it.key to it.value }
+    }
+
+    /**
+     * When Done's group [key] begins and ends, [start, end) in [zone] (no start: the oldest). Its own first page is the one
+     * before its end; it is whole once that far back is in.
+     */
+    fun span(key: String, now: Instant, zone: ZoneId): Pair<Instant?, Instant> {
+        val today = now.atZone(zone).toLocalDate()
+        fun at(day: LocalDate) = day.atStartOfDay(zone).toInstant()
+        return when (key) {
+            "just" -> now.minusSeconds(3600) to at(today.plusDays(1))
+            "today" -> at(today) to at(today.plusDays(1))
+            "yesterday" -> at(today.minusDays(1)) to at(today)
+            "week" -> at(today.minusDays(29)) to at(today.minusDays(6))
+            "month" -> null to at(today.minusDays(29))
+            else -> dayOf(key)?.let { at(it) to at(it.plusDays(1)) } ?: (null to at(today.plusDays(1)))
+        }
+    }
+
+    /**
+     * Done's groups as drawn with the hub's [counts] ([doneCounts]): every counted group, loaded or not, and any loaded
+     * one the counts don't have yet, newest first; a group's count is the hub's, or what is loaded when that is more.
+     */
+    fun <T> withCounts(loaded: List<Group<T>>, counts: List<Pair<String, Int>>, now: Instant, zone: ZoneId,
+                       size: (T) -> Int = { 1 }): List<Counted<T>> {
+        val byKey = loaded.associateBy { it.key }
+        val counted = counts.toMap()
+        return (counts.map { it.first } + loaded.map { it.key }).distinct().sortedBy { timeRank(it, now, zone) }.map { key ->
+            val items = byKey[key]?.items.orEmpty()
+            val have = items.sumOf(size)
+            Counted(key, items, maxOf(counted[key] ?: 0, have), have)
+        }
+    }
+
+    /** A group with its count: [loaded] of its [count] items are in. */
+    data class Counted<T>(val key: String, val items: List<T>, val count: Int, val loaded: Int) {
+        val whole: Boolean get() = loaded >= count
     }
 
     /** A day group's date ("d:2026-11-06"), null for the others. */

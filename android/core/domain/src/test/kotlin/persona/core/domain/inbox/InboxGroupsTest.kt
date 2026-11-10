@@ -86,4 +86,52 @@ class InboxGroupsTest {
         assertEquals(setOf("x"), InboxGroups.pickGroup(group, setOf("a", "b", "c", "x")))
         assertEquals(InboxGroups.Tick.None, InboxGroups.tick(emptyList<String>(), emptySet()))
     }
+
+    @Test fun aDayLandsWhereItsMomentsDo() {
+        val today = local(11, 9, 15).atZone(zone).toLocalDate()
+        for (d in listOf(0L, 1, 2, 6, 7, 29, 30, 400)) {
+            val day = today.minusDays(d)
+            assertEquals(key(day.atTime(12, 0).atZone(zone).toInstant()), InboxGroups.dayKey(day, today))
+        }
+    }
+
+    /** The hub's done items per day (#2967, #3016) by group: "Just now" out of "Today", the last week by day, then 7+ and 1+ month. */
+    @Test fun doneCountsFromTheHubsDays() {
+        fun day(m: Int, d: Int) = java.time.LocalDate.of(2026, m, d)
+        val days = listOf(day(11, 9) to 10, day(11, 8) to 4, day(11, 7) to 2, day(11, 3) to 1, day(11, 2) to 3, day(10, 20) to 5,
+            day(10, 10) to 6, day(9, 1) to 7)
+        assertEquals(listOf("just" to 3, "today" to 7, "yesterday" to 4, "d:2026-11-07" to 2, "d:2026-11-03" to 1, "week" to 8, "month" to 13),
+            InboxGroups.doneCounts(days, justNow = 3, now = now, zone = zone))
+        // More just now than the hub counted today (it counted a moment ago): no "Today" rather than a negative one.
+        assertEquals(listOf("just" to 2), InboxGroups.doneCounts(listOf(day(11, 9) to 1), justNow = 2, now = now, zone = zone))
+        assertEquals(emptyList<Pair<String, Int>>(), InboxGroups.doneCounts(emptyList(), 0, now, zone))
+    }
+
+    @Test fun aGroupsSpan() {
+        assertEquals(local(11, 8, 0) to local(11, 9, 0), InboxGroups.span("yesterday", now, zone))
+        assertEquals(local(11, 5, 0) to local(11, 6, 0), InboxGroups.span("d:2026-11-05", now, zone))
+        assertEquals(local(10, 11, 0) to local(11, 3, 0), InboxGroups.span("week", now, zone))      // 7 to 29 days ago
+        assertEquals(null to local(10, 11, 0), InboxGroups.span("month", now, zone))
+        assertEquals(local(11, 9, 0) to local(11, 10, 0), InboxGroups.span("today", now, zone))
+        // A group's span holds exactly the moments timeKey puts in it.
+        for (k in listOf("yesterday", "d:2026-11-05", "week", "month")) {
+            val (start, end) = InboxGroups.span(k, now, zone)
+            assertEquals(k, key(end.minusSeconds(1)))
+            start?.let { assertEquals(k, key(it)); assertEquals(true, key(it.minusSeconds(1)) != k) }
+        }
+    }
+
+    @Test fun countedGroupsLoadedOrNot() {
+        val loaded = listOf(InboxGroups.Group("just", listOf("a")), InboxGroups.Group("today", listOf("b", "c")), InboxGroups.Group("month", listOf("z")))
+        val counts = listOf("just" to 1, "today" to 2, "yesterday" to 4, "week" to 9, "month" to 30)
+        val shown = InboxGroups.withCounts(loaded, counts, now, zone)
+        assertEquals(listOf("just", "today", "yesterday", "week", "month"), shown.map { it.key })
+        assertEquals(listOf(1, 2, 4, 9, 30), shown.map { it.count })
+        assertEquals(listOf(true, true, false, false, false), shown.map { it.whole })
+        assertEquals(listOf("z"), shown.last().items)
+        // A group the counts don't have yet (done since they were read) still shows, with what is loaded.
+        val extra = InboxGroups.withCounts(listOf(InboxGroups.Group("d:2026-11-06", listOf("x", "y"))), counts, now, zone)
+        assertEquals(2, extra.first { it.key == "d:2026-11-06" }.count)
+        assertEquals("d:2026-11-06", extra[3].key)
+    }
 }

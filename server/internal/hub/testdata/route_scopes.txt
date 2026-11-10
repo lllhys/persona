@@ -417,6 +417,8 @@ agents.control       POST /api/v1/interactions/{id}/resolve
 notify               POST /api/v1/notify
 -                    POST /api/v1/phone/runtime-cli
 -                    POST /api/v1/phone/write-queue/{id}/cancel
+-                    POST /api/v1/recordings/{id}/minutes
+-                    POST /api/v1/recordings/{id}/minutes/todos
 agents.control       POST /api/v1/sessions
 -                    POST /api/v1/sessions/{mid}/{sid}/archive
 -                    POST /api/v1/sessions/{mid}/{sid}/attach

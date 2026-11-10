@@ -65,6 +65,21 @@ describe("modes", () => {
     expect(hasModes(undefined)).toBe(false);
   });
 
+  it("follows the node's modes capability when it gives one (#1843)", () => {
+    // Orca's conversations: a runtime that applies the modes
+    expect(hasModes(s({ agent: "claude", source_kind: "runtime", capabilities: { read: true, send: true, modes: true } }))).toBe(true);
+    // a row the node says no for (a runtime that did not declare them), whatever its agent
+    expect(hasModes(s({ agent: "agy", source_kind: "runtime", capabilities: { read: true, send: true, modes: false } }))).toBe(false);
+    // Claude's desktop app or another terminal: messages only
+    for (const source_kind of ["claude_desktop", "claude_cli", "claude_bg"]) {
+      expect(hasModes(s({ agent: "claude", source_kind, capabilities: { read: true, send: true, modes: false } }))).toBe(false);
+    }
+    expect(hasModes(s({ assistant: true, capabilities: { modes: true } }))).toBe(false);
+    // an older node says nothing: the agent decides, as before
+    expect(hasModes(s({ agent: "claude", source_kind: "runtime", capabilities: { read: true, send: true } }))).toBe(false);
+    expect(hasModes(s({ agent: "claude", source_kind: "claude_desktop", capabilities: { read: true, send: true } }))).toBe(false);
+  });
+
   it("gives a Codex thread on its app-server the effort alone, among its own levels", () => {
     const live = s({ agent: "codex", source_kind: "codex_app_server", capabilities: { read: true, send: true }, efforts: ["low", "high", "ultra"], effort: "high" });
     expect(hasModes(live)).toBe(false);

@@ -46,6 +46,11 @@ Chat page:
   Background slices extend halfway into spacing (`WorkCardSlice.bridge = Theme.Space.l / 2`): the old hard-coded 7 for 14pt spacing left 2pt white seams after spacing changed to 16.
 - One `DiffView` (Claude Edit / MultiEdit / Write supplies old/new text; Codex unified diff), sharing Git row models (`DiffText.Line` / `parse`):
   header filename, directory, +N −N (opens file); only ± and row backgrounds are colored, code uses body color; long lines scroll horizontally with right fade; beyond 40 lines show beginning + Expand all.
+  Old/new text is compared in PersonaKit's `LineDiff` (#2915, a Myers line diff like the web's `compare.ts`): unchanged lines stay as plain context, two or more in a row that are over 3 lines
+  from any change fold into one "… N unchanged lines" row until Show All (which opens through `toggleInPlace`, the diff's top pinned), and a removed line paired with the added one after it (first with first) marks its changed words on
+  `Theme.Diff.addEmphasis` / `delEmphasis` (words as in the web's `code-review.ts`: ≤ 1,000 characters, ≤ 500 words, similar enough; Han and kana count one character per word).
+  Every +N −N (header, tool chip, changed files) is that diff's. Past its budget (1,000 lines between the common start and end, 100,000 characters a side) the middle is all removed, then all added.
+  A newline ending both texts (or a Write's content) ends the last line, as git counts; ending only one of an Edit's texts (pieces of a file), it is a line break put in or taken out and shows as an empty line added or removed.
   Whole-file Git diffs still use `MonoTextView` for large-diff performance, same models and colors. Tool failures put Error above output instead of covering its first line.
 - Image viewer: every full-image entry in the App (chat images, sent images, images viewed this turn, tool results, Files images, notebook outputs, Markdown web images and diagrams,
   Lark messages / cards / Moments / documents, Inbox connector messages, Lark attachments) uses one `ImageViewer` (`ImageViewer.swift`, `ViewerImage` data:
@@ -355,7 +360,10 @@ Chat page:
     order ctrl+alt+shift+key, herdr encodes (ctrl+shift+a CSI u), unknown names reject entire chord (`invalid_key`); serial sends preserve press order.
     Live-status terminal icon opens full-screen version of same panel.
   - Git (`GitPane`): branch, upstream ↑↓ (an upstream deleted on the remote, `gone`, says so and has no Pull), staged count; changes (status letter, +/− lines, staged/partially staged), diff with old/new numbers and red/green, no wrap, horizontal scroll,
-    staged/unstaged switch when both; paged history, commit message and per-file diffs.
+    staged/unstaged switch when both; paged history, commit message and per-file diffs. A refresh the user asked for (pull to refresh, the Mac's
+    Refresh / ⌘R) that fails over a status already shown says so in a notice above it with Retry, and a failed Load Earlier Commits turns the button
+    into "Couldn't load. Try again." (#1889, `GitReadFailure`); only the automatic live refresh stays quiet. Screenshots: mock hub `MOCK_GIT_READ_FAIL=1`
+    with `-showGitReload YES`.
     Branch-card Pull N fetches latest upstream in one tap, retained as Pull when synced for active remote checks; disable repeat taps while running, refresh status/files/history and show result.
     Clean-worktree fast-forward only, no auto stash/merge/rebase; existing stashes unchanged; explain no upstream/detached HEAD/uncommitted changes/divergence. Other Git views stay read-only.
   - Files (`FilesPane`): descend from session cwd, breadcrumbs jump levels, directories first, size/modification/Git flags (dot for changes within directory),

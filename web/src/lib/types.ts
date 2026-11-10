@@ -110,6 +110,8 @@ export interface SessionCapabilities {
   approve?: boolean;
   terminal?: boolean;
   attach?: boolean;
+  /** The permission mode and effort chips can change it (session.modes, #1843): the node's word, absent from older nodes. */
+  modes?: boolean;
 }
 
 /** A session's work state (docs/assistant/agent-work.md): working, blocked on a named precondition, or done. */

@@ -190,18 +190,19 @@ func (n *Node) claudeSessions(procs []claudeProc, seen map[string]bool) []proto.
 	return out
 }
 
-// outsideCapabilities: read always; send when its peer inbox is one the node can use, with a reason when not.
+// outsideCapabilities: read always; send when its peer inbox is one the node can use, with a reason when not. Never
+// modes: the peer inbox carries messages only, and the session has no pane to drive the TUI's pickers in (setModes).
 func outsideCapabilities(c claudeProc) (*proto.SessionCapabilities, string) {
 	p, has := peerOf(c)
 	switch {
 	case has && peerReachable(p):
-		return &proto.SessionCapabilities{Read: true, Send: true}, ""
+		return &proto.SessionCapabilities{Read: true, Send: true, Modes: proto.CanModes(false)}, ""
 	case c.Kind == "bg":
-		return &proto.SessionCapabilities{Read: true}, claudeBgReadOnly
+		return &proto.SessionCapabilities{Read: true, Modes: proto.CanModes(false)}, claudeBgReadOnly
 	case !has:
-		return &proto.SessionCapabilities{Read: true}, proto.ReadOnlyClaudeNoInbox
+		return &proto.SessionCapabilities{Read: true, Modes: proto.CanModes(false)}, proto.ReadOnlyClaudeNoInbox
 	}
-	return &proto.SessionCapabilities{Read: true}, proto.ReadOnlyClaudeInbox
+	return &proto.SessionCapabilities{Read: true, Modes: proto.CanModes(false)}, proto.ReadOnlyClaudeInbox
 }
 
 // outsideClaude is the live claude outside Persona's panes that has session id open (outsideSource), ok false when

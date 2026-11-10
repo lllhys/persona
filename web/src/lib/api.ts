@@ -112,7 +112,7 @@ export class HubTimeoutError extends Error {
   }
 }
 
-type ApiOptions = RequestInit & { json?: unknown; token?: string; tokenOwner?: string; onResponse?: (headers: Headers) => void };
+type ApiOptions = RequestInit & { json?: unknown; token?: string; tokenOwner?: string; onResponse?: (headers: Headers, status: number) => void };
 
 /** `tokenOwner`: explicit credentials opt into 401 recovery only while both the token and credential generation are current.
  *  `timeout`: ms before a read gives up with HubTimeoutError (default READ_TIMEOUT_MS for GET, none otherwise; 0: none). */
@@ -189,7 +189,10 @@ async function request<T>(path: string, init: ApiOptions): Promise<T> {
     if (!isAbort(e)) requestCrumb(method, path, 0);
     throw e;
   }
-  if (intercepted(res)) {
+  // A 304 answers a request that sent a validator (If-None-Match): the caller keeps what it has. It is neither the
+  // sign-in layer's redirect nor an error.
+  const notModified = res.status === 304 && headers.has("If-None-Match");
+  if (!notModified && intercepted(res)) {
     requestCrumb(method, path, res.status);
     reloadForSignIn(); // the layer in front takes over the page and sends it to its sign-in
     throw new ApiError(res.status || 401, t("lib-api.hub_no_response"), {}, false);
@@ -205,13 +208,13 @@ async function request<T>(path: string, init: ApiOptions): Promise<T> {
     data = { error: /^\s*</.test(text) ? "" : text };
     isJson = false;
   }
-  if (!res.ok) {
+  if (!res.ok && !notModified) {
     requestCrumb(method, path, res.status);
     if (res.status === 401 && owner !== undefined && owner === credentialOwner() && (init.token === undefined || init.token === getToken())) onUnauthorized();
     const msg = typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`;
     throw new ApiError(res.status, msg, data, isJson, res.headers?.get("X-Request-Id") ?? undefined);
   }
-  onResponse?.(res.headers);
+  onResponse?.(res.headers, res.status);
   return compatibleEnvelope(data) as T;
 }
 

@@ -35,7 +35,7 @@ final class AppModel {
     /// The hub-level group's hub (what Persona, Inbox and the hub's settings talk to); nil when not paired.
     var config: ServerConfig? { hub?.config }
     /// Persona's looks (docs/apple/persona.md): the chosen one, what the hub offers, the packages on the phone.
-    let personas = PersonaStore()
+    let personas: PersonaStore
     /// Which paths conversations mention are there on their machines (only those are linked).
     let filePresence = FilePresence()
     /// Which machine ports links point at are listening (docs/operations/ports.md).
@@ -314,8 +314,10 @@ final class AppModel {
     var isDemo: Bool { links.first?.isDemo == true }
     static let demoKey = "demo.on"
 
-    init(stateFolder: URL? = nil) {
+    /// `personas`: a store of its own (tests: a folder and defaults of their own); the app's otherwise.
+    init(stateFolder: URL? = nil, personas store: PersonaStore? = nil) {
         self.stateFolder = stateFolder
+        personas = store ?? PersonaStore()
         RetiredPreferences.clear(from: .standard)
         TextSize.current.applyToMacFonts() // what `textSize` starts at
         Task.detached(priority: .utility) { LarkAttachment.staging.sweep() }
@@ -688,7 +690,7 @@ final class AppModel {
         starterDrafts = [:] // the demo's group is the empty one, as a hub's may be
         if let k = assistantCurrent, demo.contains(k) { assistantCurrent = nil }
         if let k = openChat, demo.contains(k) { openChat = nil }
-        for key in demo { ChatCache.remove(key) }
+        for key in demo { ChatCache.remove(key, in: stateFolder) }
     }
 
     /// Sign Out of everything: every group, every hub (Settings › Disconnect with one group, a revoked credential of this device).
@@ -1078,7 +1080,7 @@ final class AppModel {
         chatTick += 1
         chatUse[key] = chatTick
         if let c = chats[key] { return c }
-        let c = ChatStore(key: key)
+        let c = ChatStore(key: key, cacheFolder: stateFolder)
         c.onArrived = { [weak self] in self?.saveOutbox() }
         chats[key] = c
         evictChats()
@@ -1757,6 +1759,16 @@ final class AppModel {
             // The new tier's package is downloaded whole before the face changes (PersonaStore.load). The list changed
             // just now: a refresh already under way may have asked before, so it is read again after that one (#2405).
             if isHub { Task { await personas.reload(api) } }
+        case .look(let id, let effective):
+            // Another device chose an avatar, or the hub went back to the default. Like every hub-level setting, the
+            // avatar is the current hub's: another group's choice is its own (docs/protocol/multi-hub.md). The hub it
+            // came from goes with it: when another group's became current before it is handled, it changes nothing.
+            if isHub, let from = api {
+                Task {
+                    guard api?.config.url == from.config.url else { return }
+                    await personas.follow(id, effective: effective, api: from)
+                }
+            }
         case .managers:
             // Settings › Managers reads the roster again (ManagersView watches this).
             if isHub { managersRevision += 1 }
@@ -1887,6 +1899,7 @@ final class AppModel {
         case .inbox: "inbox"
         case .todos: "todos"
         case .personas: "personas"
+        case .look: "look"
         case .managers: "managers"
         case .assistantFeed: "assistant_feed"
         case .assistantView: "assistant_view"
@@ -2806,7 +2819,7 @@ final class AppModel {
         if let k = assistantCurrent, gone.contains(k.group) { assistantCurrent = nil }
         for g in gone {
             StateCache.remove(Self.snapshotName(g), in: stateFolder)
-            ChatCache.removeGroup(g)
+            ChatCache.removeGroup(g, in: stateFolder)
             PinsStore.forget(suffix: g)
             InboxHandOffMemory.forget(group: g)
             if !keepingPushKeys { PushCrypto.removeKey(group: g) }
@@ -2828,6 +2841,8 @@ final class AppModel {
         InboxStore.shared.reload()
         TodoStore.shared.forget()
         TodoStore.shared.reload()
+        // The avatar is the new hub's from now, before its list is read below: a card tapped meanwhile goes to it.
+        personas.switchHub(api)
         Task {
             await refreshAssistant()
             await personas.refresh(api)

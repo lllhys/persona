@@ -297,6 +297,14 @@ func (s *Service) sendToTask(ctx context.Context, t Todo, text string) (string, 
 		return "", errors.New("its machine is offline")
 	}
 	send := func(ctx context.Context) error {
+		// The user may complete or reopen the task during session lookup or before an offline send starts.
+		cur, ok := s.todoNow(t.ID)
+		if !ok {
+			return db.ErrTodoNotFound
+		}
+		if cur.DoneAt != nil || cur.ReopenedAt != nil && (t.ReopenedAt == nil || !cur.ReopenedAt.Equal(*t.ReopenedAt)) {
+			return db.ErrTodoCompleted
+		}
 		if err := s.call(ctx, c.MachineID, DeviceSessionSend, map[string]any{"session_id": c.SessionID, "text": text}, nil); err != nil {
 			return err
 		}

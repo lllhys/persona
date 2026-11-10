@@ -165,7 +165,12 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
     val agents = (standalone + host.sessions.filter { it.key in ownedTaskAgents })
         .distinctBy { it.key }.filter { it.agentState in setOf(AgentState.Working, AgentState.NeedsYou, AgentState.Unread) }
     val pendingPlans = plans.values.filter { it.conversation == host.conversation && it.state == "open" }
-    val needsReview = progress.filter { it.todo?.ask != null || it.todo?.supervision?.state in setOf("needs_user", "pending_review") }
+    val needsReview = progress.filter { row ->
+        val todo = row.todo
+        val ask = todo?.ask
+        (ask != null || todo?.supervision?.state in setOf("needs_user", "pending_review")) &&
+            !(todo?.isDone == true && (ask == null || ask.outcome == "decide"))
+    }
     val pendingCount = requests.size + drafts.size + pendingPlans.size + needsReview.size
     val approvals = requests.mapNotNull { r -> trayApproval(r, bySession[GroupKeys.rawKey(r.sessionKey)])?.let { r to it } }
     val pendingEnabled = pendingCount > 0
@@ -209,8 +214,10 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                                     stringResource(R.string.chat_tray_plan_review), R.string.chat_tray_review, "assistant-plan-${plan.id}", enabled && plan.id !in taskBusy) { onPlan(plan) }
                             }
                             items(needsReview, key = { "review:${it.id}" }) { row ->
-                                TrayDecisionRow(row.title, row.todo?.ask?.verdict ?: row.text.orEmpty(), R.string.chat_tray_review, "assistant-review-${row.id}", enabled) {
-                                    row.todo?.let { openTask(host, it) }
+                                val todo = row.todo
+                                if (todo?.ask?.outcome == "decide") TaskDecisionCard(todo, host, enabled) { openTask(host, todo) }
+                                else TrayDecisionRow(row.title, todo?.ask?.verdict ?: row.text.orEmpty(), R.string.chat_tray_review, "assistant-review-${row.id}", enabled) {
+                                    todo?.let { openTask(host, it) }
                                 }
                             }
                             if (drafts.isNotEmpty()) item { JSectionHeader(stringResource(R.string.chat_tray_drafts)) }

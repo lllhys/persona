@@ -1,10 +1,11 @@
-import { Component, Suspense, type ErrorInfo, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError, errorText, getToken, handleUnauthorized, setToken } from "./lib/api";
 import { pair, takeToken } from "./lib/auth";
 import { useCloseOnBack } from "./lib/back-close";
 import { SCRIM_FADE, useLingers } from "./lib/lingers";
-import { isChunkError, PageBoundary } from "./views/PageBoundary";
-import { navigationCrumb, reportBoundary } from "./lib/error-reports";
+import { PageBoundary } from "./views/PageBoundary";
+import { OverlayBoundary, useOpened } from "./views/LazyOverlay";
+import { navigationCrumb } from "./lib/error-reports";
 import { lazyPage, preloadPages } from "./lib/lazy-page";
 import { drawerA11y, focusBack, useDrawerDrag } from "./lib/drawer";
 import { acceptHubs, here, rememberHub, takeHubs } from "./lib/hubs";
@@ -449,41 +450,6 @@ function Shell() {
       <AttentionSignals label={title} pane={pane} />
     </div>
   );
-}
-
-/** True from the first render where `open` is, and kept so afterwards: a closed overlay stays mounted for its exit. */
-function useOpened(open: boolean): boolean {
-  const [opened, setOpened] = useState(open);
-  if (open && !opened) setOpened(true);
-  return opened || open;
-}
-
-/**
- * Keeps a lazy overlay's failure (its chunk would not load: offline, or the hub was redeployed) from taking the shell
- * down, since it sits outside PageBoundary: the overlay shows nothing and is closed, so the next open from any entry
- * (shortcut, sidebar button) is a fresh open that tries again (lazyPage does not keep a failed load).
- */
-export class OverlayBoundary extends Component<{ open: boolean; onClose: () => void; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown, info: ErrorInfo) {
-    // a chunk that would not load is a warning (a redeploy), anything else a render crash (docs/web/web.md "Error reports")
-    reportBoundary(error, "overlay_boundary", isChunkError(error), info.componentStack);
-    // left open, an open request would not change the state, and the entry points would do nothing until a reload
-    this.props.onClose();
-  }
-
-  componentDidUpdate(prev: { open: boolean }) {
-    if (this.state.failed && this.props.open && !prev.open) this.setState({ failed: false });
-  }
-
-  render() {
-    return this.state.failed ? null : this.props.children;
-  }
 }
 
 // The hub was never reached (offline, or it is down): an empty state that says so and tries again on a tap, instead of

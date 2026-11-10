@@ -172,7 +172,7 @@ Some hosts pay heavily for every `fsync`: a NAS volume on a single SSD formatted
 - **Postgres commits.** With `synchronous_commit=on` every commit waits for its WAL to be flushed, and a hub in everyday use commits often (one measured install: about 125 commits a minute). The manager groups its background writes: each 10 s tick's monitoring samples of all machines go in one commit, token usage reports of several machines that come within 5 s of each other in one, and indexing a knowledge base entity again with nothing changed writes nothing, so the number of machines no longer multiplies these commits.
 - **Health checks.** dockerd rewrites and fsyncs a container's state file on every health check run (about 1 MB a run on btrfs): the postgres check runs every 5 s, the hub's every 30 s.
 
-`compose.yaml` takes all of these from `.env`. Every default is what compose did before, or PostgreSQL's own default, so nothing changes until you set one; Postgres settings take effect when the container is recreated (`docker compose up -d`), health checks and logging likewise.
+`compose.yaml` takes all of these from `.env`. Each default is what compose did before, or PostgreSQL's own default, except two that cut the WAL Postgres writes, with the same commits and latency: `PERSONA_POSTGRES_WAL_COMPRESSION` (`auto`: lz4 where the postgres image supports it) and `PERSONA_POSTGRES_CHECKPOINT_TIMEOUT` (`15min` instead of 5). Postgres settings take effect when the container is recreated (`docker compose up -d`), health checks and logging likewise.
 
 | Variable | Default | What it does and what it costs |
 | --- | --- | --- |
@@ -182,12 +182,22 @@ Some hosts pay heavily for every `fsync`: a NAS volume on a single SSD formatted
 | `PERSONA_HUB_HEALTHCHECK_INTERVAL`, `PERSONA_HUB_HEALTHCHECK_TIMEOUT`, `PERSONA_HUB_HEALTHCHECK_RETRIES` | `30s`, `5s`, `3` | The same for the image's own hub check (its 60 s start period stays). Only `docker ps` and a separate manager container (`depends_on: hub`) look at it |
 | `PERSONA_POSTGRES_SYNCHRONOUS_COMMIT` | `on` | `off`: a commit returns before its WAL is flushed and the WAL writer flushes in batches. A crash of the machine or of Postgres can lose the last commits (at most three times `wal_writer_delay`: 0.6 s by default, 3 s with `1s`), which the hub had already answered for. The database stays consistent: nothing is corrupted or half-written, it just comes back as of slightly earlier. A clean `docker compose stop` or restart loses nothing |
 | `PERSONA_POSTGRES_WAL_WRITER_DELAY` | `200ms` | How often the WAL writer flushes. With `synchronous_commit=off` this sets how many commits share one flush and how much a crash can lose; with `on` it matters little |
-| `PERSONA_POSTGRES_CHECKPOINT_TIMEOUT` | `5min` | Longest time between checkpoints. Longer: fewer checkpoints, and fewer full page images in the WAL after each, at the cost of a longer crash recovery (replaying up to that much WAL, usually seconds on an SSD). Checkpoints still come sooner when `max_wal_size` (1 GB) fills |
-| `PERSONA_POSTGRES_WAL_COMPRESSION` | `off` | `lz4` (or `pglz`, `zstd`) compresses the full page images in the WAL: fewer bytes for a little CPU. The official `postgres:18-alpine` image is built with lz4 and zstd |
+| `PERSONA_POSTGRES_CHECKPOINT_TIMEOUT` | `15min` | Longest time between checkpoints. After each one, the first change to every page writes the whole page to the WAL (a full page image). Longer: fewer checkpoints and fewer full page images (15 minutes instead of PostgreSQL's 5 halves them on a hub's background writes), at the cost of a longer crash recovery (replaying up to that much WAL, usually seconds on an SSD). Checkpoints still come sooner when `max_wal_size` (1 GB) fills |
+| `PERSONA_POSTGRES_WAL_COMPRESSION` | `auto` | Compression of the full page images in the WAL. After a checkpoint, the first change to each page writes the whole 8 KB page to the WAL, and on a personal hub that is most writes: lz4 cuts the WAL of a write to a random page by about a fifth to a half, for a little CPU and no measurable latency. `auto` is `lz4` when the image's PostgreSQL is 15 or later and built with lz4 (`pg_config --configure` lists `--with-lz4`; the official `postgres:18-alpine` is), and `off` otherwise, since PostgreSQL 14 and older, or a build without lz4, would not start with it. `off`, `pglz`, `lz4` or `zstd` is used as given |
 | `PERSONA_LOG_DRIVER` | `json-file` | The containers' log driver: `json-file` or `local` (Docker's compact format, compressed). `docker compose logs` reads both. Other drivers reject the size options below, so the containers would not start |
 | `PERSONA_LOG_MAX_SIZE`, `PERSONA_LOG_MAX_FILE` | `10m`, `3` | Size of one log file and how many are kept per container |
 
 The Postgres settings are passed on its command line (`postgres -c …`), which wins over `ALTER SYSTEM` and `postgresql.conf`: a setting made with `ALTER SYSTEM` is ignored while compose passes the same one. Check what is in effect with `docker compose exec postgres psql -U <user> -c "SELECT name, setting, source FROM pg_settings WHERE name IN ('synchronous_commit', 'wal_compression', 'checkpoint_timeout', 'wal_writer_delay')"` (`source` says `command line`), and drop old ones with `ALTER SYSTEM RESET <name>`. An invalid value stops postgres from starting; `docker compose logs postgres` names it.
+
+**Upgrading to these defaults.** The first `docker compose up -d` with this `compose.yaml` recreates the postgres container, because its command changed: Postgres stops for a few seconds and the hub reconnects by itself. A `.env` that sets `PERSONA_POSTGRES_WAL_COMPRESSION=off` or `PERSONA_POSTGRES_CHECKPOINT_TIMEOUT=5min` keeps that. A database container made outside compose (by `scripts/deploy/db.sh`, `personad hub setup` or a manager's own database) is never recreated: those made from now on start with `-c wal_compression=lz4 -c checkpoint_timeout=15min`, and an existing one can switch without a restart:
+
+```sh
+docker exec -i <container> psql -U <user> -d <database> <<'SQL'
+ALTER SYSTEM SET wal_compression = 'lz4';
+ALTER SYSTEM SET checkpoint_timeout = '15min';
+SELECT pg_reload_conf();
+SQL
+```
 
 The logging block replaces the Docker daemon's default driver for these two containers. Synology's Container Manager defaults to its own `db` driver and its **Log** tab shows only what that driver keeps: with this compose file the tab stays empty, and `docker compose logs` (or `docker logs`) shows the logs instead. Before, the daemon's default applied, which on most Linux hosts is `json-file` without a size limit.
 
@@ -199,8 +209,6 @@ PERSONA_POSTGRES_HEALTHCHECK_RETRIES=5
 PERSONA_HUB_HEALTHCHECK_INTERVAL=60s
 PERSONA_POSTGRES_SYNCHRONOUS_COMMIT=off
 PERSONA_POSTGRES_WAL_WRITER_DELAY=1s
-PERSONA_POSTGRES_CHECKPOINT_TIMEOUT=15min
-PERSONA_POSTGRES_WAL_COMPRESSION=lz4
 PERSONA_LOG_DRIVER=local
 ```
 

@@ -103,10 +103,11 @@ export async function sentBytes(dir: string, files: string[]): Promise<number> {
 /**
  * The most the idle tier may send (src/lib/lazy-page.ts: the chunks of each `lazyPage(…, { idle: true })` and what they
  * import beyond the first screen), in bytes as gzipBytes counts them (vite.config.ts startupPreload fails the build past
- * it): 28,085 B at #2880 plus 3%. Every other lazy page loads on intent, not at idle; raise it on purpose, in the change
- * that needs it.
+ * it): 29,143 B at #2798 plus 3% (28,085 B at #2880; #2798 moved ModelIdField, which the model popover now shares with
+ * the idle ModelPicker, out of the first screen into a chunk of its own). Every other lazy page loads on intent, not at
+ * idle; raise it on purpose, in the change that needs it.
  */
-export const IDLE_TIER_BUDGET = 28_928;
+export const IDLE_TIER_BUDGET = 30_017;
 
 const gzip = promisify(gzipCompress);
 

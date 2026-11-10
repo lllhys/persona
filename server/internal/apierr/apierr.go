@@ -232,6 +232,9 @@ var rpcFailureKeys = map[string]string{
 	"peer_too_long":    "rpc-errors.peer_too_long",
 	"peer_unconfirmed": "rpc-errors.peer_unconfirmed",
 	"peer_command":     "rpc-errors.peer_command",
+	// session.modes (node/modes.go, #1843)
+	proto.CodeModesOnComputer: "rpc-errors.modes_on_computer",
+	proto.CodeModesNotRunning: "rpc-errors.modes_not_running",
 	// a start in a directory whose name can't be typed into a terminal (node/hostorca_launch.go)
 	proto.CodeDirectoryUntypable: "rpc-errors.directory_untypable",
 }

@@ -251,6 +251,9 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 	if g.Kind == sigReport { // what it said is the report itself, not a reason in brackets
 		e.Detail, e.Report, e.Said, e.Evidence, e.Step, e.Steps = "", g.Report, g.Detail, g.Evidence, g.Step, g.Steps
 	}
+	if g.Kind == sigFailed {
+		s.remedyEntry(ctx, t, &e) // its kept tab, and the turn that hears of it (start_remedy.go)
+	}
 	b := &s.supervise
 	b.mu.Lock()
 	e.Ask = cmp.Or(g.Ask, b.asks[t.ID])
@@ -289,7 +292,7 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 
 // sortEntries puts what waits on a decision first.
 func sortEntries(list []prompts.SuperviseEntry) []prompts.SuperviseEntry {
-	rank := map[string]int{sigNeedsYou: 0, sigIdle: 2, sigFailed: 3, sigInterrupted: 4, sigReview: 5, sigStalled: 6, sigReport: 7}
+	rank := map[string]int{sigNeedsYou: 0, sigIdle: 2, sigFailed: 3, sigStarted: 3, sigInterrupted: 4, sigReview: 5, sigStalled: 6, sigReport: 7}
 	at := func(e prompts.SuperviseEntry) int {
 		switch {
 		case e.Kind != sigReport:

@@ -62,9 +62,12 @@ export function effortTitle(id?: string): string {
   return id ? (EFFORTS.find((m) => m.id === id)?.title ?? CODEX_EFFORTS.find((m) => m.id === id)?.title ?? id) : "";
 }
 
-/** Claude Code shows the two chips (its TUI's bottom bar); Codex, a compatible CLI and runtimes have no such switches. */
+/** The two chips (Claude Code's TUI bottom bar). The node says where they work (`capabilities.modes`, #1843): a runtime
+ *  that applies them (Orca, Antigravity), never a Claude outside Persona's terminals. An older node does not say, and the
+ *  chips follow the agent: Claude Code in Persona's terminals, Antigravity; Codex, a compatible CLI and other sources not. */
 export function hasModes(s: Session | undefined): boolean {
   if (!s || s.assistant) return false;
+  if (typeof s.capabilities?.modes === "boolean") return s.capabilities.modes;
   if (s.agent === "agy") return true;
   if (s.source_kind) return false;
   return !s.agent || s.agent === "claude";

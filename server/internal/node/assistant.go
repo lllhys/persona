@@ -32,18 +32,19 @@ import (
 
 // A long conversation is compacted (docs/assistant/assistant.md "Compaction"): every restart after the prompt cache expired (an hour)
 // writes the whole context again, half a million tokens for an assistant conversation that had never been compacted.
-// Claude Code compacts on its own once the context nears the auto-compact window, also under -p (tested on 2.1.314):
-// CLAUDE_CODE_AUTO_COMPACT_WINDOW lowers that from the model's 1M to 200K, 400K for the main conversation, and Claude
-// Code itself keeps it within the window it knows the model to have (assistant_compaction_policy.go caps it further by
-// a declared capacity). Its own idle compaction only runs in interactive sessions, so a process about to be let go with
-// more than its idle threshold (assistantIdleCompact, assistantMainIdleCompact, lower on a smaller window) in context
-// is sent /compact first, while its cache is still warm: the next start reads a summary instead, and nobody waits for it.
-const (
-	assistantCompactWindow     = 200_000
-	assistantIdleCompact       = 150_000
-	assistantMainCompactWindow = 400_000
-	assistantMainIdleCompact   = 300_000
-)
+// Claude Code compacts on its own once the context nears the auto-compact window, also under -p (tested on 2.1.314), by
+// default the model's own window. Persona sets no window of its own (#3066): the main conversation and every other
+// follow what the launcher declares (CLAUDE_CODE_AUTO_COMPACT_WINDOW, CLAUDE_CODE_MAX_CONTEXT_TOKENS, a managed
+// launcher's CompactWindow / MaxContext / model window), else the model (assistant_compaction_policy.go). Codex alike
+// with model_auto_compact_token_limit. Claude Code's own idle compaction only runs in interactive sessions, so a process
+// about to be let go with more than 75% of its window in context (the declared one, else the one Claude Code reports;
+// assistantIdleCompact until either is known) is sent /compact first, while its cache is still warm: the next start
+// reads a summary instead, and nobody waits for it.
+//
+// assistantIdleCompact is 75% of standardWindow, the smallest window Claude Code holds a current model to (and the one
+// it assumes for a model it does not know). Claude Code reports the real window at the end of every turn, before a
+// process can be idle, so it only stands for an agent that reports none: there it never waits past a 200K window.
+const assistantIdleCompact = standardWindow / 4 * 3
 
 // assistantAllowedTools run without asking: Persona's own tools (the hub asks the phone itself before the ones that
 // send something on the user's behalf — mail_send, phone writes; Feishu writes through an extension's gated command pass larkgate.go). Without this every notify_user or
@@ -97,9 +98,9 @@ type assistantProc struct {
 	fallback      string   // why it runs on the CLI though asked to run on the Agent SDK
 	sdkVersion    string   // the bridge's SDK version (its ready line)
 
-	// idleFromWindow: compactIdleAt is capped by the window Claude Code reports (assistantCompaction.idleFromWindow);
-	// replyModel is the model of the conversation's last reply, whose window that is.
-	idleFromWindow bool
+	// declaredWindow: the window the launcher declares (assistantCompaction.declared), 0 for none; replyModel: the
+	// model of the conversation's last reply. compactIdleAt follows the window Claude Code reports for it (followWindow).
+	declaredWindow int
 	replyModel     string
 
 	// usageChecked: how far the transcript was checked for an impossible usage at the end of its turns
@@ -140,7 +141,8 @@ func (p *assistantProc) alive() bool {
 // isAssistantSession tells assistant conversations (headless) apart from herdr sessions.
 func (n *Node) isAssistantSession(id string) bool { return n.isAssistantSessionIn(id, nil) }
 
-// isAssistantSessionIn is isAssistantSession with the assistant's project name taken once per list pass (codexListPass).
+// isAssistantSessionIn is isAssistantSession with the assistant's project name and a Codex rollout's stat taken once
+// per list pass (codexListPass).
 func (n *Node) isAssistantSessionIn(id string, pass *codexListPass) bool {
 	n.mu.Lock()
 	_, ok := n.procs[id]
@@ -157,7 +159,7 @@ func (n *Node) isAssistantSessionIn(id string, pass *codexListPass) bool {
 	if st, ok := n.state.get(id); ok && identity.IsAssistantDir(st.Cwd) {
 		return true
 	}
-	if p := n.transcriptPath(id); p != "" && (compat.IsAssistantTranscript(filepath.Base(filepath.Dir(p))) ||
+	if p := n.transcriptPathIn(id, pass); p != "" && (compat.IsAssistantTranscript(filepath.Base(filepath.Dir(p))) ||
 		isAssistantProject(filepath.Base(filepath.Dir(p)), pass.assistantProject(n))) {
 		return true
 	}
@@ -617,13 +619,13 @@ func (n *Node) readAssistant(p *assistantProc, r io.Reader) {
 			manual := p.manual
 			p.manual = false
 			window := reportedWindow(ev.ModelUsage, p.replyModel)
-			capped, idleAt := p.capIdleCompact(window), p.compactIdleAt
+			changed, idleAt := p.followWindow(window), p.compactIdleAt
 			p.compacting = false
 			p.busy = false
 			p.lastActive = time.Now()
 			p.partial.Reset()
 			p.mu.Unlock()
-			if capped {
+			if changed {
 				n.logger.Printf("assistant %s: the model's window is %d tokens, idle compaction at %d", p.id[:8], window, idleAt)
 			}
 			if manual { // the user's /compact ended without a boundary: it did not compact

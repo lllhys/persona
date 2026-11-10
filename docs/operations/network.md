@@ -221,7 +221,7 @@ Public plaintext APIs default to `403 tls_required`, except `GET /api/v1/health`
 
 ## Connecting to hub through SSH (fallback when direct access fails)
 
-iOS / macOS apps can reach hub through an SSH server (#891): use when the device has no VPN route and hub has no public entry point, but an externally accessible SSH endpoint exists (jump host, bastion such as Warpgate, own server). No hub changes. Another option beyond direct access / embedded Tailscale / embedded tailcat in [#868](https://github.com/nwverse/persona/issues/868).
+iOS / macOS and Android apps can reach hub through an SSH server (#891): use when the device has no VPN route and hub has no public entry point, but an externally accessible SSH endpoint exists (jump host, bastion such as Warpgate, own server). No hub changes. Another option beyond direct access / embedded Tailscale / embedded tailcat in [#868](https://github.com/nwverse/persona/issues/868).
 
 ```text
 App ──HTTP / WebSocket──▶ 127.0.0.1:<random-port> (inside app process)
@@ -236,11 +236,12 @@ App ──HTTP / WebSocket──▶ 127.0.0.1:<random-port> (inside app process)
 - **Disconnect / unpair** (#2379): disconnecting a group closes all its hub tunnels before registry changes; removing one hub closes only its tunnel; unpair calls `closeAll`, also clearing `HubTransport` routes. Otherwise local listeners, routes, and 120-second `watchDirect` remain (on Mac until quit), rewriting later direct re-pair requests to an old tunnel.
 - **Pairing tunnels**: initially dial under ID `pairing`, then `adopt` under the new hub ID after success. State updates resolve the tunnel object's current ID (`SSHTunnels.key(of:in:)`), exposing failures in connection details and **Settings › SSH tunnels**.
 - **iOS backgrounding**: close tunnels with socket; foreground reselects routes / rebuilds (about 1 second measured in simulator). Silent-push wakeups build tunnels on demand too.
-- **Watch unsupported**: Watch connects directly and cannot tunnel. If hub is SSH-only, direct data-fetch features fail, but pushes unaffected (they do not use this connection). Web / Android currently unsupported.
+- **Watch unsupported**: Watch connects directly and cannot tunnel. If hub is SSH-only, direct data-fetch features fail, but pushes unaffected (they do not use this connection). Web currently unsupported.
+- **Android** (`android/core/hub/src/main/kotlin/persona/core/hub/tunnel/`): JSch in process, one SSH session per hub that forwards a loopback port (`setPortForwardingL`, one `direct-tcpip` channel per connection). Android lacks the JDK classes JSch uses for X25519 and Ed25519, so `curve25519-sha256` and `ssh-ed25519` run on Tink (`TinkX25519`, `TinkEd25519`, named to JSch by class). The device key is one Ed25519 seed per device in `hub-data/ssh-key.enc` under `noBackupFilesDir`, encrypted with the app's Keystore-backed keyset (never backed up, kept when a hub is unpaired, an unreadable file is reported instead of replaced); each pairing's tunnel settings, the proxy's password included, live in `hub-data/<pairing>/tunnels.enc` and go with the pairing. The same `HubWay` order picks the way inside the group connection (`OkHttpHubConnection`), whose base URL becomes `http://127.0.0.1:<port>` plus the paired address's path; the connection keeps running in the background, and so does its tunnel, while the 2-minute direct recheck waits for the foreground. A failure only the user can fix (host key, public key) waits for new settings instead of redialling, and stays on the tunnel's page as "Last failure"; saving the tunnel's page again (after a successful **Test connection and save**) dials it again. Tunnels are set up after pairing: the pairing page has no SSH option.
 
 ### Settings
 
-In the app: **Settings › hub › SSH tunnels**, separately per paired hub; before pairing, choose "Connect through SSH tunnel" on the pairing page.
+In the app: **Settings › hub › SSH tunnels**, separately per paired hub; before pairing, choose "Connect through SSH tunnel" on the pairing page (iOS / macOS). Android: **Settings › Hubs**, the SSH tunnel row under each paired hub.
 
 | Setting | Description |
 | --- | --- |
@@ -263,7 +264,7 @@ restrict,port-forwarding,permitopen="127.0.0.1:18660" ssh-ed25519 AAAA… person
 
 On first connection, the app asks confirmation of server fingerprint (`ED25519 SHA256:…`, matching `ssh-keygen -lf <host-public-key>`), then pins it. Changed fingerprints always refuse connection; Settings / connection details say "SSH server fingerprint changed; connection refused." Accept only after the user selects "Trust new fingerprint" in the old / new comparison opened by "Test connection and save"; no silent replacement. Changing SSH host / port requires confirmation again.
 
-Supported algorithms (swift-nio-ssh): key exchange `curve25519-sha256`, `ecdh-sha2-nistp256/384/521`; Ed25519 / ECDSA host keys (**no RSA host keys**); AES-128-GCM / AES-256-GCM encryption (OpenSSH aes128-gcm / aes256-gcm). Current OpenSSH defaults include these.
+Supported algorithms (swift-nio-ssh): key exchange `curve25519-sha256`, `ecdh-sha2-nistp256/384/521`; Ed25519 / ECDSA host keys (**no RSA host keys**); AES-128-GCM / AES-256-GCM encryption (OpenSSH aes128-gcm / aes256-gcm). Current OpenSSH defaults include these. Android (JSch): key exchange `curve25519-sha256`, `ecdh-sha2-nistp256/384/521` and Diffie-Hellman (group exchange, groups 14 / 16 / 18); Ed25519, ECDSA and RSA (`rsa-sha2-256/512`) host keys, the pinned key's algorithm offered first; AES-GCM and AES-CTR encryption.
 
 ### Security notes
 
@@ -326,7 +327,7 @@ Link flags: `-lpersonatunnel -lresolv -framework Security -framework CoreFoundat
 
 ## Connecting to hub through a local SOCKS5 proxy
 
-When the hub sits on a private network this device reaches only through another app that serves a local SOCKS5 proxy (for example a VPN-like client listening on `127.0.0.1:<port>` instead of taking the system VPN slot), the iOS and macOS apps can go through that proxy (#1248). Only Persona's hub traffic uses it.
+When the hub sits on a private network this device reaches only through another app that serves a local SOCKS5 proxy (for example a VPN-like client listening on `127.0.0.1:<port>` instead of taking the system VPN slot), the iOS, macOS and Android apps can go through that proxy (#1248). Only Persona's hub traffic uses it.
 
 ```text
 App ──HTTP / WebSocket──▶ 127.0.0.1:<port> (inside app process)
@@ -337,7 +338,8 @@ App ──HTTP / WebSocket──▶ 127.0.0.1:<port> (inside app process)
 - **In-process forward** (`apple/Persona/App/LocalProxies.swift`, SOCKS5 client in `apple/Persona/App/SOCKS5.swift`): the app listens on a loopback port (the same one next time when it is free); each connection made there dials the proxy, does one SOCKS5 CONNECT to the hub's address, then copies bytes both ways. Nothing is read from the connection before the proxy has connected, and bytes the hub sends right after the proxy's reply stay on the connection. The forward carries plain HTTP, like the SSH and in-app tunnels, and `HubTransport` sends REST, WebSocket, port-forward and Feishu player traffic to it. A host name goes to the proxy unresolved (address type domain), so the proxy's network resolves it.
 - **Routing** matches the other tunnels (`HubWay` in `apple/Persona/App/HubTunnels.swift`): direct first, the proxy only if every direct address fails, retry direct every 2 minutes while proxied; **Always Use the Proxy** prefers it and goes direct when it can't connect. Each time the way is picked, the proxy is asked for the hub once, so a proxy whose app quit is not taken (that asks only the proxy: many proxies, such as `ssh -D`, mihomo and Xray, accept a CONNECT before they try the address). A hub with several ways tries the SSH tunnel, then the local proxy, then the in-app tunnel. Settings saved while an earlier start is still under way replace it.
 - **Test Connection and Save** connects through the proxy to the hub's address, then sends `GET /api/v1/health` through a forward of its own, without following redirects (they would leave the proxy). It saves only when the hub answers `{"ok": true}` with its `version`, which the hub leaves out for a source it counts as the internet, where it refuses plain HTTP; and, once the app knows the paired hub's `hub_id`, only when that hub answers.
-- **Credentials** are kept with the pairing in the keychain (`PairedHub.localProxy`), like the SSH tunnel's settings.
+- **Credentials** are kept with the pairing in the keychain (`PairedHub.localProxy`), like the SSH tunnel's settings; on Android in the pairing's encrypted `tunnels.enc`.
+- **Android** (`LocalProxyForward` and `Socks5Handshake` in `android/core/hub/src/main/kotlin/persona/core/hub/tunnel/`): the same forward, handshake and test; **Settings › Hubs**, the Local proxy row under each paired hub. Both tunnels' pages show the tunnel's state and its last failure.
 - **iOS backgrounding**: forwards close with the socket and the way is picked again on return. The watch connects directly.
 - **Not supported**: HTTP CONNECT proxies, SOCKS4, UDP.
 - **Security**: the forward carries plain HTTP, even for an `https` pairing, so the proxy sees Persona's traffic to the hub and this device's credential in it. What is trusted is whatever process holds that loopback port at the time (SOCKS5 does not authenticate the proxy), so use it only with a proxy app you trust, as with a VPN app. A proxy host that is not on this device gets a warning on the page: the traffic and the proxy's password would cross the network unencrypted. The forward's own loopback port has no access control either (as with the SSH tunnel's). The hub classifies the source address the proxy's network gives it as usual ([source classification](#来源判断与反向代理)).

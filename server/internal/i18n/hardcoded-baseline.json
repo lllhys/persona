@@ -116,7 +116,7 @@
   "internal/extmgr/voice_extension.go": 4,
   "internal/extmgr/wechat.go": 1,
   "internal/feishubot/answer.go": 26,
-  "internal/feishubot/events.go": 18,
+  "internal/feishubot/events.go": 17,
   "internal/feishubot/personacard.go": 7,
   "internal/hub/admin_hub.go": 4,
   "internal/hub/assistant_process.go": 4,
