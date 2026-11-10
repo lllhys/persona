@@ -31,7 +31,7 @@ func newUUID() string {
 // after the directory is reused or created.
 // tabName names the herdr tab (hub picks one from the first message when the user gave none); empty: agent-<n>.
 // newID is the id a new session gets (startAsync picked it already); empty: a fresh one.
-// agentType is the agent the user picked for the launcher (claude, codex, traex); empty: what the launcher runs.
+// agentType is the agent the user picked for the launcher (claude, codex, traex, omp); empty: what the launcher runs.
 func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspaceID, mode, effort, tabName, newID, agentType string, options ...modelExecution) (*proto.Session, error) {
 	execution := executionOption(options)
 	if err := execution.check(); err != nil {
@@ -55,8 +55,25 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 	if kind == "" {
 		kind = launcherAgentType(launcher)
 	}
-	if kind != "claude" && kind != "codex" && kind != traexAgent {
+	if kind != "claude" && kind != "codex" && kind != traexAgent && kind != ompAgent {
 		return nil, fmt.Errorf("unsupported agent type %q", kind)
+	}
+	if kind == ompAgent { // start_agent.go: omp's own command, and none of a Claude start's options
+		if launcher != ompAgent {
+			// Only the launcher named omp is known to run omp: another one (a Codex launcher, a provider of no omp
+			// command) would type something else into the pane and get the first message.
+			return nil, fmt.Errorf("omp starts only with the launcher named omp, not %q", launcher)
+		}
+		if execution.Model != "" || mode != "" || effort != "" || wantsUltracode(execution.Ultracode) {
+			return nil, refusal("omp_options", ompOptionsRefusal, nil)
+		}
+		if resume != "" {
+			if a, ok := n.agent(resume); ok {
+				return n.sessionFor(resume, a), nil // already running
+			}
+			// A stopped omp has no session file here yet: refuse rather than guess which conversation to resume.
+			return nil, refusal("omp_resume_unknown", "这个 omp 会话找不到会话文件，请在电脑上恢复，这次没有发送。", nil)
+		}
 	}
 	argv, codex := n.codexLauncher(ctx, launcher)
 	if mode == "plan" {

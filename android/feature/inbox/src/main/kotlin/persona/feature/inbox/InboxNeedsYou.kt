@@ -21,10 +21,11 @@ fun needsYouCount(list: InboxListResult, records: List<InboxRecord>): Int {
     return needsYouCount(list) { it.type == InboxRowType.Item && it.id in working }
 }
 
-/** Use reconciled conversation reads, including receipts not yet reflected by the hub's item list. */
+/** Unread actionable entries, using reconciled conversation reads before the hub item list catches up. */
 fun inboxUnreadCount(records: List<InboxRecord>, conversations: InboxConversationList? = null): Int {
     val ids = records.map { it.item.id }.toSet()
     val grouped = conversations?.rows.orEmpty().filter { row -> row.records.any { it.item.id in ids } }
     val groupedIds = grouped.flatMap { it.records }.map { it.item.id }.toSet()
-    return grouped.count { it.unread } + records.count { it.item.id !in groupedIds && !it.read && !it.item.isDone }
+    return grouped.count { it.section == InboxConversationSection.Action } +
+        records.count { it.item.id !in groupedIds && !it.read && it.item.needsYou }
 }
