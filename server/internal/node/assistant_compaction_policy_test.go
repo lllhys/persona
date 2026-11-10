@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -248,12 +247,10 @@ func TestAssistantShellLauncherCompaction(t *testing.T) {
 					t.Fatalf("idle %d, want %d", p.compactIdleAt, tt.idle)
 				}
 				var seen []byte
-				for i := 0; i < 100 && len(seen) == 0; i++ {
+				waitFor(t, "claude to write its environment", func() bool {
 					seen, _ = os.ReadFile(filepath.Join(home, "claude-env"))
-					if len(seen) == 0 {
-						time.Sleep(50 * time.Millisecond)
-					}
-				}
+					return len(seen) > 0
+				})
 				lines := strings.Split(string(seen), "\n")
 				for k, want := range map[string]string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW": tt.auto, "CLAUDE_CODE_MAX_CONTEXT_TOKENS": tt.max} {
 					if got := envValue(lines, k); got != want {
