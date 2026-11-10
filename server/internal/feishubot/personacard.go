@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nwverse/persona/sdk/go/wire"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // The assistant's ```persona-card blocks (#886) are charts the apps draw (sdk/go/wire/personacard.go); a Feishu card
@@ -88,7 +89,7 @@ func personaCardText(raw json.RawMessage) string {
 		}
 		if c.Total != nil {
 			if c.Type == wire.PersonaCardKindRing && c.Total.Value > total {
-				parts = append(parts, wire.CardPart{Label: "剩余", Value: c.Total.Value - total})
+				parts = append(parts, wire.CardPart{Label: i18n.T(i18n.ZhHans, "feishubot-personacard.remaining"), Value: c.Total.Value - total})
 			}
 			u, total = firstOf(words(c.Total.Unit), unit), c.Total.Value
 		}
