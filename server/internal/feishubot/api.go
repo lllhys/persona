@@ -223,12 +223,24 @@ func (c *Client) callRetry(ctx context.Context, op, method, path string, in, out
 				}
 			}
 		}
+		if updatesMessage(method) {
+			after = 0 // the short backoff only: a longer wait the server names is the caller's (updatesMessage)
+		}
 		if !idempotent || !retry || !c.waitRetry(ctx, attempt, waits, after) {
 			return giveUp()
 		}
 		waits++
 	}
 	return lastErr
+}
+
+// updatesMessage: a card update (PATCH) or an agent message's append (PUT). Such a call is retried on the short backoff
+// only and does not sit out a longer wait the server names (x-ogw-ratelimit-reset, Retry-After): once the tries are
+// used up, its caller gets the rate-limit error, backs off on RateLimited and sends what is newest by then. The
+// progress tick makes these calls while it holds the run's progress lock, so waiting out a throttle window here would
+// hold back the run's answer.
+func updatesMessage(method string) bool {
+	return method == http.MethodPatch || method == http.MethodPut
 }
 
 // waitRetry applies +/-25% jittered backoff (or a longer wait the server asked for) and reports whether to try once more.

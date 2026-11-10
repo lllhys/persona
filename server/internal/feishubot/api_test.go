@@ -442,6 +442,54 @@ func TestPerChatLimitRetriedOnKeyedSends(t *testing.T) {
 	}
 }
 
+// A card update or an agent message's append that is throttled is tried again on the short backoff only, never after
+// the reset the server names: the progress tick makes these calls under the run's progress lock, and a wait there would
+// hold back the run's answer. Throttled on every try, the call ends in the rate-limit error its caller backs off on.
+func TestMessageUpdatesDoNotWaitOutTheReset(t *testing.T) {
+	ctx := context.Background()
+	for op, do := range map[string]func(*Client) error{
+		"card update": func(c *Client) error { return c.UpdateCard(ctx, "om_example", `{"elements":[]}`) },
+		"cot append": func(c *Client) error {
+			return c.CotAppend(ctx, "cot_example", "om_example", CotParagraph("p1", "working"))
+		},
+	} {
+		for _, tc := range []struct {
+			name      string
+			throttles int32 // answers throttled before an OK
+		}{
+			{"once", 1},
+			{"every try", callMaxAttempts},
+		} {
+			t.Run(op+"/"+tc.name, func(t *testing.T) {
+				c, _, hits, _ := retryAPIClient(t, func(w http.ResponseWriter, _ *http.Request, n *atomic.Int32) {
+					if n.Load() <= tc.throttles {
+						w.Header().Set("Retry-After", "3")
+						throttled(w, http.StatusTooManyRequests, "2")
+						return
+					}
+					okJSON(w, map[string]any{"code": 0, "data": map[string]any{}})
+				})
+				slept := recordSleeps()
+				err := do(c)
+				for _, d := range *slept {
+					if d > callBackoff[len(callBackoff)-1]*5/4 {
+						t.Fatalf("slept %v, want the short backoff only; sleeps=%v", d, *slept)
+					}
+				}
+				if tc.throttles < callMaxAttempts {
+					if err != nil || hits.Load() != tc.throttles+1 || len(*slept) != int(tc.throttles) {
+						t.Fatalf("err=%v hits=%d sleeps=%v", err, hits.Load(), *slept)
+					}
+					return
+				}
+				if !RateLimited(err) || hits.Load() != callMaxAttempts || len(*slept) != callMaxAttempts-1 {
+					t.Fatalf("err=%v rateLimited=%v hits=%d sleeps=%v", err, RateLimited(err), hits.Load(), *slept)
+				}
+			})
+		}
+	}
+}
+
 // A wait the server asks for that would outlast the caller's deadline is not slept: the call returns the rate-limit
 // error at once, so a caller that backs off on RateLimited still can, rather than a bare deadline error later.
 func TestWaitPastTheDeadlineReturnsTheRateLimit(t *testing.T) {
