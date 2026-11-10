@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Map literal Gradle project includes to disjoint, exhaustive unit-test lanes."""
+"""Map literal Gradle project includes to two balanced CI lanes with disjoint, exhaustive unit tests."""
 import argparse
 from pathlib import Path
 import re
 import sys
 
-LANES = ("full", "lint-build", "test-core", "test-feature-0", "test-feature-1", "test-platform-app")
+# Each lane is one Gradle invocation, so the upstream tasks its parts share run once per lane. The parts are
+# balanced by measured task time: lint-build with feature tests shard 0, and core, feature shard 1 and platform/app.
+PARTS = {
+    "lint-build-test-0": ("lint-build", "feature-0"),
+    "test-1": ("core", "feature-1", "platform-app"),
+}
+LANES = ("full", *PARTS)
 TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z_0-9]*|\S')
 PROJECT = re.compile(r":[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*\Z")
 
@@ -83,13 +89,26 @@ def modules(source):
     return sorted(set(projects))
 
 
-def test_lane(project):
+def test_part(project):
     if project.startswith(":core:"):
-        return "test-core"
+        return "core"
     if project.startswith(":feature:"):
-        return "test-feature"
-    # App, platform and every new top-level module belong to this fallback lane.
-    return "test-platform-app"
+        return "feature"
+    # App, platform and every new top-level module belong to this fallback part.
+    return "platform-app"
+
+
+def part_tasks(projects, part):
+    if part == "lint-build":
+        # Unqualified lint covers every module; the debug APK proves the app still assembles.
+        return ["lint", ":app:assembleDebug"]
+    if part.startswith("feature-"):
+        # Split the complete sorted feature set, including future modules, once.
+        features = [project for project in projects if test_part(project) == "feature"]
+        return [project + ":test" for project in features[int(part[-1])::2]]
+    # The per-project test lifecycle task includes all variants (not only Debug),
+    # and works for JVM modules too. No test filters or exclusions are introduced.
+    return [project + ":test" for project in projects if test_part(project) == part]
 
 
 def tasks(source, lane):
@@ -98,15 +117,7 @@ def tasks(source, lane):
     projects = modules(source)
     if lane == "full":
         return ["lint", "test", ":app:assembleDebug"]
-    if lane == "lint-build":
-        return ["lint", ":app:assembleDebug"]
-    if lane.startswith("test-feature-"):
-        # Split the complete sorted feature set, including future modules, once.
-        features = [project for project in projects if test_lane(project) == "test-feature"]
-        return [project + ":test" for project in features[int(lane[-1])::2]]
-    # The per-project test lifecycle task includes all variants (not only Debug),
-    # and works for JVM modules too. No test filters or exclusions are introduced.
-    return [project + ":test" for project in projects if test_lane(project) == lane]
+    return [task for part in PARTS[lane] for task in part_tasks(projects, part)]
 
 
 def main():

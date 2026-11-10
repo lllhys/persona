@@ -55,7 +55,7 @@ class ConcurrencyTests(unittest.TestCase):
 
     def test_heavy_matrices_keep_all_shards_with_bounded_parallelism(self):
         for filename, job, maximum, size in [('server-test.yml', 'server', 2, 4),
-                                              ('android-test.yml', 'android', 2, 5),
+                                              ('android-test.yml', 'android', 2, 2),
                                               ('scripts-tests.yml', 'scripts', 1, 2)]:
             with self.subTest(filename=filename):
                 strategy = workflow(filename)['jobs'][job]['strategy']

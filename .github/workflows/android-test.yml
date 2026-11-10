@@ -17,7 +17,8 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        lane: [lint-build, test-core, test-feature-0, test-feature-1, test-platform-app]
+        # Two lanes balanced by task time; each runs its share in one Gradle invocation (scripts/ci/android-shards.py).
+        lane: [lint-build-test-0, test-1]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +38,6 @@ jobs:
           # Only a manual main run may populate caches; PRs and other refs only restore.
           cache-read-only: ${{ github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main' }}
       - name: Restore public Robolectric runtime dependencies
-        if: matrix.lane != 'lint-build'
         id: robolectric
         uses: actions/cache/restore@v4
         with:
@@ -46,12 +46,14 @@ jobs:
             ~/.m2/repository/org/robolectric/android-all
             ~/.m2/repository/org/robolectric/android-all-instrumented
           key: ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
           restore-keys: |
             ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-
+            ${{ runner.os }}-robolectric-v1-
       - name: Android checks
         run: scripts/ci/android.sh --lane '${{ matrix.lane }}' --profile
       - name: Save public Robolectric runtime dependencies
-        if: success() && matrix.lane != 'lint-build' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
+        if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |

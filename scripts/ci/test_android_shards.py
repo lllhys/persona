@@ -13,18 +13,42 @@ SPEC = importlib.util.spec_from_file_location("android_shards", HERE / "android-
 shards = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(shards)
 SETTINGS = (ROOT / "android/settings.gradle.kts").read_text()
+CI_LANES = shards.LANES[1:]
+
+
+def five_lanes(source):
+    """The five lanes CI ran before #3056; the two lanes must run exactly their tasks."""
+    projects = shards.modules(source)
+    features = [project + ":test" for project in projects if project.startswith(":feature:")]
+    return {
+        "lint-build": ["lint", ":app:assembleDebug"],
+        "test-core": [project + ":test" for project in projects if project.startswith(":core:")],
+        "test-feature-0": features[0::2],
+        "test-feature-1": features[1::2],
+        "test-platform-app": [project + ":test" for project in projects
+                              if not project.startswith((":core:", ":feature:"))],
+    }
 
 
 class ShardTests(unittest.TestCase):
-    def test_repository_partition_has_no_duplicates_or_omissions(self):
+    def test_two_lanes_run_exactly_the_five_lanes_tasks(self):
+        for source in (SETTINGS, 'include(":app", ":core:new", ":feature:a", ":feature:b", ":feature:c", ":platform:new", ":new")'):
+            with self.subTest(source=source[:40]):
+                selected = [task for lane in CI_LANES for task in shards.tasks(source, lane)]
+                old = [task for lane in five_lanes(source).values() for task in lane]
+                self.assertEqual(len(selected), len(set(selected)))
+                self.assertEqual(sorted(selected), sorted(old))
+
+    def test_every_test_lint_and_build_task_lands_in_exactly_one_lane(self):
         projects = shards.modules(SETTINGS)
-        lanes = {lane: shards.tasks(SETTINGS, lane) for lane in shards.LANES if lane.startswith("test-")}
-        selected = [task for lane in lanes.values() for task in lane]
-        self.assertEqual(len(selected), len(set(selected)))
-        self.assertEqual(sorted(selected), [project + ":test" for project in projects])
+        lanes = {lane: shards.tasks(SETTINGS, lane) for lane in CI_LANES}
+        self.assertEqual(len(lanes), 2)
+        for task in [project + ":test" for project in projects] + ["lint", ":app:assembleDebug"]:
+            self.assertEqual(sum(task in selected for selected in lanes.values()), 1, task)
         self.assertTrue(all(lanes.values()))
-        self.assertIn(":core:contracts:test", lanes["test-core"])  # JVM test lifecycle stays covered.
-        self.assertIn(":app:test", lanes["test-platform-app"])  # Debug and Release, not testDebugUnitTest.
+        self.assertIn(":core:contracts:test", lanes["test-1"])  # JVM test lifecycle stays covered.
+        self.assertIn(":app:test", lanes["test-1"])  # Debug and Release, not testDebugUnitTest.
+        self.assertIn("lint", lanes["lint-build-test-0"])
 
     def test_literals_multiline_comments_duplicates_and_included_builds(self):
         source = '''
@@ -42,15 +66,13 @@ class ShardTests(unittest.TestCase):
 
     def test_new_modules_and_nested_paths_have_a_fallback(self):
         source = 'include(":core:new", ":feature:new:deep", ":platform:new", ":new", ":core")'
-        self.assertEqual(shards.tasks(source, "test-core"), [":core:new:test"])
-        self.assertEqual(shards.tasks(source, "test-feature-0"), [":feature:new:deep:test"])
-        self.assertEqual(shards.tasks(source, "test-feature-1"), [])
-        self.assertEqual(shards.tasks(source, "test-platform-app"), [":core:test", ":new:test", ":platform:new:test"])
+        self.assertEqual(shards.tasks(source, "lint-build-test-0"), ["lint", ":app:assembleDebug", ":feature:new:deep:test"])
+        self.assertEqual(shards.tasks(source, "test-1"), [":core:new:test", ":core:test", ":new:test", ":platform:new:test"])
 
     def test_full_and_lint_keep_original_all_module_selectors(self):
         self.assertEqual(shards.tasks(SETTINGS, "full"), ["lint", "test", ":app:assembleDebug"])
-        self.assertEqual(shards.tasks(SETTINGS, "lint-build"), ["lint", ":app:assembleDebug"])
-        self.assertEqual(shards.tasks('include(":app")', "test-core"), [])
+        self.assertEqual(shards.tasks(SETTINGS, "lint-build-test-0")[:2], ["lint", ":app:assembleDebug"])
+        self.assertEqual(shards.tasks('include(":app")', "lint-build-test-0"), ["lint", ":app:assembleDebug"])
 
     def test_computed_or_malformed_declarations_fail_closed(self):
         for source in ('include(projects)', 'include(":core:$name")', 'include(":core:" + name)',
@@ -65,7 +87,7 @@ class ShardTests(unittest.TestCase):
     def test_cli_settings_errors_are_nonzero_without_task_output(self):
         result = subprocess.run(["python3", "-B", str(HERE / "android-shards.py"),
                                  "--settings", str(HERE / "missing-settings.gradle.kts"),
-                                 "--lane", "test-core"], capture_output=True, text=True, timeout=10)
+                                 "--lane", "test-1"], capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("FAILED", result.stderr)
@@ -74,11 +96,15 @@ class ShardTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/android-test.yml").read_text()
         match = re.search(r"lane: \[([^\]]+)\]", workflow)
         self.assertIsNotNone(match)
-        self.assertEqual([value.strip() for value in match[1].split(",")], list(shards.LANES[1:]))
+        self.assertEqual([value.strip() for value in match[1].split(",")], list(CI_LANES))
         self.assertIn("fail-fast: false", workflow)
         self.assertIn("--lane '${{ matrix.lane }}' --profile", workflow)
         self.assertIn("cache-read-only: ${{ github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main' }}", workflow)
+        restore = workflow.split("- name: Restore public Robolectric runtime dependencies", 1)[1].split("- name:", 1)[0]
         save = workflow.split("- name: Save public Robolectric runtime dependencies", 1)[1].split("- name: Upload", 1)[0]
+        # Both lanes run unit tests: neither skips the Robolectric cache, and a new lane name still restores an entry.
+        self.assertNotIn("matrix.lane !=", restore + save)
+        self.assertIn("${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-\n            ${{ runner.os }}-robolectric-v1-\n", restore)
         self.assertIn("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'", save)
         self.assertIn("actions/cache/save@v4", save)
         cached_paths = re.findall(r"^\s+(~/.m2/\S+)$", workflow, re.M)
@@ -133,31 +159,31 @@ class ShellLaneTests(unittest.TestCase):
                 self.assertEqual(arguments[-len(expected):], expected)
                 self.assertIn("--max-workers=2", arguments)
                 self.assertNotIn("--profile", arguments)
-                self.assertEqual("translation checker tests" in result.stdout, lane in ("full", "lint-build"))
+                self.assertEqual("translation checker tests" in result.stdout, lane in ("full", "lint-build-test-0"))
 
     def test_profile_and_gradle_failure_are_preserved(self):
         self.env["MOCK_GRADLE_STATUS"] = "1"
-        result = self.run_lane("--profile", "--lane", "test-core")
+        result = self.run_lane("--profile", "--lane", "test-1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--profile", self.log.read_text().splitlines())
-        self.assertIn("FAILED (Gradle test-core", result.stderr)
+        self.assertIn("FAILED (Gradle test-1", result.stderr)
         self.env["MOCK_GRADLE_STATUS"] = "124"
-        result = self.run_lane("--lane", "test-core")
+        result = self.run_lane("--lane", "test-1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("TIMEOUT", result.stderr)
 
     def test_invalid_lane_and_parse_failure_never_launch_gradle(self):
-        for args in (["--lane"], ["--lane", "typo"], ["--typo"]):
+        for args in (["--lane"], ["--lane", "typo"], ["--lane", "test-core"], ["--typo"]):
             self.assertEqual(self.run_lane(*args).returncode, 2)
         (self.root / "android/settings.gradle.kts").write_text('include(projects)')
-        result = self.run_lane("--lane", "test-core")
+        result = self.run_lane("--lane", "test-1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Cannot enumerate", result.stderr)
         self.assertFalse(self.log.exists())
 
     def test_empty_lane_never_runs_default_gradle_tasks(self):
-        (self.root / "android/settings.gradle.kts").write_text('include(":app")')
-        result = self.run_lane("--lane", "test-core")
+        (self.root / "android/settings.gradle.kts").write_text('include(":feature:only")')
+        result = self.run_lane("--lane", "test-1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("no modules", result.stdout)
         self.assertFalse(self.log.exists())
