@@ -360,21 +360,24 @@ func (s *Service) taskFileSource(ctx context.Context, self, todoID, machine, ses
 	if t.Origin != self && (t.Supervision == nil || t.Supervision.Supervisor != self) {
 		return Todo{}, "", fmt.Errorf("task %s is not this conversation's", t.ID)
 	}
-	agents := s.taskAgents(ctx, t)
-	if len(agents) == 0 {
-		return Todo{}, "", fmt.Errorf("task %s has no Agent", t.ID)
-	}
+	// The computer of its Agent, from the task's own record: the session may have stopped or gone since.
 	from := ""
-	for _, c := range agents {
-		if machine != "" && c.MachineID != machine {
+	for _, a := range t.Agents {
+		if a.ReleasedAt != nil || a.DismissedAt != nil {
 			continue
 		}
-		if session != "" && c.SessionID != session {
+		if machine != "" && a.MachineID != machine {
 			continue
 		}
-		from = c.MachineID
+		if session != "" && a.SessionID != session {
+			continue
+		}
+		from = a.MachineID
 	}
 	if from == "" {
+		if len(t.Agents) == 0 {
+			return Todo{}, "", fmt.Errorf("task %s has no Agent", t.ID)
+		}
 		return Todo{}, "", fmt.Errorf("that Agent does not work on task %s", t.ID)
 	}
 	return t, from, nil
