@@ -214,6 +214,7 @@ type TaskSuccessor struct {
 	Previous   string // the stopped agent's tab / title
 	PreviousID string // its session id
 	LastReply  string // its last reply, clipped; "" when there is none
+	Files      string // the hand-over rule (agents/task_files), before the user's text
 	Text       string
 }
 
@@ -225,6 +226,11 @@ func RenderTaskLeader() string { return render("agents/task_leader", struct{}{})
 
 // RenderTaskWorker is what follows the prompt of a worker a task leader handed out (agents/task_worker).
 func RenderTaskWorker() string { return render("agents/task_worker", struct{}{}) }
+
+// RenderTaskFiles is the hand-over rule every task's prompt carries (agents/task_files, #10511): a file the user
+// should get is named by its absolute path, never pasted as text. It is always asked for, unlike the closeout form,
+// which depends on a switch.
+func RenderTaskFiles() string { return render("agents/task_files", struct{}{}) }
 
 // RenderWorkerSupervise is the supervision message a task leader's agent gets about its workers (agents/worker_supervise,
 // assistant/task_leader.go): what each task of its own needs, from the same entries a conversation's message lists.

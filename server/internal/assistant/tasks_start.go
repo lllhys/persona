@@ -355,7 +355,7 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 	_, _ = s.appendFeed(ctx, conversation, feedReceipt, t.TodoID, receiptBody{Title: t.Title, State: "failed",
 		Summary: i18n.T(s.lang(ctx), "assistant-tasks.failed_start", i18n.Args{"reason": reason})})
 	if todo, ok, err := s.todo(ctx, t.TodoID); err == nil && ok {
-		s.taskNotice(ctx, todo, t.Machine, "failed", "", reason)
+		s.taskNotice(ctx, todo, t.Machine, "failed", "", reason, nil)
 		s.taskReport(todo, reportFailed, t.Machine, [2]string{}, reason, nil)
 	}
 }

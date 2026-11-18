@@ -188,6 +188,9 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	case t.Parent != "":
 		prompt += "\n\n" + prompts.RenderTaskWorker()
 	}
+	// Files for the user are named by path, never pasted into the reply (task_files.go, #10511). Always asked for,
+	// unlike the closeout form below, which depends on a switch.
+	prompt += "\n\n" + prompts.RenderTaskFiles()
 	// The closeout's form, up front (agents_closeout_brief.go): after the delivery line when both are asked for.
 	delivery := !t.Readonly && s.doneNeedsDelivery(ctx)
 	brief := s.closeoutBrief(ctx, delivery)

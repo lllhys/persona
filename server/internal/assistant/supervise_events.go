@@ -11,9 +11,9 @@ import (
 
 // ---- what the task's events say ----
 
-// taskNotice is what happened to task t (state: done, needs, interrupted, failed; ask, text as quietNotify has them):
-// a supervised task's supervisor gets a signal, any other quiet task's conversation its notice.
-func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, text string) {
+// taskNotice is what happened to task t (state: done, needs, interrupted, failed; ask, text as quietNotify has them;
+// files: what a done turn handed over, in its conversation's computer, for the notice).
+func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, text string, files []taskFile) {
 	if t.Supervision == nil {
 		if !t.Quiet {
 			if state == "failed" && t.Origin != "" {
@@ -21,7 +21,7 @@ func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, t
 			}
 			return
 		}
-		s.quietNotify(ctx, t, machine, state, ask, text)
+		s.quietNotify(ctx, t, machine, state, ask, text, files)
 		return
 	}
 	if state == "failed" && !t.Quiet && t.Origin != "" && !s.isMain(ctx, t.Origin) && !s.isLeader(ctx, t.Origin) &&

@@ -23,6 +23,8 @@
    它说：
 {{chomp (indent "   " .)}}{{end}}{{with $e.Evidence}}
    它给的证据：{{range .}}
+   - {{.}}{{end}}{{end}}{{with $e.Files}}
+   它交回的文件（已经放到你这台电脑上，直接读；不要让它贴内容）：{{range .}}
    - {{.}}{{end}}{{end}}{{with $e.Closeout}}
    它自己填的收尾记录（它的说法，没人核对过）：{{if eq .Status "done"}}做完了{{else if eq .Status "blocked"}}卡住了{{with .Waiting}}，在等{{.}}{{end}}{{else}}没做完{{end}}；合并：{{if eq .Merged "yes"}}是{{else if eq .Merged "no"}}否{{else}}没说或不适用{{end}}；部署：{{if eq .Deployed "yes"}}是{{else if eq .Deployed "no"}}否{{else}}没说或不适用{{end}}{{if or .CheckedMerged .CheckedDeployed}}
    - hub 自己查了它的 PR：{{if eq .CheckedMerged "yes"}}已合并{{else if eq .CheckedMerged "no"}}没合并{{else}}合没合查不出{{end}}，{{if eq .CheckedDeployed "yes"}}线上正在跑的版本里有它{{else if eq .CheckedDeployed "no"}}线上正在跑的版本里没有它{{else}}上没上线查不出{{end}}{{end}}{{range .Did}}

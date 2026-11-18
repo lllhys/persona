@@ -36,6 +36,7 @@ type quietNotice struct {
 	earlier []string
 	ask     string
 	text    string
+	files   []taskFile // what a done turn handed over (task_files.go)
 }
 
 type quietBook struct {
@@ -47,8 +48,9 @@ type quietBook struct {
 var noticeStates = map[string]string{"done": "做完过一次", "needs": "等过用户", "interrupted": "被打断过", "failed": "没开起来过"}
 
 // quietNotify tells the main conversation about quiet task t (a no-op for any other): state, and what it asks (needs)
-// or what its agent last said (text). machine is where its agent runs (a name).
-func (s *Service) quietNotify(ctx context.Context, t Todo, machine, state, ask, text string) {
+// or what its agent last said (text); files: what a done turn handed over, on the conversation's computer (task_files.go).
+// machine is where its agent runs (a name).
+func (s *Service) quietNotify(ctx context.Context, t Todo, machine, state, ask, text string, files []taskFile) {
 	if !t.Quiet || t.Origin == "" {
 		return
 	}
@@ -64,7 +66,7 @@ func (s *Service) quietNotify(ctx context.Context, t Todo, machine, state, ask, 
 	} else if n.state != state {
 		n.earlier = appendOnce(n.earlier, noticeStates[n.state])
 	}
-	n.todo, n.machine, n.state, n.ask, n.text = t, machine, state, ask, text
+	n.todo, n.machine, n.state, n.ask, n.text, n.files = t, machine, state, ask, text, files
 	b.mu.Unlock()
 	if !waiting {
 		time.AfterFunc(quietNoticeDelay, func() { s.sendQuietNotice(t.ID) })
@@ -161,6 +163,9 @@ func (s *Service) queueNotice(id string, n *quietNotice, to string, msg relayMsg
 			earlier = appendOnce(earlier, e)
 		}
 		cur.earlier = earlier
+		if len(n.files) > 0 { // the newer state may be one that carries no files (a question): keep what came
+			cur.files = n.files
+		}
 	} else {
 		b.pending[id] = n
 	}
@@ -177,7 +182,7 @@ func (s *Service) queueNotice(id string, n *quietNotice, to string, msg relayMsg
 // renderNotice is n's text; reporting: for the reporting conversation that opened the task, not the main one.
 func renderNotice(n *quietNotice, reporting bool) string {
 	return prompts.RenderTaskNotice(prompts.TaskNotice{Title: n.todo.Title, Machine: n.machine, State: n.state, Earlier: n.earlier,
-		Ask: n.ask, Text: n.text, Reporting: reporting})
+		Ask: n.ask, Text: n.text, Files: taskFileLines(n.files), Reporting: reporting})
 }
 
 // replaceQueuedNotice: a notice about the same task still waits in the queue: msg takes its place (true).
@@ -324,7 +329,7 @@ func (s *Service) InteractionRaised(ctx context.Context, r InteractionRaised) {
 	if m, ok := s.device(ctx, ix.MachineID); ok {
 		name = m.Name
 	}
-	s.taskNotice(ctx, t, name, "needs", noticeAsk(ix), "")
+	s.taskNotice(ctx, t, name, "needs", noticeAsk(ix), "", nil)
 	if t.Quiet { // any other task's card is in the next report already (taskAsks)
 		s.taskReport(t, reportNeeds, name, [2]string{ix.MachineID, ix.SessionID}, noticeAsk(ix), &ix)
 	}

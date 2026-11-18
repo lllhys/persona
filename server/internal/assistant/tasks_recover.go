@@ -98,7 +98,7 @@ func (s *Service) recoverTaskStarts(ctx context.Context, before time.Time) error
 				failures = append(failures, err)
 			}
 			if todo, ok := s.todoNow(pt.TodoID); ok {
-				s.taskNotice(ctx, todo, pt.Machine, "failed", "", reason)
+				s.taskNotice(ctx, todo, pt.Machine, "failed", "", reason, nil)
 				s.taskReport(todo, reportFailed, pt.Machine, [2]string{}, reason, nil)
 			}
 		}

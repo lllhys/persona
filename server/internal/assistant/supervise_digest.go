@@ -488,10 +488,14 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 		if g.Kind == sigReport {
 			text = "" // it said what it had to in the report
 		} else if g.Kind == sigReview || g.Kind == sigIdle || g.Kind == sigUnjudged {
-			if _, answer := s.lastTurn(ctx, last.MachineID, last.SessionID); answer != "" {
+			if answer := s.lastTurnAnswer(ctx, last.MachineID, last.SessionID); answer != "" {
 				text = answer
 			}
 		}
+		// The files it handed over, copied to this conversation's computer (task_files.go, #10511); the receipt path
+		// usually did it already, and a copy here only fills in after a restart.
+		s.deliverTaskFiles(ctx, t, last.MachineID, s.conversationMachine(ctx, s.taskReceiver(ctx, t), ""), text)
+		e.Files = taskFileLines(s.taskFilesNow(t.ID))
 		if c, arts, ok := closeout.Parse(text); ok {
 			e.Closeout = &prompts.SuperviseCloseout{Status: c.Status, Waiting: c.Waiting, Merged: c.Merged, Deployed: c.Deployed,
 				Did: c.Did, Verified: c.Verified, Missing: c.Missing}

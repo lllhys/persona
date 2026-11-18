@@ -122,19 +122,20 @@ type Service struct {
 	// interrupts: the interrupted receipts re-sent when their tasks change (interruptions.go).
 	interrupts interruptBook
 
-	titles     titleBook       // titles.go
-	agentNames agentNamingBook // agent_naming.go
-	prefs      settingsBook    // profile.go
-	main       mainBook        // start.go
-	archived   archiveBook     // conversations.go
-	origins    originBook      // origins.go
-	guests     guestBook       // guest.go
-	relays     relayBook       // conversations.go
-	avail      availBook       // availability.go
-	quiet      quietBook       // quiet.go
-	supervise  superviseBook   // supervise_signals.go
-	preempt    preemptBook     // owner_preempt.go
-	tbriefs    taskBriefBook   // task_brief.go
+	titles       titleBook       // titles.go
+	agentNames   agentNamingBook // agent_naming.go
+	prefs        settingsBook    // profile.go
+	main         mainBook        // start.go
+	archived     archiveBook     // conversations.go
+	origins      originBook      // origins.go
+	guests       guestBook       // guest.go
+	relays       relayBook       // conversations.go
+	avail        availBook       // availability.go
+	quiet        quietBook       // quiet.go
+	taskFileBook taskFileBook    // task_files.go: the files tasks handed over, by todo id
+	supervise    superviseBook   // supervise_signals.go
+	preempt      preemptBook     // owner_preempt.go
+	tbriefs      taskBriefBook   // task_brief.go
 
 	modelPicks modelPickBook // model_pick.go
 	// noBackground: there is no background supervisor whatever the setting says, so the main conversation gets its

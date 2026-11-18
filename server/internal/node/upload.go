@@ -542,7 +542,7 @@ func (n *Node) uploadCall(method string, params json.RawMessage) (any, error) {
 	var p struct {
 		UploadID string `json:"upload_id"`
 		Name     string `json:"name"`
-		Dest     string `json:"dest"` // "terminal": a paste into a terminal (terminalUploadDir); "health": a report (healthReportsDir); "dir": Dir; "inbox": the receive folder; "" the temp directory
+		Dest     string `json:"dest"` // "terminal": a paste into a terminal (terminalUploadDir); "file": a task's file for its conversation (fileUploadDir); "health": a report (healthReportsDir); "dir": Dir; "inbox": the receive folder; "" the temp directory
 		// HealthDir: dest=health, the manager's health space ("health-<id>"; "": the built-in's), echoed back so the hub
 		// can tell a node that does not know it (and would put the report in the built-in's).
 		HealthDir string `json:"health_dir"`
@@ -568,6 +568,11 @@ func (n *Node) uploadCall(method string, params json.RawMessage) (any, error) {
 			if err = os.MkdirAll(dir, 0o700); err == nil {
 				id, err = n.ups.beginIn(dir, p.Name, p.Size, proto.MaxTerminalUploadBytes, true)
 			}
+		case proto.UploadDestFile:
+			dir := fileUploadDir(n.dir, time.Now())
+			if err = os.MkdirAll(dir, 0o700); err == nil {
+				id, err = n.ups.beginIn(dir, p.Name, p.Size, proto.MaxFileUploadBytes, true)
+			}
 		case proto.UploadDestHealth:
 			var dir string
 			if dir, err = healthReportsDirOf(n.home, p.HealthDir); err == nil {
@@ -586,7 +591,7 @@ func (n *Node) uploadCall(method string, params json.RawMessage) (any, error) {
 			return nil, err
 		}
 		res := map[string]any{"upload_id": id, "chunk_bytes": proto.UploadChunkBytes}
-		if p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox {
+		if p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox || p.Dest == proto.UploadDestFile {
 			res["dest"] = p.Dest // the hub checks it: a node from before dest=dir would quietly use the temp directory
 		}
 		if p.Dest == proto.UploadDestHealth && p.HealthDir != "" {
