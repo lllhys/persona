@@ -57,8 +57,8 @@ final class DuoOpenChromeTests: XCTestCase {
     }
 
     /// The Duo's tab bar in the system's tab bar's place (#4231), none drawn on the page's top (#4206, the new look of
-    /// the Separate layout): the column's head has its fold, its foot Search; the page has its face, and its sidebar
-    /// button only while the column is away.
+    /// the Separate layout): the column's head has its fold, its foot Search; the page has its menu (the name pill beside the
+    /// column, whose head shows the face, #9973), and its sidebar button only while the column is away.
     @MainActor func testTheTabSwitchAndTheColumnsFold() {
         let main = element("sidebar-main"), fold = element("sidebar-fold-column"), search = element("sidebar-search")
         XCTAssertTrue(main.waitForExistence(timeout: 20), "no column:\n\(app.debugDescription)")
@@ -70,7 +70,7 @@ final class DuoOpenChromeTests: XCTestCase {
         XCTAssertLessThan(fold.frame.maxY, main.frame.minY, "the fold is not at the column's head")
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThan(search.frame.minY, window.maxY - 160, "Search is not at the column's foot")
-        XCTAssertTrue(element("persona-avatar").exists, "no face on the page")
+        XCTAssertTrue(element("persona-avatar").exists, "no menu on the page")
         let back = element("assistant-sidebar-button")
         XCTAssertFalse(back.exists && back.isHittable, "the page's sidebar button shows beside the column")
         shot("chrome")

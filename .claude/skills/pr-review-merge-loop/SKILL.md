@@ -88,8 +88,11 @@ files into a private runtime directory and replace every placeholder; restrict t
   non-secret environment value. Never put credentials in these environment variables or tracked JSON files.
 
 Keep the repository's existing watcher as the only review, repair and merge policy. P0 findings block and enter bounded
-semantic repair; P1/P2 remain published notes. Verification failures continue only when the same failed lane and
-concrete signature reproduce independently on clean main, and are disclosed as base-owned rather than passing tests.
+semantic repair; P1/P2 remain published notes. In an explicitly configured `semantic_only` repository, verification is
+limited to lightweight privacy/documentation guards: do not repeat full build/vet, cross-platform, build-tag or full-test
+lanes, and do not start CI failure repair. Success comments must disclose that full CI was not run. In the other
+profiles, verification failures continue only when the same failed lane and concrete signature reproduce independently
+on clean main, and are disclosed as base-owned rather than passing tests.
 
 Test the helpers without using a real PR or Herdr session:
 

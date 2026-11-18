@@ -149,7 +149,7 @@ describe("Login", () => {
   });
 });
 
-describe("scanning a code with the Android app (#10291)", () => {
+describe("scanning a code with Persona on a phone (#10291)", () => {
   it("starts folded, below the phone steps, and makes no code until it is opened", async () => {
     qr.mounted = 0;
     await act(async () => root.render(<Login onDone={() => {}} />));

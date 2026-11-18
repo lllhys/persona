@@ -1141,6 +1141,31 @@ Confirm the connection on the pairing page, handle permissions and the checklist
 
 Wait until the page is ready before taking screenshots. For batch screenshots use `./scripts/app/android.sh shots`; debug direct-entry arguments are below. None connect to a production hub. For scrolling performance see "Interface style performance".
 
+## Process-start pairing restore
+
+`ConnectionRuntime.start()` schedules registry restoration and legacy migration on `Dispatchers.IO` instead of blocking the
+caller with `runBlocking`. It publishes the startup job before starting it; `settled()` joins that job and then takes the
+runtime gate, so callers resume only after the restored groups and selection are installed. `WiredPairingService.restore()`
+exposes that barrier through `PairingService`; implementations without asynchronous restoration return immediately.
+
+The main activity and share sheet keep their existing restore loading UI. Boot and notification receivers use `goAsync`
+(and join the resume job), workers and Glance suspend, and the foreground service promotes before making its deferred
+pairing decision. Notification and surface collectors also wait before reading `isPaired`: the initial `false` means
+restoration is pending, not that the user unpaired, so it must not stop services, clear a saved fleet, publish empty
+shortcuts or answer an action against an empty scope. `FleetFeed.settled()` additionally waits for the saved fleet
+snapshot, so a tile or widget cannot navigate or render from the empty pre-restore value. The tile immediately launches
+`TileRouteActivity` through `startActivityAndCollapse`; that foreground activity waits for the saved fleet and performs the
+final navigation after the tile service is destroyed, without relying on a background `Context.startActivity()`.
+
+`ConnectionRuntimeStartupTest`, `NotificationRuntimePairingRestoreTest`, `ReceiverPairingRestoreTest` and
+`ApproveFirstPairingRestoreTest` cover these barriers with deliberately delayed restoration.
+
+A restored `GroupRuntime` constructs its initial `HubNetwork` from `ConnectivityManager.activeNetwork` and its capabilities,
+including the Android 37 local-network permission state. Its constructor does not dial immediately: `activate()` first
+installs the group's data and reconciliation collectors, then starts the connection. The existing callback and
+`refreshNetwork()` path still handles later changes and local-address details, so the first route selection no longer waits
+for a callback or a second reconnect.
+
 ## Debug against release
 
 A debug package is for development: it is debuggable, so ART never compiles it ahead of time, and it skips R8. On the phone
@@ -1950,6 +1975,7 @@ Ported from old main-line App chat code (d2d484ef, 4588285d) on 2026-11-02, redr
   While the session waits on you, an Agent chat's running summary reads Waiting for you, as the header does, with no elapsed time or spinner (`workSummary(waiting = true)`, #2483); the turn stays the live one and folds and opens as before. It waits on you when the hub's unified state says needs you (a question, plan or permission a hook holds while herdr's status stays `working`), the status says `blocked`, or one of the session's own requests is pending on the phone; the header goes by the same state (`turnWaitsOnYou`, `needsYou` in `ChatState.kt`). A task agent's request alone puts Waiting for you in the header but leaves this turn working.
   Codex commentary is assistant text as in `docs/integrations/codex.md` (#5853). `ItemsDatabase` 5 (`MIGRATION_4_5`, registered in both cache builders) drops cache rows written when those items were thinking; no schema or user data is migrated. `ContinuityNarrationTest` covers expanded narration being replaced by a folded page without losing the final answer outside its seq + block range.
   Paseo's input to an agent (another agent's message, a child's notice, a schedule's run) is a message from another session, a subagent's task note or a notice, as in `docs/integrations/paseo.md` (#8220). `ItemsDatabase` 6 (`MIGRATION_5_6`, registered in both cache builders) drops cache rows that still hold the raw `<paseo-system>` envelopes as the user's messages; no schema or user data is migrated.
+  Codex's `clock.sleep`, SubAgentActivity and CollabAgentToolCall are tool calls (`sleep`, `subagent`, `wait_agent`) as in `docs/integrations/codex.md` (#10436). `ItemsDatabase` 7 (`MIGRATION_6_7`, registered in both cache builders) drops cache rows that still hold them as notices under the calls' ids; no schema or user data is migrated.
 - Tool naming follows iOS `ToolViews.swift` / `PersonaToolNames.swift` (#2753): Persona tools, `conversation_*`, `computer_*` / `browser_*`, `phone_*`, `mail_*` use names stripped of `mcp__x__`, localized verbs (Rename chat, Control computer, Phone, Read Agent chat…), icon and subject. Work row "Control computer macbook"; no app on `computer_state` gives "macbook · Whole screen" localized; `ask_user` first question; `Monitor` description or command first line. Unknown Persona-server tools "Call Persona · github read", others raw name (`namedToolVerb` in `core/domain`, `ToolVerbTest`, `ToolPresentationTest` in `feature/chat`).
 - TodoWrite plan uses `PlanCard`: title completed/total and current item (activeForm while in progress), right Step N/M or checkmark when done;
   tap title collapses to progress hairline. Completed dim/check, running current spinner, pending hollow circle; failed update shows Update failed even collapsed (`planProgress`).

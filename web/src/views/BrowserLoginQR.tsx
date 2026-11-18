@@ -16,7 +16,7 @@ class BrowserLoginRequestError extends Error {
   }
 }
 
-// Sign in by scanning a code with the Android app (docs/protocol/protocol.md "Browser QR sign-in"): the phone allows
+// Sign in by scanning a code with Persona on a phone (docs/protocol/protocol.md "Browser QR sign-in"): the phone allows
 // it and shows a two-digit number, which is typed here. One try: a wrong number cancels the request.
 export function BrowserLoginQR({ onDone }: { onDone: () => void }) {
   const [generation, refresh] = useState(0);

@@ -53,6 +53,7 @@ import persona.feature.settings.SettingsServices
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -185,7 +186,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        (application as PersonaApp).hub.value?.kick()
+        val app = application as PersonaApp
+        lifecycleScope.launch {
+            app.pairingReady.first { it }
+            app.hub.value?.kick()
+        }
     }
 
     // Input that reaches this window keeps Glass's ambient light moving; five seconds after the last it holds still

@@ -223,9 +223,14 @@ func TestFoldRepresentativeFollowsTheEffectiveGateway(t *testing.T) {
 		storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "official", BaseURL: "https://gateway.example.com", Model: "claude-opus-5-5"}, EnvSealed: env},
 		storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "account", Model: "claude-opus-5-5"}},
 		storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "relayed", Model: "claude-opus-5-5"}, EnvSealed: toGateway},
+		// A Messages API provider is started as Claude Code too, with the same tier alias rows.
+		storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "messages-gw", Kind: "api", API: "messages", BaseURL: "https://gateway.example.com", Model: "claude-opus-5-5"}},
+		storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "messages-official", Kind: "api", Model: "claude-opus-5-5"}},
 	)
-	f.agentModels = map[string][]proto.AgentModel{"official": gatewayCatalog(), "account": gatewayCatalog(), "relayed": gatewayCatalog(), "zsh-gw": gatewayCatalog()}
-	for name, want := range map[string]string{"official": "opus", "account": "opus", "relayed": "claude-opus-5-5", "zsh-gw": "opus"} {
+	f.agentModels = map[string][]proto.AgentModel{"official": gatewayCatalog(), "account": gatewayCatalog(), "relayed": gatewayCatalog(), "zsh-gw": gatewayCatalog(),
+		"messages-gw": gatewayCatalog(), "messages-official": gatewayCatalog()}
+	for name, want := range map[string]string{"official": "opus", "account": "opus", "relayed": "claude-opus-5-5", "zsh-gw": "opus",
+		"messages-gw": "claude-opus-5-5", "messages-official": "opus"} {
 		res, err := s.askLauncherModels(ctx, "server", name, false)
 		if err != nil || len(res.Models) != 3 || res.Models[1].ID != want {
 			t.Errorf("%s: %v %v", name, rowsText(res.Models), err)

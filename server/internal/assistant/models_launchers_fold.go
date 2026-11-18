@@ -184,7 +184,9 @@ func (s *Service) oneRowPerModel(ctx context.Context, name string, res proto.Lau
 	}
 	var declared []proto.ProviderModel
 	concrete := false
-	if l, ok := s.managedNamed(ctx, name); ok && l.Kind != "api" {
+	// A Messages API provider (kind api) is started as Claude Code too (with its address and key, as for the main
+	// chat), so its /model list carries the same tier alias rows.
+	if l, ok := s.managedNamed(ctx, name); ok && (l.Kind != "api" || messagesAPI(l.API)) {
 		declared = l.Models
 		concrete = !proto.AnthropicAPI(s.effectiveBaseURL(l))
 	}

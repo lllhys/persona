@@ -1,5 +1,18 @@
 # Lessons: Android
 
+## A false pairing snapshot can mean restoration is still pending (#4055)
+
+Removing a main-thread restore changes more than the first suspend call. A `StateFlow<Boolean>` whose initial value is
+`false` does not distinguish an empty startup snapshot from a real unpair. Gate both one-shot decisions and collectors on
+the appropriate readiness barrier: pairing restoration and, for a persisted fleet, its snapshot becoming visible. A
+collector started early can stop a service or erase a saved snapshot before the pairing arrives. An available initial
+network must not dial before the group's data and reconciliation collectors exist. Keep broadcast `goAsync` results pending
+until the barrier and the original action complete, and preserve the foreground service's promote-before-stop ordering. A
+deferred tile click launches a foreground routing activity through `startActivityAndCollapse` while the tile service is
+alive; that activity waits for restoration and performs the final route. A raw `Context.startActivity()` after the tile
+service is destroyed can be blocked by background-activity-start restrictions. An undispatched coroutine start keeps
+demo/test implementations with a no-op restore synchronous while allowing the real restore to suspend.
+
 ## A cancelled SSH start must still report a rejected host key (#10101)
 
 Cancelling the coroutine waiting for JSch does not prove that its queued dial never ran or that the SSH thread has finished. Register a new session and check `closed` in one lock with `close()`; check the explicit late flag before starting queued blocking work, and pass a failure which arrives after cancellation to the tunnel's configuration-scoped block. Otherwise the next retry dials a host key which already failed the pin check. Keep the original no-redial connection assertion, test late success separately from late failure, and run the whole `core:hub` suite: this ordering may not reproduce in an isolated class. Do not replace the cancelled attempt's host-key error with a generic stopped state.
